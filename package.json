@@ -3,12 +3,13 @@
   "private": true,
   "workspaces": [
     "packages/*",
-    "example"
+    "example",
+    "server"
   ],
   "scripts": {
     "build": "npm run build -w @signalwire/react-native",
-    "test": "npm run test -w @signalwire/react-native",
-    "type-check": "npm run type-check -w @signalwire/react-native && npm run type-check -w @signalwire/react-native-example",
+    "test": "npm run test -w @signalwire/react-native && npm run test -w @signalwire/rn-push-server",
+    "type-check": "npm run type-check -w @signalwire/react-native && npm run type-check -w @signalwire/react-native-example && npm run type-check -w @signalwire/rn-push-server",
     "lint": "eslint packages/react-native/src",
     "bundle-check": "npm run bundle-check -w @signalwire/react-native-example",
     "verify:prebuild": "node scripts/verify-prebuild.mjs",

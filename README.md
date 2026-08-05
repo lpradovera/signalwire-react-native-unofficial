@@ -185,6 +185,8 @@ your backend learns an inbound call is coming (webhook), looks up the device
 token, and sends the push; the app receives it and calls `reportIncomingPush`.
 That call is the entire contract with this package.
 
+A runnable support server lives in [`server/`](server/) — device-token registry,
+APNs VoIP and FCM senders, and a webhook endpoint.
 **[`docs/push-setup.md`](docs/push-setup.md) is the full end-to-end guide** —
 Apple/Firebase setup, the `AppDelegate` hook, backend senders for APNs VoIP and
 FCM, and a link-by-link verification ladder.

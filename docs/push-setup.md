@@ -255,6 +255,11 @@ see its Android setup guide.
 
 ## 3. Your backend
 
+A working implementation of everything in this section is in [`../server/`](../server/) —
+token registry, both senders, fan-out with token pruning, and the webhook
+adapter. Read on for what it is doing and why; run `npm run dev -w
+@signalwire/rn-push-server` to start it.
+
 ### 3a. Store tokens
 
 Minimum viable schema:
