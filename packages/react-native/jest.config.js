@@ -12,6 +12,9 @@ module.exports = {
     'node_modules/(?!((jest-)?react-native|@react-native(-community)?|react-native-.*|uuid)/)'
   ],
   moduleNameMapper: {
+    // Resolve the core from source, so RN tests exercise current code rather
+    // than a possibly-stale dist build.
+    '^@signalwire/react$': '<rootDir>/../react/src/index.ts',
     // The SDK's ESM entry pulls in ESM-only `uuid`, which Jest cannot parse.
     // Its CJS bundle is self-contained and exposes the same surface.
     '^@signalwire/js$': '<rootDir>/../../node_modules/@signalwire/js/dist/index.cjs',

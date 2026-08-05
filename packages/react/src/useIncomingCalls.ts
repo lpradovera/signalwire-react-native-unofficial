@@ -1,6 +1,6 @@
 import { useCallback, useContext } from 'react';
 
-import { logger } from '../logger';
+import { logger } from './logger';
 import { SignalWireContext } from './SignalWireProvider';
 import { useObservable } from './useObservable';
 

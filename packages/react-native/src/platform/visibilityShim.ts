@@ -1,6 +1,6 @@
 import { AppState } from 'react-native';
 
-import { logger } from '../logger';
+import { logger } from '@signalwire/react';
 import { installBaseGlobals } from './baseGlobals';
 
 type Listener = () => void;

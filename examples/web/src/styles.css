@@ -1,0 +1,14 @@
+:root { color-scheme: dark; font-family: system-ui, sans-serif; }
+body { margin: 0; background: #0b1020; color: #f8fafc; }
+.panel { max-width: 28rem; margin: 4rem auto; display: grid; gap: 0.75rem; padding: 0 1.5rem; }
+.muted { color: #94a3b8; margin: 0; }
+.error { color: #f87171; }
+input, textarea { background: #1e293b; border: 0; border-radius: 0.5rem; color: inherit; padding: 0.75rem; font: inherit; }
+button { background: #2563eb; border: 0; border-radius: 0.5rem; color: #fff; cursor: pointer; font: inherit; font-weight: 600; padding: 0.75rem; }
+button:disabled { background: #1e3a5f; cursor: default; }
+button.danger { background: #dc2626; }
+.call { position: relative; height: 100vh; background: #000; }
+.remote { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.local { position: absolute; top: 1.5rem; right: 1rem; width: 8rem; border-radius: 0.75rem; transform: scaleX(-1); }
+.controls { position: absolute; bottom: 2rem; left: 0; right: 0; display: flex; gap: 0.75rem; justify-content: center; align-items: center; }
+.status { background: rgba(15,23,42,0.8); border-radius: 999px; padding: 0.5rem 1rem; }

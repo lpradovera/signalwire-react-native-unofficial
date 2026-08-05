@@ -10,12 +10,24 @@ CallKit and ConnectionService.
 
 Supports iOS 13+ and Android 8+, on React Native 0.76+ (bare or Expo).
 
+## Packages
+
+| Install this | If you are building | Contains |
+| --- | --- | --- |
+| [`@signalwire/react`](packages/react) | A **browser** app | Provider and hooks. No platform code. |
+| [`@signalwire/react-native`](packages/react-native) | A **React Native** app | The above, re-exported, plus adapters, video view, CallKit and audio routing. |
+
+The hooks are identical on both. React Native apps install one package and get
+everything; browser apps install the core and skip the native weight entirely.
+
 ## Repository layout
 
 | Path | What it is |
 | --- | --- |
-| [`packages/react-native/`](packages/react-native) | The published package |
+| [`packages/react/`](packages/react) | Universal core — provider and hooks |
+| [`packages/react-native/`](packages/react-native) | React Native platform layer |
 | [`example/`](example) | Expo dev-client demo app |
+| [`examples/web/`](examples/web) | Vite browser demo — proves the core is universal |
 | [`server/`](server) | Support server — device-token registry and APNs VoIP / FCM sender |
 | [`docs/`](docs) | Native setup, push setup, device-test checklist |
 | [`TESTING.md`](TESTING.md) | How to verify all of it, from a cold start |

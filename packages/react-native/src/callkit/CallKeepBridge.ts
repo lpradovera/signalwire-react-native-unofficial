@@ -3,7 +3,7 @@ import RNCallKeep, { CONSTANTS } from 'react-native-callkeep';
 import { Subject, takeUntil } from 'rxjs';
 
 import { getAudioRouteController } from '../audio/AudioRouteController';
-import { logger } from '../logger';
+import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
 import { CallRegistry } from './CallRegistry';
 

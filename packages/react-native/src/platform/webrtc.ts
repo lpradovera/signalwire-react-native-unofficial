@@ -3,7 +3,7 @@ import {
   RTCPeerConnection as RNPeerConnection
 } from 'react-native-webrtc';
 
-import { logger } from '../logger';
+import { logger } from '@signalwire/react';
 import { assertPeerModule } from './peers';
 
 import type { WebRTCApiProvider, WebRTCMediaDevices } from '@signalwire/js';

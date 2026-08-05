@@ -1,6 +1,5 @@
 import { useCallback, useContext } from 'react';
 
-import { loadCallKit } from '../callkit/lazy';
 import { SignalWireContext } from './SignalWireProvider';
 import { useObservable } from './useObservable';
 
@@ -31,7 +30,7 @@ function useSignalWireContext(): SignalWireContextValue {
 
 /** Client-level state and actions. */
 export function useSignalWire(): UseSignalWireResult {
-  const { client, error, callKitEnabled } = useSignalWireContext();
+  const { client, error, observer } = useSignalWireContext();
 
   const isConnected = useObservable(client?.isConnected$, client?.isConnected ?? false);
   const isRegistered = useObservable(client?.isRegistered$, client?.isRegistered ?? false);
@@ -44,12 +43,12 @@ export function useSignalWire(): UseSignalWireResult {
         throw new Error('SignalWire client is not ready yet.');
       }
       const call = await client.dial(destination, options);
-      if (callKitEnabled) {
-        loadCallKit().trackCall(call, destination, destination);
-      }
+      // The core does not know what an observer does with this — on React
+      // Native it registers the call with CallKit; on the web nobody listens.
+      observer?.onOutgoingCall?.(call, destination);
       return call;
     },
-    [client, callKitEnabled]
+    [client, observer]
   );
 
   const disconnect = useCallback((): Promise<void> => {

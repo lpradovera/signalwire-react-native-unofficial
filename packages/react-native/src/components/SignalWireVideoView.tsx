@@ -1,7 +1,7 @@
 import React from 'react';
 import { RTCView } from 'react-native-webrtc';
 
-import { useCall } from '../react/useCall';
+import { useCall } from '@signalwire/react';
 
 import type { Call } from '@signalwire/js';
 import type { StyleProp, ViewStyle } from 'react-native';

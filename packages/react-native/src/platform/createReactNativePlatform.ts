@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { logger } from '../logger';
+import { logger } from '@signalwire/react';
 import { assertPolyfillsInstalled } from './assertPolyfills';
 import { installNetworkShim } from './networkShim';
 import { ReactNativeStorage } from './storage';

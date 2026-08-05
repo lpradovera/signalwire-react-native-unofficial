@@ -1,6 +1,6 @@
 import { BehaviorSubject } from 'rxjs';
 
-import { logger } from '../logger';
+import { logger } from '@signalwire/react';
 
 import type {
   CallEntry,

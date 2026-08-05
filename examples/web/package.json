@@ -1,0 +1,26 @@
+{
+  "name": "@signalwire/react-web-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@signalwire/js": "^4.0.0-rc.2",
+    "@signalwire/react": "^0.1.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.9.3",
+    "vite": "^6.0.7"
+  }
+}

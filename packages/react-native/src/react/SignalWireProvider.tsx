@@ -1,20 +1,12 @@
-import { SignalWire } from '@signalwire/js';
-import React, { createContext, useEffect, useMemo, useState } from 'react';
+import { SignalWireProvider as CoreProvider } from '@signalwire/react';
+import React, { useMemo } from 'react';
 
-import { loadCallKit } from '../callkit/lazy';
-import { logger } from '../logger';
+import { createCallKitObserver } from '../callkit/observer';
 import { createReactNativePlatform } from '../platform/createReactNativePlatform';
 
 import type { ReactNativePlatformOptions } from '../platform/createReactNativePlatform';
+import type { CallObserver, SignalWirePlatform } from '@signalwire/react';
 import type { CredentialProvider, SignalWireOptions } from '@signalwire/js';
-
-export interface SignalWireContextValue {
-  readonly client: SignalWire | null;
-  readonly error: Error | null;
-  readonly callKitEnabled: boolean;
-}
-
-export const SignalWireContext = createContext<SignalWireContextValue | null>(null);
 
 export interface SignalWireProviderProps {
   /**
@@ -35,7 +27,13 @@ export interface SignalWireProviderProps {
   children: React.ReactNode;
 }
 
-/** Owns the SignalWire client lifecycle and publishes it through context. */
+/**
+ * React Native flavour of `SignalWireProvider`.
+ *
+ * Identical API to the web, because it supplies the platform layer itself
+ * rather than making callers pass one. Forgetting that argument would surface
+ * as the polyfill error chain, which is a poor way to learn about it.
+ */
 export function SignalWireProvider({
   credentialProvider,
   platform,
@@ -43,48 +41,23 @@ export function SignalWireProvider({
   callKit = false,
   children
 }: SignalWireProviderProps): React.JSX.Element {
-  const [client, setClient] = useState<SignalWire | null>(null);
-  const [error, setError] = useState<Error | null>(null);
+  // Built once: a new platform identity would tear down and rebuild the client.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const rnPlatform = useMemo<SignalWirePlatform>(() => createReactNativePlatform(platform), []);
 
-  useEffect(() => {
-    const rnPlatform = createReactNativePlatform(platform);
-    const instance = new SignalWire(credentialProvider, {
-      ...rnPlatform.options,
-      ...options
-    });
-
-    setClient(instance);
-    setError(null);
-
-    if (callKit) {
-      loadCallKit().bindClient(instance);
-    }
-
-    const subscription = instance.errors$.subscribe((next) => {
-      logger.warn('SDK error:', next);
-      setError(next);
-    });
-
-    return () => {
-      subscription.unsubscribe();
-      setClient(null);
-      try {
-        instance.destroy();
-      } catch (destroyError) {
-        logger.warn('Client destroy threw:', destroyError);
-      }
-      rnPlatform.dispose();
-    };
-    // `platform` and `options` are intentionally not dependencies: rebuilding
-    // the client on every render of an inline object literal would be
-    // catastrophic. Change `credentialProvider` to force a rebuild.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [credentialProvider, callKit]);
-
-  const value = useMemo<SignalWireContextValue>(
-    () => ({ client, error, callKitEnabled: callKit }),
-    [client, error, callKit]
+  const observer = useMemo<CallObserver | undefined>(
+    () => (callKit ? createCallKitObserver() : undefined),
+    [callKit]
   );
 
-  return <SignalWireContext.Provider value={value}>{children}</SignalWireContext.Provider>;
+  return (
+    <CoreProvider
+      credentialProvider={credentialProvider}
+      platform={rnPlatform}
+      observer={observer}
+      options={options}
+    >
+      {children}
+    </CoreProvider>
+  );
 }

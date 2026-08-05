@@ -1,7 +1,7 @@
 import InCallManager from 'react-native-incall-manager';
 import { BehaviorSubject } from 'rxjs';
 
-import { logger } from '../logger';
+import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
 
 import type { Observable } from 'rxjs';

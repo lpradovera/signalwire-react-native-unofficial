@@ -1,6 +1,5 @@
-import { act, render } from '@testing-library/react-native';
+import { act, render } from '@testing-library/react';
 import React from 'react';
-import { Text } from 'react-native';
 import { BehaviorSubject, Subject } from 'rxjs';
 
 import { useCall } from './useCall';
@@ -67,20 +66,20 @@ let result: ReturnType<typeof useCall> | undefined;
 
 function Probe({ call }: { call: FakeCall | null }): React.JSX.Element {
   result = useCall(call as never);
-  return <Text testID="status">{result.status}</Text>;
+  return <span data-testid="status">{result.status}</span>;
 }
 
 describe('useCall', () => {
   it('seeds status from the synchronous getter', () => {
     const { getByTestId } = render(<Probe call={createFakeCall()} />);
-    expect(getByTestId('status').props.children).toBe('ringing');
+    expect(getByTestId('status').textContent).toBe('ringing');
   });
 
   it('tracks status changes', () => {
     const call = createFakeCall();
     const { getByTestId } = render(<Probe call={call} />);
     act(() => call._status$.next('connected'));
-    expect(getByTestId('status').props.children).toBe('connected');
+    expect(getByTestId('status').textContent).toBe('connected');
   });
 
   it('tracks participants', () => {
@@ -178,10 +177,10 @@ describe('useCall', () => {
     second._status$.next('connected');
 
     const { getByTestId, rerender } = render(<Probe call={first} />);
-    expect(getByTestId('status').props.children).toBe('ringing');
+    expect(getByTestId('status').textContent).toBe('ringing');
 
     rerender(<Probe call={second} />);
-    expect(getByTestId('status').props.children).toBe('connected');
+    expect(getByTestId('status').textContent).toBe('connected');
     expect(first._status$.observed).toBe(false);
   });
 });

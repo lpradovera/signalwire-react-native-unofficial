@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react';
 
-import { useObservable } from '../react/useObservable';
+import { useObservable } from '@signalwire/react';
 import { getAudioRouteController } from './AudioRouteController';
 
 import type { AudioRoute } from './AudioRouteController';

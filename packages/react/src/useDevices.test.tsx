@@ -1,6 +1,5 @@
-import { act, render } from '@testing-library/react-native';
+import { act, render } from '@testing-library/react';
 import React from 'react';
-import { Text } from 'react-native';
 import { BehaviorSubject } from 'rxjs';
 
 import { SignalWireContext } from './SignalWireProvider';
@@ -33,13 +32,13 @@ let result: ReturnType<typeof useDevices> | undefined;
 
 function Probe(): React.JSX.Element {
   result = useDevices();
-  return <Text testID="count">{String(result.audioInputs.length)}</Text>;
+  return <span data-testid="count">{String(result.audioInputs.length)}</span>;
 }
 
 function renderWithClient(value: unknown = client): ReturnType<typeof render> {
   return render(
     <SignalWireContext.Provider
-      value={{ client: value as never, error: null, callKitEnabled: false }}
+      value={{ client: value as never, error: null, observer: undefined }}
     >
       <Probe />
     </SignalWireContext.Provider>
@@ -57,7 +56,7 @@ describe('useDevices', () => {
   it('tracks the audio input list', () => {
     const { getByTestId } = renderWithClient();
     act(() => audioInputDevices$.next([{ deviceId: 'mic-1' }, { deviceId: 'mic-2' }]));
-    expect(getByTestId('count').props.children).toBe('2');
+    expect(getByTestId('count').textContent).toBe('2');
   });
 
   it('tracks the video input list', () => {

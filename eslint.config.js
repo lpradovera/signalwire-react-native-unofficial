@@ -28,5 +28,25 @@ module.exports = tseslint.config(
       '@typescript-eslint/consistent-type-imports': 'off'
     }
   },
+  {
+    // The whole point of @signalwire/react is that it runs unchanged in the
+    // browser and in React Native. Enforce that here rather than in review —
+    // this invariant erodes the first time someone needs "just one" import.
+    files: ['packages/react/src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['react-native', 'react-native/*', 'react-native-*', '@react-native-*'],
+              message:
+                '@signalwire/react must stay platform-agnostic. Put platform code in @signalwire/react-native and inject it through SignalWirePlatform or CallObserver.'
+            }
+          ]
+        }
+      ]
+    }
+  },
   { ignores: ['**/dist/**', '**/node_modules/**', 'example/**'] }
 );

@@ -33,7 +33,10 @@ jobs:
       - name: Unit tests
         run: npm test
 
-      - name: Bundle the example through Metro (iOS + Android)
+      # Bundles the native example through Metro (iOS + Android) and builds
+      # the web example with Vite. The web build is the only evidence that
+      # @signalwire/react actually runs in a browser.
+      - name: Bundle both examples
         run: npm run bundle-check
 
       # Catches broken exports maps and type-resolution regressions, which

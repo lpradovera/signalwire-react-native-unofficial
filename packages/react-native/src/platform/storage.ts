@@ -1,4 +1,4 @@
-import { logger } from '../logger';
+import { logger } from '@signalwire/react';
 
 import type { Storage } from '@signalwire/js';
 
