@@ -9,8 +9,9 @@ SignalWire has no push infrastructure, so this covers the middle of the chain:
 SignalWire ──webhook──▶ this server ──APNs/FCM──▶ device ──▶ reportIncomingPush()
 ```
 
-See [`../docs/push-setup.md`](../docs/push-setup.md) for the whole picture,
-including the Apple and Firebase setup this assumes you have done.
+**New to this? Start at [`../docs/push-setup.md`](../docs/push-setup.md)** — it
+walks the whole chain in order, from the Apple and Firebase setup this
+assumes you have done, through to verifying each link separately.
 
 ## Quick start
 

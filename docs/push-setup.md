@@ -50,6 +50,28 @@ Pick a vendor first — see [Choosing a push vendor](native-setup.md#choosing-a-
 This guide shows the direct APNs/FCM route, which is the one everything else
 wraps.
 
+### The order to do it in
+
+Each step is verifiable on its own. Doing them out of order is what makes push
+feel impossible to debug — you end up with three unproven links and one symptom.
+
+| # | Step | Section | Done when |
+| --- | --- | --- | --- |
+| 1 | Apple: App ID capability + `.p8` key | [1a](#1a-apple-developer-portal) | You have the `.p8`, Key ID and Team ID |
+| 2 | Xcode: Push + Background Modes (VoIP, Audio) | [1b](#1b-xcode-capabilities) | Capabilities show in the project |
+| 3 | Firebase: project + `google-services.json` | [2a](#2a-firebase) | File is in `android/app/` |
+| 4 | App: acquire tokens | [1c](#1c-app-register-for-pushkit-and-report-the-token), [2b](#2b-app-report-the-fcm-token) | You can log a token on each platform |
+| 5 | App: upload tokens to your server | [3](#3-app-sending-the-token-to-your-server) | `GET /devices` lists them |
+| 6 | Server: senders configured | [4b](#4b-sending-an-apns-voip-push), [4c](#4c-sending-an-fcm-data-message) | Startup logs no "not configured" warning |
+| 7 | Send a push by hand, app in foreground | [5](#5-verifying-it-one-link-at-a-time) | `POST /notify` reports `delivered: 1` |
+| 8 | `AppDelegate` PushKit hook | [1d](#1d-appdelegate-report-to-callkit-before-javascript-boots) | CallKit UI appears with the app force-quit |
+| 9 | JS receives and reports | [1e](#1e-js-pick-the-call-up-from-callkeep), [2c](#2c-app-the-headless-background-handler) | `reportIncomingPush` is called |
+| 10 | Fusion | [5](#5-verifying-it-one-link-at-a-time) | Logs show `Fused call … into …` |
+| 11 | The trigger (webhook) | [4d](#4d-the-trigger) | A real inbound call pushes automatically |
+
+Steps 1–7 need no app changes beyond token upload and can be proven with `curl`.
+Step 8 is the one that cannot be skipped or moved into JavaScript.
+
 ### The payload contract
 
 Whatever you send **must** carry the SignalWire call id. `CallRegistry` fuses
@@ -253,14 +275,97 @@ see its Android setup guide.
 
 ---
 
-## 3. Your backend
+## 3. App: sending the token to your server
+
+Sections 1c and 2b both hand their token to an `uploadToken` callback. This is
+that callback — the seam between the two halves, and the step most easily
+forgotten until nothing arrives and it is not obvious why.
+
+```ts
+// src/push/register.ts
+import { Platform } from 'react-native';
+
+const PUSH_SERVER = process.env.EXPO_PUBLIC_PUSH_SERVER ?? 'http://localhost:3000';
+
+/** Whether this build talks to APNs sandbox. Dev builds do; TestFlight and App Store do not. */
+const APNS_ENVIRONMENT = __DEV__ ? 'sandbox' : 'production';
+
+export async function uploadToken(externalUserId: string, token: string): Promise<void> {
+  const response = await fetch(`${PUSH_SERVER}/devices`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${process.env.EXPO_PUBLIC_PUSH_API_TOKEN ?? ''}`
+    },
+    body: JSON.stringify({
+      externalUserId,
+      platform: Platform.OS,
+      token,
+      environment: APNS_ENVIRONMENT
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Token registration failed: ${response.status} ${await response.text()}`);
+  }
+}
+```
+
+Then wire both platforms up once the user is authenticated — you need the
+`externalUserId` first, so this cannot happen at app launch:
+
+```ts
+// src/push/index.ts
+import { Platform } from 'react-native';
+
+import { registerFcmPush } from './android';
+import { registerVoipPush } from './ios';
+import { uploadToken } from './register';
+
+export function registerForCalls(externalUserId: string): void {
+  const upload = (token: string) => uploadToken(externalUserId, token);
+
+  if (Platform.OS === 'ios') {
+    registerVoipPush(upload);
+  } else {
+    void registerFcmPush(upload);
+  }
+}
+```
+
+Three things worth getting right here:
+
+- **Re-upload on every launch, not just first run.** Tokens rotate on reinstall,
+  restore from backup, and occasionally at the OS's discretion. `POST /devices`
+  is idempotent — it overwrites by token — so calling it every launch is cheap
+  and closes the staleness gap.
+- **`environment` must match the build.** A development build registers against
+  APNs sandbox; TestFlight and App Store builds are production. Sending a
+  sandbox token to the production host returns `BadDeviceToken`, and this is the
+  single most common reason a correctly-written push never arrives.
+- **Unregister on sign-out** with `DELETE /devices/:token`, or the next person
+  to use the handset gets a call meant for someone else.
+
+The server in [`../server/`](../server/) implements this endpoint. To try the
+whole chain locally:
+
+```bash
+API_TOKEN=devsecret npm run dev -w @signalwire/rn-push-server
+```
+
+Point `EXPO_PUBLIC_PUSH_SERVER` at it — for a physical device, that means your
+machine's LAN address rather than `localhost`.
+
+---
+
+## 4. Your backend
 
 A working implementation of everything in this section is in [`../server/`](../server/) —
 token registry, both senders, fan-out with token pruning, and the webhook
 adapter. Read on for what it is doing and why; run `npm run dev -w
 @signalwire/rn-push-server` to start it.
 
-### 3a. Store tokens
+### 4a. Store tokens
 
 Minimum viable schema:
 
@@ -275,7 +380,7 @@ Minimum viable schema:
 One subscriber can have many devices. Push to all of them and let the first
 answer win; the registry ends the others as missed.
 
-### 3b. Sending an APNs VoIP push
+### 4b. Sending an APNs VoIP push
 
 The whole sender, using the `.p8` key:
 
@@ -351,7 +456,7 @@ Three things that silently break this:
   registers against `api.sandbox.push.apple.com`. Sending a sandbox token to the
   production host returns `BadDeviceToken`.
 
-### 3c. Sending an FCM data message
+### 4c. Sending an FCM data message
 
 ```js
 // backend/fcm.js
@@ -399,7 +504,7 @@ export async function sendCallPush({ deviceToken, payload }) {
 `priority: 'high'` is what lets the message pierce Doze. A `notification` block
 alongside `data` sends it to the system tray and your handler never runs.
 
-### 3d. The trigger
+### 4d. The trigger
 
 **Confirm this part against current SignalWire documentation — it is the one
 link I could not verify from the SDK source.** You need a server-side signal
@@ -442,7 +547,7 @@ return immediately. Every second here is a second of ringing the caller loses.
 
 ---
 
-## 4. Verifying it, one link at a time
+## 5. Verifying it, one link at a time
 
 Do **not** debug this end to end. Test each link in isolation, in this order:
 
@@ -468,7 +573,7 @@ versions of steps 4 to 6.
 
 ---
 
-## 5. Troubleshooting
+## 6. Troubleshooting
 
 | Symptom | Cause |
 | --- | --- |
