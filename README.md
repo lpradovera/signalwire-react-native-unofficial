@@ -229,5 +229,8 @@ npm run verify:package   # publint + are-the-types-wrong on the built package
 npm run verify:prebuild  # real `expo prebuild`, asserts the config plugin applied
 ```
 
-Native behaviour cannot be verified without a device — see
-[`docs/device-testing.md`](docs/device-testing.md).
+Native behaviour cannot be verified without a device. To pick this up on a
+fresh machine, start with [`TESTING.md`](TESTING.md) — it covers environment
+bootstrap, the expected output of every check, a known Android build blocker,
+and failure triage. [`docs/device-testing.md`](docs/device-testing.md) is the
+12-scenario hardware checklist it ends at.
