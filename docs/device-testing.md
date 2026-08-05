@@ -1,7 +1,7 @@
 # Device-test checklist
 
 Everything in this list requires real hardware. None of it is covered by the
-180 unit tests, which mock every native module — those tests prove the logic is
+192 unit tests, which mock every native module — those tests prove the logic is
 right, not that the OS integration is.
 
 Run against the example app (`example/`) with a real SignalWire subscriber

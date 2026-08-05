@@ -5,7 +5,7 @@ import { Text } from 'react-native';
 // Everything the mock needs is built *inside* the factory. A factory that
 // closes over outer `const`s reads them before their initializers have run.
 jest.mock('@signalwire/js', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const { BehaviorSubject, Subject } = require('rxjs');
 
   const harness = {

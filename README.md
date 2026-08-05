@@ -219,11 +219,14 @@ installed. The platform logs a warning and continues with reduced resilience.
 
 ```bash
 npm install
-npm test                                            # 180 unit tests
+npm test                # 192 unit tests, ~95% statement coverage
 npm run type-check
 npm run lint
 npm run build
-npm run bundle-check -w @signalwire/react-native-example
+npm run bundle-check     # Metro bundles the example for iOS and Android
+npm run verify           # all of the above, in order
+npm run verify:package   # publint + are-the-types-wrong on the built package
+npm run verify:prebuild  # real `expo prebuild`, asserts the config plugin applied
 ```
 
 Native behaviour cannot be verified without a device — see

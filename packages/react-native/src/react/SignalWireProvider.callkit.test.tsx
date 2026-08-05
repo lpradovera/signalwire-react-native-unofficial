@@ -3,7 +3,7 @@ import React from 'react';
 import { Text } from 'react-native';
 
 jest.mock('@signalwire/js', () => {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+   
   const { BehaviorSubject, Subject } = require('rxjs');
   const harness = {
     destroy: jest.fn(),

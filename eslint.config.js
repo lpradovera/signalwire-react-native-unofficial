@@ -18,8 +18,15 @@ module.exports = tseslint.config(
     }
   },
   {
+    // Tests deliberately use `require()` and `typeof import()` to exercise the
+    // lazy-loading paths and to build jest.mock factories, which must not
+    // close over outer consts.
     files: ['**/*.test.ts', '**/*.test.tsx'],
-    rules: { '@typescript-eslint/no-explicit-any': 'off' }
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/consistent-type-imports': 'off'
+    }
   },
   { ignores: ['**/dist/**', '**/node_modules/**', 'example/**'] }
 );
