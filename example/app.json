@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "SignalWire RN Example",
+    "slug": "signalwire-rn-example",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "signalwire-example",
+    "userInterfaceStyle": "dark",
+    "ios": { "bundleIdentifier": "com.signalwire.rnexample", "supportsTablet": true },
+    "android": { "package": "com.signalwire.rnexample" },
+    "plugins": [
+      "expo-dev-client",
+      "@config-plugins/react-native-webrtc",
+      ["@signalwire/react-native", { "enableCallKit": true, "enableVoipPush": true }]
+    ]
+  }
+}
