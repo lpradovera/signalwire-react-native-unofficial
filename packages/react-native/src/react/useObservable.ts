@@ -62,7 +62,6 @@ function createStore<T>(
 export function useObservable<T>(observable$: Observable<T> | undefined, initialValue: T): T {
   const initialRef = useRef(initialValue);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   const store = useMemo(() => createStore(observable$, initialRef.current), [observable$]);
 
   return useSyncExternalStore(store.subscribe, store.getSnapshot);
