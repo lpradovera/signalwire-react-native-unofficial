@@ -140,6 +140,8 @@ Bare projects follow the
 
 ## Choosing a push vendor
 
+For the step-by-step build, see [push-setup.md](push-setup.md).
+
 **SignalWire has no push infrastructure.** It will not send the push for you and
 there is no device-token registration endpoint. The full chain is yours:
 

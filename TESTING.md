@@ -224,8 +224,10 @@ Paste it into the example app's first screen. Then work through
 **`docs/device-testing.md`** — 12 scenarios with a sign-off table. Fill the table
 in and commit it.
 
-The push scenarios (5–7) additionally need a backend that registers the device
-token with SignalWire and sends a payload **carrying `call_id`**. The package
+The push scenarios (5–7) additionally need the full push chain built — see
+**`docs/push-setup.md`**. SignalWire has no push infrastructure, so the webhook,
+the token store and the sender are all yours, and the payload must **carry
+`call_id`**. The package
 owns neither half by design; `reportIncomingPush({ callId, from, fromName })` is
 the entire contract. Without `call_id` the registry falls back to "the single
 unmatched inbound call within 20s" and logs a warning — which breaks as soon as

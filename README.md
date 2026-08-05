@@ -185,9 +185,10 @@ your backend learns an inbound call is coming (webhook), looks up the device
 token, and sends the push; the app receives it and calls `reportIncomingPush`.
 That call is the entire contract with this package.
 
-See [`docs/native-setup.md`](docs/native-setup.md) for the `AppDelegate` hook
-that reports a cold-start push before JavaScript boots, and for a comparison of
-push vendors that can actually send iOS VoIP pushes.
+**[`docs/push-setup.md`](docs/push-setup.md) is the full end-to-end guide** —
+Apple/Firebase setup, the `AppDelegate` hook, backend senders for APNs VoIP and
+FCM, and a link-by-link verification ladder.
+[`docs/native-setup.md`](docs/native-setup.md) covers vendor choice.
 
 ## Not supported, and why
 
