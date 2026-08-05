@@ -8,10 +8,10 @@
     "server"
   ],
   "scripts": {
-    "build": "npm run build -w @signalwire/react && npm run build -w @signalwire/react-ui && npm run build -w @signalwire/react-native",
-    "test": "npm run test -w @signalwire/react && npm run test -w @signalwire/react-ui && npm run test -w @signalwire/react-native && npm run test -w @signalwire/rn-push-server",
-    "type-check": "npm run type-check -w @signalwire/react && npm run type-check -w @signalwire/react-ui && npm run type-check -w @signalwire/react-native && npm run type-check -w @signalwire/react-native-example && npm run type-check -w @signalwire/react-web-example && npm run type-check -w @signalwire/rn-push-server",
-    "lint": "eslint packages/react/src packages/react-ui/src packages/react-native/src",
+    "build": "npm run build -w @signalwire/react && npm run build -w @signalwire/react-ui && npm run build -w @signalwire/react-native && npm run build -w @signalwire/react-native-ui",
+    "test": "npm run test -w @signalwire/react && npm run test -w @signalwire/react-ui && npm run test -w @signalwire/react-native && npm run test -w @signalwire/react-native-ui && npm run test -w @signalwire/rn-push-server",
+    "type-check": "npm run type-check -w @signalwire/react && npm run type-check -w @signalwire/react-ui && npm run type-check -w @signalwire/react-native && npm run type-check -w @signalwire/react-native-ui && npm run type-check -w @signalwire/react-native-example && npm run type-check -w @signalwire/react-web-example && npm run type-check -w @signalwire/rn-push-server",
+    "lint": "eslint packages/react/src packages/react-ui/src packages/react-native/src packages/react-native-ui/src",
     "bundle-check": "npm run bundle-check -w @signalwire/react-native-example && npm run build -w @signalwire/react-web-example",
     "verify:prebuild": "node scripts/verify-prebuild.mjs",
     "verify:package": "npm run build && cd packages/react-native && npx publint && npx @arethetypeswrong/cli --pack . --exclude-entrypoints app.plugin.js",
