@@ -7,6 +7,16 @@ CallKit and ConnectionService.
 
 Supports iOS 13+ and Android 8+, on React Native 0.76+ (bare or Expo).
 
+## Repository layout
+
+| Path | What it is |
+| --- | --- |
+| [`packages/react-native/`](packages/react-native) | The published package |
+| [`example/`](example) | Expo dev-client demo app |
+| [`server/`](server) | Support server — device-token registry and APNs VoIP / FCM sender |
+| [`docs/`](docs) | Native setup, push setup, device-test checklist |
+| [`TESTING.md`](TESTING.md) | How to verify all of it, from a cold start |
+
 ## Install
 
 ```bash

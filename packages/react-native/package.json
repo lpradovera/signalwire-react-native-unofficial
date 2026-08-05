@@ -9,42 +9,87 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": { "types": "./dist/index.d.mts", "default": "./dist/index.mjs" },
-      "require": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
     },
     "./callkit": {
-      "import": { "types": "./dist/callkit.d.mts", "default": "./dist/callkit.mjs" },
-      "require": { "types": "./dist/callkit.d.ts", "default": "./dist/callkit.js" }
+      "import": {
+        "types": "./dist/callkit.d.mts",
+        "default": "./dist/callkit.mjs"
+      },
+      "require": {
+        "types": "./dist/callkit.d.ts",
+        "default": "./dist/callkit.js"
+      }
     },
     "./audio": {
-      "import": { "types": "./dist/audio.d.mts", "default": "./dist/audio.mjs" },
-      "require": { "types": "./dist/audio.d.ts", "default": "./dist/audio.js" }
+      "import": {
+        "types": "./dist/audio.d.mts",
+        "default": "./dist/audio.mjs"
+      },
+      "require": {
+        "types": "./dist/audio.d.ts",
+        "default": "./dist/audio.js"
+      }
     },
     "./polyfills": {
-      "import": { "types": "./dist/polyfills.d.mts", "default": "./dist/polyfills.mjs" },
-      "require": { "types": "./dist/polyfills.d.ts", "default": "./dist/polyfills.js" }
+      "import": {
+        "types": "./dist/polyfills.d.mts",
+        "default": "./dist/polyfills.mjs"
+      },
+      "require": {
+        "types": "./dist/polyfills.d.ts",
+        "default": "./dist/polyfills.js"
+      }
     },
     "./app.plugin.js": "./app.plugin.js"
   },
   "//typesVersions": "Lets subpath types resolve under TypeScript's classic \"node\" moduleResolution, which Expo's tsconfig.base still sets. Without this, consumers must override moduleResolution to see /callkit, /audio and /polyfills types.",
   "typesVersions": {
     "*": {
-      "callkit": ["./dist/callkit.d.ts"],
-      "audio": ["./dist/audio.d.ts"],
-      "polyfills": ["./dist/polyfills.d.ts"]
+      "callkit": [
+        "./dist/callkit.d.ts"
+      ],
+      "audio": [
+        "./dist/audio.d.ts"
+      ],
+      "polyfills": [
+        "./dist/polyfills.d.ts"
+      ]
     }
   },
   "//sideEffects": "NOT false. The polyfills entry exists purely for its side effects; marking the package side-effect-free lets bundlers drop it, which breaks the SDK at import time.",
-  "sideEffects": ["./dist/polyfills.js", "./dist/polyfills.mjs"],
-  "engines": { "node": ">=18" },
-  "files": ["dist", "app.plugin.js"],
+  "sideEffects": [
+    "./dist/polyfills.js",
+    "./dist/polyfills.mjs"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "app.plugin.js",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsup",
     "test": "jest",
     "type-check": "tsc --noEmit",
     "lint": "eslint src"
   },
-  "keywords": ["signalwire", "react-native", "webrtc", "callkit", "voip"],
+  "keywords": [
+    "signalwire",
+    "react-native",
+    "webrtc",
+    "callkit",
+    "voip"
+  ],
   "peerDependencies": {
     "@expo/config-plugins": "^9.0.0",
     "@react-native-async-storage/async-storage": ">=2.0.0",
@@ -60,10 +105,18 @@
     "rxjs": "^7.8.2"
   },
   "peerDependenciesMeta": {
-    "@expo/config-plugins": { "optional": true },
-    "@react-native-community/netinfo": { "optional": true },
-    "react-native-callkeep": { "optional": true },
-    "react-native-incall-manager": { "optional": true }
+    "@expo/config-plugins": {
+      "optional": true
+    },
+    "@react-native-community/netinfo": {
+      "optional": true
+    },
+    "react-native-callkeep": {
+      "optional": true
+    },
+    "react-native-incall-manager": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@expo/config-plugins": "^9.0.0",
@@ -86,5 +139,14 @@
     "rxjs": "^7.8.2",
     "tsup": "^8.3.5",
     "typescript": "^5.9.3"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/signalwire/signalwire-react-native.git",
+    "directory": "packages/react-native"
+  },
+  "bugs": {
+    "url": "https://github.com/signalwire/signalwire-react-native/issues"
+  },
+  "homepage": "https://github.com/signalwire/signalwire-react-native#readme"
 }
