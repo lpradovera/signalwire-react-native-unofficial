@@ -1,5 +1,8 @@
 # `@signalwire/react-native`
 
+> **Unofficial.** This is a community project, not a SignalWire product, and is
+> not affiliated with or endorsed by SignalWire.
+
 React Native support for [`@signalwire/js`](https://www.npmjs.com/package/@signalwire/js) v4:
 platform adapters, React hooks over the SDK's RxJS observables, and native call
 UI via CallKit and ConnectionService.
@@ -25,7 +28,7 @@ import { SignalWireProvider, useSignalWire } from '@signalwire/react-native';
 
 **Full documentation, including the import-order rule, the two build-config
 requirements, native setup, and push:**
-https://github.com/signalwire/signalwire-react-native
+https://github.com/lpradovera/signalwire-react-native-unofficial
 
 ## Entry points
 

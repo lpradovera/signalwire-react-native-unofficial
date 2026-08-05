@@ -17,3 +17,6 @@ server/.data/
 .env.local
 
 .DS_Store
+
+# Internal planning artifacts — kept locally, never published
+docs/superpowers/

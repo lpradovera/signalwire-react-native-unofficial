@@ -142,11 +142,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/signalwire/signalwire-react-native.git",
+    "url": "git+https://github.com/lpradovera/signalwire-react-native-unofficial.git",
     "directory": "packages/react-native"
   },
   "bugs": {
-    "url": "https://github.com/signalwire/signalwire-react-native/issues"
+    "url": "https://github.com/lpradovera/signalwire-react-native-unofficial/issues"
   },
-  "homepage": "https://github.com/signalwire/signalwire-react-native#readme"
+  "homepage": "https://github.com/lpradovera/signalwire-react-native-unofficial#readme"
 }

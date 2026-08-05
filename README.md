@@ -1,5 +1,8 @@
 # `@signalwire/react-native`
 
+> **Unofficial.** This is a community project, not a SignalWire product, and is
+> not affiliated with or endorsed by SignalWire.
+
 React Native support for [`@signalwire/js`](https://www.npmjs.com/package/@signalwire/js) v4.
 Supplies the platform adapters the browser-oriented SDK needs on mobile, an
 idiomatic React API over its RxJS observables, and native call UI through
