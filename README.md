@@ -60,7 +60,9 @@ Three things break without it, all at import or first-call time:
 
 ## Two build-config requirements
 
-Both are consumer-side and neither is specific to Expo.
+Both are consumer-side and neither is specific to Expo. You do **not** need to
+change `moduleResolution` — the package ships `typesVersions`, so subpath types
+resolve on Expo's stock `tsconfig.base` as well as on modern resolution.
 
 **Metro must resolve package exports** for the `/polyfills`, `/callkit` and
 `/audio` subpaths. On by default from Expo SDK 53; opt in before that:

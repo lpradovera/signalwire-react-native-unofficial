@@ -5,3 +5,5 @@ dist/
 example/ios/
 example/android/
 .DS_Store
+
+.expo-export-check/

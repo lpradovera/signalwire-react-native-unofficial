@@ -3,32 +3,40 @@
   "version": "0.1.0",
   "description": "React Native support for the SignalWire JS SDK",
   "license": "MIT",
+  "type": "commonjs",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js"
+      "import": { "types": "./dist/index.d.mts", "default": "./dist/index.mjs" },
+      "require": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
     },
     "./callkit": {
-      "types": "./dist/callkit.d.ts",
-      "import": "./dist/callkit.mjs",
-      "require": "./dist/callkit.js"
+      "import": { "types": "./dist/callkit.d.mts", "default": "./dist/callkit.mjs" },
+      "require": { "types": "./dist/callkit.d.ts", "default": "./dist/callkit.js" }
     },
     "./audio": {
-      "types": "./dist/audio.d.ts",
-      "import": "./dist/audio.mjs",
-      "require": "./dist/audio.js"
+      "import": { "types": "./dist/audio.d.mts", "default": "./dist/audio.mjs" },
+      "require": { "types": "./dist/audio.d.ts", "default": "./dist/audio.js" }
     },
     "./polyfills": {
-      "types": "./dist/polyfills.d.ts",
-      "import": "./dist/polyfills.mjs",
-      "require": "./dist/polyfills.js"
+      "import": { "types": "./dist/polyfills.d.mts", "default": "./dist/polyfills.mjs" },
+      "require": { "types": "./dist/polyfills.d.ts", "default": "./dist/polyfills.js" }
     },
     "./app.plugin.js": "./app.plugin.js"
   },
+  "//typesVersions": "Lets subpath types resolve under TypeScript's classic \"node\" moduleResolution, which Expo's tsconfig.base still sets. Without this, consumers must override moduleResolution to see /callkit, /audio and /polyfills types.",
+  "typesVersions": {
+    "*": {
+      "callkit": ["./dist/callkit.d.ts"],
+      "audio": ["./dist/audio.d.ts"],
+      "polyfills": ["./dist/polyfills.d.ts"]
+    }
+  },
+  "//sideEffects": "NOT false. The polyfills entry exists purely for its side effects; marking the package side-effect-free lets bundlers drop it, which breaks the SDK at import time.",
+  "sideEffects": ["./dist/polyfills.js", "./dist/polyfills.mjs"],
+  "engines": { "node": ">=18" },
   "files": ["dist", "app.plugin.js"],
   "scripts": {
     "build": "tsup",

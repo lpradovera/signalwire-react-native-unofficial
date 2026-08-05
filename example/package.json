@@ -7,7 +7,7 @@
     "start": "expo start --dev-client",
     "ios": "expo run:ios",
     "android": "expo run:android",
-    "bundle-check": "expo export --platform ios --output-dir /tmp/sw-rn-export",
+    "bundle-check": "expo export --platform all --output-dir ./.expo-export-check",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

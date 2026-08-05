@@ -8,8 +8,12 @@
   "scripts": {
     "build": "npm run build -w @signalwire/react-native",
     "test": "npm run test -w @signalwire/react-native",
-    "type-check": "npm run type-check -w @signalwire/react-native",
-    "lint": "eslint packages/react-native/src"
+    "type-check": "npm run type-check -w @signalwire/react-native && npm run type-check -w @signalwire/react-native-example",
+    "lint": "eslint packages/react-native/src",
+    "bundle-check": "npm run bundle-check -w @signalwire/react-native-example",
+    "verify:prebuild": "node scripts/verify-prebuild.mjs",
+    "verify:package": "npm run build && cd packages/react-native && npx publint && npx @arethetypeswrong/cli --pack .",
+    "verify": "npm run lint && npm run type-check && npm test && npm run build && npm run bundle-check"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
