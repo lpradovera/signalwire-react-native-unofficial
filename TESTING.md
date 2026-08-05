@@ -181,6 +181,35 @@ adb logcat -c && adb logcat | grep -iE "signalwire|ReactNative|AndroidRuntime"
 An emulator covers ConnectionService, permissions, and app boot. It gives you
 **no real audio or camera**, so checklist items 1, 2, 8, 9 still need hardware.
 
+### 2e. Device clouds — what they can and cannot do
+
+Checked August 2026. **A device cloud does not remove the need for a Mac**, and
+for a calling app it cannot verify the thing that matters.
+
+BrowserStack specifically:
+
+| Capability | Reality |
+| --- | --- |
+| Audio **injection** (mic in) | **Android only** — every published doc is `audio-injection-android`, no iOS equivalent. Select devices. And "when the audio file is playing, you do not hear the audio." |
+| Audio **output** (hearing the device) | Only documented for *Live* (browser), not App Live (native apps). iOS limited to certain iPads on 13.4+; Android limited to Samsung Internet and Firefox, not Chrome. |
+| Push notifications | Supported both platforms — but the banner is invisible (their video streaming), so check Notification Center. Nothing documented about VoIP/PushKit. |
+| iOS dev builds | "Install app via TestFlight" — i.e. it presupposes a signed build from macOS or EAS. |
+| Building your app | Not offered. It runs binaries. |
+
+So it cannot verify checklist items 1, 2, 8 or 9 (anything audible), and item 5
+(cold-start VoIP push) is not something to trust from a shared, frequently-reset
+cloud device.
+
+**What it is good for:** confirming the app *boots* across a device matrix.
+That is higher-signal here than it sounds — three of the four RN breakages in
+section 0 are import-time crashes, so a clean launch clears all three at once.
+Worth buying after the basics work on one physical handset, not before.
+
+**The better spend at this stage is EAS Build**, which produces a signed `.ipa`
+on Expo's macOS machines and removes the actual blocker. It would likely also
+sidestep the AGP failure in section 2c, since it builds from known-good
+toolchain images rather than whatever AGP resolves to locally.
+
 ---
 
 ## 3. Tier 2 — iOS
