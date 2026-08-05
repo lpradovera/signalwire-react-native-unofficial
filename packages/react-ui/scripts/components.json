@@ -1,0 +1,109 @@
+[
+  {
+    "tag": "sw-call-media",
+    "className": "SwCallMedia",
+    "name": "CallMedia",
+    "events": {}
+  },
+  {
+    "tag": "sw-self-media",
+    "className": "SwSelfMedia",
+    "name": "SelfMedia",
+    "events": {}
+  },
+  {
+    "tag": "sw-local-camera",
+    "className": "SwLocalCamera",
+    "name": "LocalCamera",
+    "events": {}
+  },
+  {
+    "tag": "sw-call-status",
+    "className": "SwCallStatus",
+    "name": "CallStatus",
+    "events": {}
+  },
+  {
+    "tag": "sw-call-provider",
+    "className": "SwCallProvider",
+    "name": "CallProvider",
+    "events": {}
+  },
+  {
+    "tag": "sw-call-dialpad",
+    "className": "SwCallDialpad",
+    "name": "CallDialpad",
+    "events": {}
+  },
+  {
+    "tag": "sw-audio-level",
+    "className": "SwAudioLevel",
+    "name": "AudioLevel",
+    "events": {}
+  },
+  {
+    "tag": "sw-click-to-call",
+    "className": "SwClickToCall",
+    "name": "ClickToCall",
+    "events": {}
+  },
+  {
+    "tag": "sw-call-controls",
+    "className": "SwCallControls",
+    "name": "CallControls",
+    "events": {
+      "onCallHangup": "sw-call-hangup"
+    }
+  },
+  {
+    "tag": "sw-participants",
+    "className": "SwParticipants",
+    "name": "Participants",
+    "events": {
+      "onParticipantMuteAudio": "sw-participant-mute-audio",
+      "onParticipantMuteVideo": "sw-participant-mute-video",
+      "onParticipantRemove": "sw-participant-remove"
+    }
+  },
+  {
+    "tag": "sw-participant-controls",
+    "className": "SwParticipantControls",
+    "name": "ParticipantControls",
+    "events": {
+      "onParticipantPinToggle": "sw-participant-pin-toggle",
+      "onParticipantVolumeChange": "sw-participant-volume-change"
+    }
+  },
+  {
+    "tag": "sw-directory",
+    "className": "SwDirectory",
+    "name": "Directory",
+    "events": {
+      "onAddressSelect": "sw-address-select",
+      "onDial": "sw-dial"
+    }
+  },
+  {
+    "tag": "sw-device-selector",
+    "className": "SwDeviceSelector",
+    "name": "DeviceSelector",
+    "events": {
+      "onDeviceChange": "sw-device-change"
+    }
+  },
+  {
+    "tag": "sw-call-widget",
+    "className": "SwCallWidget",
+    "name": "CallWidget",
+    "events": {
+      "onCallEnded": "sw-call-ended",
+      "onCallHangup": "sw-call-hangup",
+      "onContentDrawerClose": "sw-content-drawer-close",
+      "onDial": "sw-dial",
+      "onDisplayContent": "sw-display-content",
+      "onFullscreenToggle": "sw-fullscreen-toggle",
+      "onModalClose": "sw-modal-close",
+      "onTranscriptToggle": "sw-transcript-toggle"
+    }
+  }
+]

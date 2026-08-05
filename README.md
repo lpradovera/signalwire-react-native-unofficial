@@ -16,6 +16,7 @@ Supports iOS 13+ and Android 8+, on React Native 0.76+ (bare or Expo).
 | --- | --- | --- |
 | [`@signalwire/react`](packages/react) | A **browser** app | Provider and hooks. No platform code. |
 | [`@signalwire/react-native`](packages/react-native) | A **React Native** app | The above, re-exported, plus adapters, video view, CallKit and audio routing. |
+| [`@signalwire/react-ui`](packages/react-ui) | A **browser** app wanting ready-made UI | React wrappers for the SDK's Lit components — call controls, participants, dialpad, device selector. Optional. |
 
 The hooks are identical on both. React Native apps install one package and get
 everything; browser apps install the core and skip the native weight entirely.
@@ -25,6 +26,7 @@ everything; browser apps install the core and skip the native weight entirely.
 | Path | What it is |
 | --- | --- |
 | [`packages/react/`](packages/react) | Universal core — provider and hooks |
+| [`packages/react-ui/`](packages/react-ui) | React wrappers for the SDK's web components |
 | [`packages/react-native/`](packages/react-native) | React Native platform layer |
 | [`example/`](example) | Expo dev-client demo app |
 | [`examples/web/`](examples/web) | Vite browser demo — proves the core is universal |

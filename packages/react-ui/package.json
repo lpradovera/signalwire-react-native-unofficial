@@ -1,0 +1,208 @@
+{
+  "name": "@signalwire/react-ui",
+  "version": "0.1.0",
+  "description": "React components for the SignalWire web components — browser only",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "theme.css",
+    "README.md"
+  ],
+  "scripts": {
+    "generate": "node scripts/generate.mjs && node scripts/sync-package.mjs",
+    "build": "tsup",
+    "test": "jest",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src"
+  },
+  "keywords": [
+    "signalwire",
+    "react",
+    "web-components",
+    "lit",
+    "webrtc",
+    "voip"
+  ],
+  "peerDependencies": {
+    "@lit/react": "^1.0.7",
+    "@signalwire/js": "^4.0.0-rc.2",
+    "@signalwire/web-components": "^4.0.0-rc.2",
+    "react": ">=18.2.0"
+  },
+  "devDependencies": {
+    "@lit/react": "^1.0.8",
+    "@signalwire/js": "^4.0.0-rc.2",
+    "@signalwire/web-components": "^4.0.0-rc.2",
+    "@testing-library/react": "^16.1.0",
+    "@types/jest": "^29.5.14",
+    "@types/react": "^18.3.18",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "ts-jest": "^29.2.5",
+    "tsup": "^8.3.5",
+    "typescript": "^5.9.3"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./theme.css": "./theme.css",
+    "./call-media": {
+      "import": {
+        "types": "./dist/components/CallMedia.d.mts",
+        "default": "./dist/components/CallMedia.mjs"
+      },
+      "require": {
+        "types": "./dist/components/CallMedia.d.ts",
+        "default": "./dist/components/CallMedia.js"
+      }
+    },
+    "./self-media": {
+      "import": {
+        "types": "./dist/components/SelfMedia.d.mts",
+        "default": "./dist/components/SelfMedia.mjs"
+      },
+      "require": {
+        "types": "./dist/components/SelfMedia.d.ts",
+        "default": "./dist/components/SelfMedia.js"
+      }
+    },
+    "./local-camera": {
+      "import": {
+        "types": "./dist/components/LocalCamera.d.mts",
+        "default": "./dist/components/LocalCamera.mjs"
+      },
+      "require": {
+        "types": "./dist/components/LocalCamera.d.ts",
+        "default": "./dist/components/LocalCamera.js"
+      }
+    },
+    "./call-status": {
+      "import": {
+        "types": "./dist/components/CallStatus.d.mts",
+        "default": "./dist/components/CallStatus.mjs"
+      },
+      "require": {
+        "types": "./dist/components/CallStatus.d.ts",
+        "default": "./dist/components/CallStatus.js"
+      }
+    },
+    "./call-provider": {
+      "import": {
+        "types": "./dist/components/CallProvider.d.mts",
+        "default": "./dist/components/CallProvider.mjs"
+      },
+      "require": {
+        "types": "./dist/components/CallProvider.d.ts",
+        "default": "./dist/components/CallProvider.js"
+      }
+    },
+    "./call-dialpad": {
+      "import": {
+        "types": "./dist/components/CallDialpad.d.mts",
+        "default": "./dist/components/CallDialpad.mjs"
+      },
+      "require": {
+        "types": "./dist/components/CallDialpad.d.ts",
+        "default": "./dist/components/CallDialpad.js"
+      }
+    },
+    "./audio-level": {
+      "import": {
+        "types": "./dist/components/AudioLevel.d.mts",
+        "default": "./dist/components/AudioLevel.mjs"
+      },
+      "require": {
+        "types": "./dist/components/AudioLevel.d.ts",
+        "default": "./dist/components/AudioLevel.js"
+      }
+    },
+    "./click-to-call": {
+      "import": {
+        "types": "./dist/components/ClickToCall.d.mts",
+        "default": "./dist/components/ClickToCall.mjs"
+      },
+      "require": {
+        "types": "./dist/components/ClickToCall.d.ts",
+        "default": "./dist/components/ClickToCall.js"
+      }
+    },
+    "./call-controls": {
+      "import": {
+        "types": "./dist/components/CallControls.d.mts",
+        "default": "./dist/components/CallControls.mjs"
+      },
+      "require": {
+        "types": "./dist/components/CallControls.d.ts",
+        "default": "./dist/components/CallControls.js"
+      }
+    },
+    "./participants": {
+      "import": {
+        "types": "./dist/components/Participants.d.mts",
+        "default": "./dist/components/Participants.mjs"
+      },
+      "require": {
+        "types": "./dist/components/Participants.d.ts",
+        "default": "./dist/components/Participants.js"
+      }
+    },
+    "./participant-controls": {
+      "import": {
+        "types": "./dist/components/ParticipantControls.d.mts",
+        "default": "./dist/components/ParticipantControls.mjs"
+      },
+      "require": {
+        "types": "./dist/components/ParticipantControls.d.ts",
+        "default": "./dist/components/ParticipantControls.js"
+      }
+    },
+    "./directory": {
+      "import": {
+        "types": "./dist/components/Directory.d.mts",
+        "default": "./dist/components/Directory.mjs"
+      },
+      "require": {
+        "types": "./dist/components/Directory.d.ts",
+        "default": "./dist/components/Directory.js"
+      }
+    },
+    "./device-selector": {
+      "import": {
+        "types": "./dist/components/DeviceSelector.d.mts",
+        "default": "./dist/components/DeviceSelector.mjs"
+      },
+      "require": {
+        "types": "./dist/components/DeviceSelector.d.ts",
+        "default": "./dist/components/DeviceSelector.js"
+      }
+    },
+    "./call-widget": {
+      "import": {
+        "types": "./dist/components/CallWidget.d.mts",
+        "default": "./dist/components/CallWidget.mjs"
+      },
+      "require": {
+        "types": "./dist/components/CallWidget.d.ts",
+        "default": "./dist/components/CallWidget.js"
+      }
+    }
+  },
+  "sideEffects": true
+}
