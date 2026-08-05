@@ -68,11 +68,15 @@ just a stale ordering.
 
 | Step | Expect |
 | --- | --- |
+| build | Four packages, each `ESM/CJS/DTS ⚡️ Build success` |
 | lint | no output, exit 0 |
-| type-check | no `error TS` lines |
-| test | `Test Suites: 24 passed`, `Tests: 192 passed` |
-| build | `ESM/CJS/DTS ⚡️ Build success`, 5 entry points |
-| bundle-check | `iOS Bundled … (~874 modules)` and `Android Bundled … (~873 modules)` |
+| type-check | no `error TS` lines, across seven workspaces |
+| test | 50 core + 13 react-ui + 147 react-native + 21 react-native-ui = **231**, plus 29 server |
+| bundle-check | `iOS Bundled … (~876 modules)`, `Android Bundled … (~874 modules)`, and a Vite `✓ built in …` |
+
+The four packages are `@signalwire/react` (universal core), `@signalwire/react-ui`
+(browser Lit wrappers), `@signalwire/react-native` (platform layer) and
+`@signalwire/react-native-ui` (native components). Build order matters — see below.
 
 Two more, run separately because they hit the network:
 
