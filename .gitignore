@@ -2,6 +2,6 @@ node_modules/
 dist/
 *.log
 .expo/
-ios/
-android/
+example/ios/
+example/android/
 .DS_Store
