@@ -137,3 +137,77 @@ should add its own config plugin:
 
 Bare projects follow the
 [react-native-webrtc installation guide](https://github.com/react-native-webrtc/react-native-webrtc/blob/master/Documentation/GettingStarted.md).
+
+## Choosing a push vendor
+
+**SignalWire has no push infrastructure.** It will not send the push for you and
+there is no device-token registration endpoint. The full chain is yours:
+
+```
+SignalWire  --webhook-->  your backend  --push-->  device
+                                                     |
+                                          reportIncomingPush({ callId, ... })
+                                                     |
+                                              CallRegistry fuses it
+                                              with the SDK call
+```
+
+Your backend has to learn an inbound call is coming (a webhook), map the callee
+to a stored device token, and send the push itself. The push payload **must**
+carry the SignalWire `call_id`.
+
+### The filter that matters
+
+iOS VoIP pushes go through **PushKit**: a different topic (`<bundle-id>.voip`),
+an `apns-push-type: voip` header, and the only push type that wakes a killed app
+for a call. Most "unified push" services only speak standard APNs alerts. FCM is
+genuinely cross-platform for normal notifications but **cannot send PushKit
+pushes** — its iOS path is standard APNs alert/background. Architecting around
+"FCM everywhere" works until iOS, then stops.
+
+### Vendor comparison
+
+Checked August 2026 against vendor documentation. Verify before committing —
+these change.
+
+| Vendor | iOS VoIP (PushKit) | Notes |
+| --- | --- | --- |
+| **Roll your own** (`.p8` + `node-apn` + FCM) | Yes | One `.p8` auth key covers both alert and VoIP push types. An APNs VoIP send is an HTTP/2 POST with a JWT — on the order of 50 lines. |
+| **AWS SNS** | Yes | APNs VoIP platform applications; `.p8` token auth or `.p12` cert. Unifies iOS VoIP and FCM behind one API. The most credible off-the-shelf option. |
+| **OneSignal** | Yes, partially | See caveats below. No Android VoIP. |
+| **Courier** | Not documented | Orchestration layer over other providers; no `apns-push-type: voip` or `.voip` topic override in its APNs surface. Treat as unsupported pending confirmation from their support. |
+| **Expo Push Notifications** | No | Explicitly unsupported. Fine for everything else. |
+| **FCM alone** | No | Cannot send PushKit pushes. Android half only. |
+
+### OneSignal specifics
+
+Their documentation is explicit that it does **not** remove the PushKit work:
+
+> OneSignal does not handle VoIP token registration. You are responsible for
+> registering VoIP tokens in your app using Apple PushKit.
+
+Also required:
+
+- **A separate OneSignal app** for VoIP. One OneSignal app supports one
+  certificate type, so you run two: standard push and VoIP-only.
+- **A VoIP Services `.p12` certificate**, not your standard APNs push
+  certificate. Upload the wrong one and "the API will accept your push request
+  but Apple will reject it and the notification will never arrive."
+- **`"test_type": 1` when registering sandbox tokens.** Omitting it fails
+  silently: the API call succeeds and returns no error, but Apple treats the
+  token as production and drops every push.
+- **No Android VoIP.** OneSignal's own guidance is data-only pushes plus a
+  foreground service and custom call UI — which is the path `CallKeepBridge`
+  already implements, so nothing is gained there either.
+
+### Recommendation
+
+Because every option still requires you to write the PushKit registration and
+the `AppDelegate` hook, and because the Android half is plain FCM data messages
+regardless, the unification on offer is send-side only. Start with **AWS SNS**
+if you want one API for both platforms, or **`.p8` + `node-apn` + FCM directly**
+if you would rather not add a dependency for what is a small amount of code.
+
+Sources: [OneSignal VoIP notifications](https://documentation.onesignal.com/docs/en/voip-notifications),
+[Courier APNs integration](https://www.courier.com/docs/external-integrations/push/apple-push-notification),
+[Amazon SNS platform applications](https://docs.aws.amazon.com/en_en/sns/latest/dg/mobile-push-send-register.html).

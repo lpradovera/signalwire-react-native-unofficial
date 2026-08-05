@@ -179,10 +179,15 @@ native call entry with the SDK call by matching on it. Without it, the registry
 falls back to "the single unmatched inbound call within the timeout" and logs a
 warning — which breaks as soon as two calls overlap.
 
-This package does not acquire push tokens. You own PushKit/FCM registration and
-the backend that tells SignalWire about the device; `reportIncomingPush` is the
-entire contract. See [`docs/native-setup.md`](docs/native-setup.md) for the
-`AppDelegate` hook that reports a cold-start push before JavaScript boots.
+This package does not acquire push tokens, and **SignalWire has no push
+infrastructure** — it will not send the push for you. The whole chain is yours:
+your backend learns an inbound call is coming (webhook), looks up the device
+token, and sends the push; the app receives it and calls `reportIncomingPush`.
+That call is the entire contract with this package.
+
+See [`docs/native-setup.md`](docs/native-setup.md) for the `AppDelegate` hook
+that reports a cold-start push before JavaScript boots, and for a comparison of
+push vendors that can actually send iOS VoIP pushes.
 
 ## Not supported, and why
 
