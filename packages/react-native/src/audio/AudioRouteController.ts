@@ -18,6 +18,7 @@ export type AudioRoute = 'earpiece' | 'speaker' | 'bluetooth';
 export class AudioRouteController {
   private readonly _route$ = new BehaviorSubject<AudioRoute>('earpiece');
   private started = false;
+  private destroyed = false;
 
   constructor() {
     assertPeerModule(
@@ -58,7 +59,9 @@ export class AudioRouteController {
     }
     this.started = false;
     this.applyRoute('earpiece');
-    this._route$.next('earpiece');
+    if (!this.destroyed) {
+      this._route$.next('earpiece');
+    }
   }
 
   /**
@@ -87,7 +90,16 @@ export class AudioRouteController {
     }
   }
 
+  /**
+   * Releases the audio session. Idempotent, and deliberately silent: emitting
+   * a route change while tearing down would push a value at subscribers that
+   * are themselves unmounting.
+   */
   destroy(): void {
+    if (this.destroyed) {
+      return;
+    }
+    this.destroyed = true;
     this.stop();
     this._route$.complete();
   }

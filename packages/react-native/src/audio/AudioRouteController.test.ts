@@ -92,3 +92,35 @@ describe('AudioRouteController', () => {
     expect(() => controller.setRoute('speaker')).not.toThrow();
   });
 });
+
+describe('AudioRouteController teardown', () => {
+  it('does not emit while destroying, so unmounting subscribers are not pushed to', () => {
+    const controller = new AudioRouteController();
+    const seen: string[] = [];
+    const subscription = controller.route$.subscribe((route) => seen.push(route));
+
+    controller.start('video');
+    controller.destroy();
+
+    subscription.unsubscribe();
+    // 'earpiece' seed then 'speaker' from start(); the teardown reset is silent.
+    expect(seen).toEqual(['earpiece', 'speaker']);
+  });
+
+  it('destroy is idempotent', () => {
+    const controller = new AudioRouteController();
+    controller.destroy();
+    expect(() => controller.destroy()).not.toThrow();
+  });
+
+  it('completes route$ exactly once', () => {
+    const controller = new AudioRouteController();
+    const completed = jest.fn();
+    controller.route$.subscribe({ complete: completed });
+
+    controller.destroy();
+    controller.destroy();
+
+    expect(completed).toHaveBeenCalledTimes(1);
+  });
+});
