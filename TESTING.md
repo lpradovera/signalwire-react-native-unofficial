@@ -55,8 +55,14 @@ npm ci          # or `npm install` if the lockfile is stale
 npm run verify
 ```
 
-`npm run verify` runs, in order: `lint` → `type-check` (package **and** example)
-→ `test` → `build` → `bundle-check`.
+`npm run verify` runs, in order: `build` → `lint` → `type-check` (package,
+example **and** server) → `test` → `bundle-check`.
+
+**Build comes first, and must stay first.** The example typechecks against the
+built `dist/`, and `bundle-check` resolves the package through its exports map.
+On a fresh clone neither exists, so any other order fails with
+`Cannot find module '@signalwire/react-native'` — which is not a real breakage,
+just a stale ordering.
 
 **Expected output — treat any deviation as a regression:**
 
@@ -75,9 +81,11 @@ npm run verify:package    # publint + are-the-types-wrong on the built tarball
 npm run verify:prebuild   # real `expo prebuild`; asserts the config plugin applied
 ```
 
-`verify:package` expects `All good!` from publint, and node16/bundler all green
-from attw. `node10: 💀` on subpaths is **expected and fine** — `typesVersions`
-covers classic resolution; only the `bundler` and `node16` rows matter.
+`verify:package` expects `All good!` from publint and **every row green** from
+attw, including `node10` — `typesVersions` covers classic resolution. The
+`./app.plugin.js` entrypoint is excluded from attw on purpose: it is an Expo
+build-time entry consumed by the config-plugin loader, not by TypeScript, so it
+legitimately ships no declarations.
 
 `verify:prebuild` expects:
 `✓ 10 Android permissions and 4 iOS Info.plist entries applied by the plugin.`

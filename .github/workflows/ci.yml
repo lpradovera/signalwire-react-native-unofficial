@@ -8,6 +8,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,23 +18,26 @@ jobs:
 
       - run: npm ci
 
+      # Must come first: the example typechecks against the built dist, and
+      # bundle-check resolves the package through its exports map. Neither
+      # exists in a fresh checkout.
+      - name: Build
+        run: npm run build
+
       - name: Lint
         run: npm run lint
 
-      - name: Type-check package and example
+      - name: Type-check package, example and server
         run: npm run type-check
 
       - name: Unit tests
         run: npm test
 
-      - name: Build
-        run: npm run build
-
-      - name: Bundle the example through Metro
+      - name: Bundle the example through Metro (iOS + Android)
         run: npm run bundle-check
 
       # Catches broken exports maps and type-resolution regressions, which
-      # only surface in a consumer's project otherwise.
+      # otherwise only surface inside a consumer's project.
       - name: Package lint
         run: npm run verify:package
 

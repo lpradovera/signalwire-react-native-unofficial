@@ -13,8 +13,8 @@
     "lint": "eslint packages/react-native/src",
     "bundle-check": "npm run bundle-check -w @signalwire/react-native-example",
     "verify:prebuild": "node scripts/verify-prebuild.mjs",
-    "verify:package": "npm run build && cd packages/react-native && npx publint && npx @arethetypeswrong/cli --pack .",
-    "verify": "npm run lint && npm run type-check && npm test && npm run build && npm run bundle-check"
+    "verify:package": "npm run build && cd packages/react-native && npx publint && npx @arethetypeswrong/cli --pack . --exclude-entrypoints app.plugin.js",
+    "verify": "npm run build && npm run lint && npm run type-check && npm test && npm run bundle-check"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
