@@ -39,6 +39,13 @@ export class AudioRouteController {
 
   /** Begins the native audio session. Video calls default to speaker. */
   start(media: 'audio' | 'video'): void {
+    // Idempotent: an answered inbound call starts audio on the native answer
+    // and again when it reaches `connected`. Restarting would re-run
+    // InCallManager and force the route back to its default, discarding a
+    // speaker toggle the user had already made.
+    if (this.started) {
+      return;
+    }
     try {
       InCallManager.start({ media });
       this.started = true;

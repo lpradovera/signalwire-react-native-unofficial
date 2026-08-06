@@ -91,6 +91,20 @@ describe('AudioRouteController', () => {
     });
     expect(() => controller.setRoute('speaker')).not.toThrow();
   });
+
+  it('does not restart an already-started session or reset the route', () => {
+    // An inbound call starts audio on the native answer and again when it
+    // reaches `connected`. A second start would re-run InCallManager and force
+    // the route back to its default, discarding the user's speaker toggle.
+    controller.start('audio');
+    controller.setRoute('speaker');
+    (InCallManager.start as jest.Mock).mockClear();
+
+    controller.start('audio');
+
+    expect(InCallManager.start).not.toHaveBeenCalled();
+    expect(controller.route).toBe('speaker');
+  });
 });
 
 describe('AudioRouteController teardown', () => {

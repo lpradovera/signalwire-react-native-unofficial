@@ -1,6 +1,8 @@
 import RNCallKeep from 'react-native-callkeep';
+import InCallManager from 'react-native-incall-manager';
 import { BehaviorSubject, Subject } from 'rxjs';
 
+import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
 import { CallKeepBridge } from './CallKeepBridge';
 
 jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
@@ -294,5 +296,23 @@ describe('CallKeepBridge', () => {
     second$.next([createCall('c2')]);
 
     expect(RNCallKeep.displayIncomingCall).toHaveBeenCalled();
+  });
+
+  it('starts the audio session when an outbound call connects', async () => {
+    // Outbound calls never reach the native answer handler, which was the only
+    // caller of startAudio — so InCallManager never ran for a call the user
+    // placed and iOS left the audio session in its default category, giving a
+    // connected but silent call.
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo' });
+
+    const call = createCall('out-1');
+    bridge.trackCall(call as never, '/public/room', 'Support');
+    call.status$.next('connected');
+    await Promise.resolve();
+
+    // Platform.OS is 'android' in this file, so there is no audio-session gate
+    // to wait on and the start happens synchronously after the status change.
+    expect(InCallManager.start).toHaveBeenCalled();
   });
 });

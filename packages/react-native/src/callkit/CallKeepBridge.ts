@@ -269,6 +269,13 @@ export class CallKeepBridge {
       }
       if (status === 'connected') {
         this.registry.reportConnected(uuid);
+        // Outbound calls never pass through the native answer handler, so this
+        // is the only place their audio session gets started. Without it
+        // InCallManager never runs for a call the user placed, and iOS leaves
+        // the session in its default category — a connected but silent call.
+        // `AudioRouteController.start` is idempotent, so an inbound call that
+        // already started audio on answer is unaffected.
+        void this.startAudioWhenSessionReady();
         return;
       }
       if (TERMINAL_STATUSES.has(status)) {
