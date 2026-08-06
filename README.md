@@ -87,7 +87,12 @@ Three things break without it, all at import or first-call time:
 `createReactNativePlatform()` verifies the polyfills ran and throws
 `PolyfillNotInstalledError` naming the fix if they did not.
 
-## Two build-config requirements
+## Two build-config requirements — Expo SDK 52 only
+
+**On Expo SDK 53 and newer, neither of these is needed.** The example app runs
+on SDK 54 with a stock `babel.config.js` and no package-exports flag. They are
+kept documented because the package still supports `react-native >=0.76.0`,
+which includes SDK 52.
 
 Both are consumer-side and neither is specific to Expo. You do **not** need to
 change `moduleResolution` — the package ships `typesVersions`, so subpath types
@@ -102,7 +107,8 @@ config.resolver.unstable_enablePackageExports = true;
 ```
 
 **Babel must transform ES2022 static class blocks.** `@signalwire/js` ships
-them in its ESM build and `babel-preset-expo` does not handle them:
+them in its ESM build, and `babel-preset-expo` did not handle them before
+SDK 53:
 
 ```bash
 npm install -D @babel/plugin-transform-class-static-block
@@ -236,7 +242,8 @@ FCM, and a link-by-link verification ladder.
 or not first in your entry file. See the import-order rule above.
 
 **`Unable to resolve module @signalwire/react-native/polyfills`** — Metro package
-exports are off. Set `resolver.unstable_enablePackageExports = true`.
+exports are off. Set `resolver.unstable_enablePackageExports = true`. Expo SDK 52
+only; on by default from SDK 53.
 
 **`Static class blocks are not enabled`** — add
 `@babel/plugin-transform-class-static-block` to `babel.config.js`.

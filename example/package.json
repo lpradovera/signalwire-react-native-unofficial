@@ -36,7 +36,6 @@
     "@signalwire/react": "*"
   },
   "devDependencies": {
-    "@babel/plugin-transform-class-static-block": "^7.29.7",
     "@types/react": "~19.1.10",
     "typescript": "^5.9.3"
   }

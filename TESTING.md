@@ -71,8 +71,15 @@ just a stale ordering.
 | build | Four packages, each `ESM/CJS/DTS ⚡️ Build success` |
 | lint | no output, exit 0 |
 | type-check | no `error TS` lines, across seven workspaces |
-| test | 50 core + 13 react-ui + 147 react-native + 21 react-native-ui = **231**, plus 29 server |
-| bundle-check | `iOS Bundled … (~876 modules)`, `Android Bundled … (~874 modules)`, and a Vite `✓ built in …` |
+| test | 50 core + 13 react-ui + 148 react-native + 21 react-native-ui = **232**, plus 29 server |
+| bundle-check | `iOS Bundled … (~1090 modules)`, an `Android Bundled …` line, and a Vite `✓ built in …` |
+
+**Do not treat the Android module count as a gate.** Both platforms export
+concurrently against one Metro cache, and the Android figure tracks cache
+warmth rather than the bundle: on this repo it has been observed at 1088 on a
+cold cache and falling through the 800s, 600s and 400s on successive warm runs,
+while iOS stays fixed. Clear `$TMPDIR/metro-cache` first if you want a
+reproducible number, or just check that both platforms bundle without error.
 
 The four packages are `@signalwire/react` (universal core), `@signalwire/react-ui`
 (browser Lit wrappers), `@signalwire/react-native` (platform layer) and
@@ -142,7 +149,9 @@ echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 cd android && ./gradlew assembleDebug
 ```
 
-### 2c. KNOWN BLOCKER — expect this to fail on the first attempt
+### 2c. FORMER BLOCKER — probably fixed, still unverified
+
+Under Expo SDK 52 this failed during configuration:
 
 ```
 * What went wrong:
@@ -151,29 +160,20 @@ A problem occurred configuring project ':expo'.
   (ExpoModulesCorePlugin.gradle line 95)
 ```
 
-This is an **Expo toolchain version mismatch, not a bug in this package** — it
-fails configuring `:expo`, before any of our code compiles. Cause:
-`example/android/build.gradle` line 18 is
-`classpath('com.android.tools.build:gradle')` with **no version pin**, so AGP
-resolves to whatever is newest, and `expo-modules-core@2.2.3` reads
-`components.release` in a way current AGP no longer supports.
+It was an **Expo toolchain version mismatch, not a bug in this package** — it
+failed configuring `:expo`, before any of our code compiled. `expo-modules-core@2.2.3`
+read `components.release` in a way current AGP no longer supports, and the
+generated `build.gradle` pinned no AGP version, so AGP resolved to whatever was
+newest.
 
-**None of the fixes below have been verified.** Try in order, stopping when the
-build succeeds, and record which one worked:
+The recommended fix was "upgrade to SDK 53+", and **the repo is now on SDK 54**,
+which ships an `expo-modules-core` that handles current AGP. So this should no
+longer reproduce — but **no Gradle build has been run on any machine since the
+upgrade**, so treat that as expectation, not fact. If it still fails, pin AGP in
+`example/android/build.gradle` and clear
+`~/.gradle/caches/modules-2/files-2.1/com.android.tools.build`.
 
-1. Pin AGP in `example/android/build.gradle`:
-   `classpath('com.android.tools.build:gradle:8.6.0')`, then
-   `./gradlew --stop && ./gradlew assembleDebug`.
-2. If that fails, clear the AGP cache and retry:
-   `rm -rf ~/.gradle/caches/modules-2/files-2.1/com.android.tools.build`.
-3. If still failing, **upgrade Expo to SDK 53+**. This is the cleanest fix and
-   worth doing regardless: SDK 53 ships an `expo-modules-core` that handles
-   current AGP, and turns on `unstable_enablePackageExports` by default — which
-   lets you delete that line from `example/metro.config.js` and drop one of the
-   two documented consumer requirements from the README.
-
-Leave the Gradle wrapper at `gradle-8.10.2-all.zip` unless step 1 fails; that
-version is correct for SDK 52.
+Record what actually happens here the first time someone runs it.
 
 ### 2d. Emulator — only if you need it, and mind the host
 
@@ -236,14 +236,26 @@ cd ios && pod install
 open SignalWireRNExample.xcworkspace
 ```
 
+**Xcode 26 or newer is required** — any iOS 26 device needs it, and Xcode 16.x
+cannot build SDK 54 anyway.
+
 Before checklist items 5–7 can work at all:
 
 1. Add the `AppDelegate` PushKit hook from `docs/native-setup.md`. The Expo
-   plugin deliberately does not inject it (regex-patching Expo SDK 52's Swift
+   plugin deliberately does not inject it (regex-patching Expo's Swift
    `AppDelegate` fails silently, which is worse than not generating it). Without
    it, a cold-start push cannot reach CallKit in time and iOS kills the process.
+
+   **Use the Objective-C category, not a Swift `import RNCallKeep`.** On RN 0.81
+   that import fails with "no such module" — callkeep's podspec does not expose
+   a consumable Swift module, and bridging headers do not work around it
+   ([callkeep#856](https://github.com/react-native-webrtc/react-native-callkeep/issues/856),
+   open and unassigned since Aug 2025). The ObjC route is the only one known to
+   work.
 2. Xcode → Signing & Capabilities → add **Push Notifications** and **Background
-   Modes** (Voice over IP + Audio).
+   Modes** (Voice over IP + Audio). Push Notifications requires a **paid** Apple
+   Developer Program membership; a free personal team cannot enable it, so
+   items 5–7 are unreachable without one.
 3. Create a VoIP services certificate and wire it to your push sender.
 
 **CallKit does not work in the iOS Simulator.** Items 3–7 need a real device.

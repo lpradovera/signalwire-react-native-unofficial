@@ -15,10 +15,4 @@ config.resolver.nodeModulesPaths = [
 ];
 config.resolver.disableHierarchicalLookup = true;
 
-// Required for the subpath imports `@signalwire/react-native/polyfills`,
-// `/callkit` and `/audio`. Metro only honours a package's "exports" map when
-// this is on; it is opt-in on Metro 0.81 (Expo SDK 52) and on by default from
-// Expo SDK 53. Without it those imports fail to resolve.
-config.resolver.unstable_enablePackageExports = true;
-
 module.exports = config;

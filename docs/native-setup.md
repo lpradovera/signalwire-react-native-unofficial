@@ -114,7 +114,8 @@ callkeep's self-managed ConnectionService mode handles this when configured.
 ## Metro and Babel
 
 Both are required regardless of platform. See the README section
-"Two build-config requirements":
+"Two build-config requirements" (Expo SDK 52 only — both are unnecessary from
+SDK 53 onward):
 
 ```js
 // metro.config.js
