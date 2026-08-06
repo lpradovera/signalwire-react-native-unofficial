@@ -8,6 +8,8 @@ import { setDebugOptions, setLogger, setLogLevel } from '@signalwire/js';
 import { getCallKit } from '@signalwire/react-native/callkit';
 import { registerRootComponent } from 'expo';
 
+import App from './App';
+
 // Wire log, off by default. React Native's console collapses nested objects to
 // `[Object]`, which hides the verto params and the SDP — exactly what you need
 // when signalling succeeds but media never arrives. Set EXPO_PUBLIC_SW_WIRE_LOG=1
