@@ -1,5 +1,16 @@
 # `@signalwire/rn-push-server`
 
+> **Scaffold, not a product.** This exists to give the example apps a working
+> backend and to iterate on ideas for what one should do. The deliverable in
+> this repository is the client SDK; this is expected to be reimplemented inside
+> whatever product consumes it. It is `private: true` and never published.
+>
+> Treat every seam marked *replace me* as exactly that — notably
+> `authenticateCaller` in [`src/routes/token.ts`](src/routes/token.ts) and the
+> payload mapping in [`src/signalwire/webhook.ts`](src/signalwire/webhook.ts).
+> There is no persistence story beyond a JSON file, no rate limiting, and no
+> multi-tenancy. Do not deploy it as-is.
+
 Support server for `@signalwire/react-native`: a device-token registry and a
 push sender for iOS VoIP (PushKit) and Android FCM.
 
