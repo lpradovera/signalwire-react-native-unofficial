@@ -7,8 +7,8 @@
     "scheme": "signalwire-example",
     "userInterfaceStyle": "dark",
     "newArchEnabled": false,
-    "ios": { "bundleIdentifier": "com.signalwire.rnexample", "supportsTablet": true },
-    "android": { "package": "com.signalwire.rnexample" },
+    "ios": { "supportsTablet": true },
+    "android": {},
     "plugins": [
       "expo-dev-client",
       "@config-plugins/react-native-webrtc",

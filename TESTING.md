@@ -239,6 +239,36 @@ open SignalWireRNExample.xcworkspace
 **Xcode 26 or newer is required** — any iOS 26 device needs it, and Xcode 16.x
 cannot build SDK 54 anyway.
 
+### The application identifier is not in the repo
+
+Bundle identifiers must be globally unique across Apple's ecosystem and
+registrable by *your* team, so no committed value can work for everyone — and an
+internal one has no business in a repository heading for public release. The
+example reads it from `SW_APP_ID`:
+
+```bash
+cd example
+cp .env.example .env      # .env is gitignored
+# then edit .env: SW_APP_ID=<a prefix your team controls>
+```
+
+`example/app.config.js` applies it to both `ios.bundleIdentifier` and
+`android.package`. With nothing set it falls back to `com.example.swrnexample`,
+which is fine for `expo export`, `verify` and the unit tests, but **will not
+sign against a real Apple team** — you will get "the app identifier cannot be
+registered to your team".
+
+It is read when the Expo config is evaluated, so it must be present for
+`expo prebuild` and `expo run:ios`, not merely at runtime. A `.env` in
+`example/` is picked up automatically; exporting the variable works too.
+
+With a paid Apple Developer account and automatic signing, Xcode registers the
+App ID and provisioning profile on first build. Adding the Push Notifications
+capability likewise updates the App ID in place, which is what checklist items
+5–7 need — they require an explicit App ID, not a wildcard.
+
+### Machine setup
+
 Machine setup gotchas, both hit on a fresh macOS box:
 
 - **Accept the Xcode licence first.** Until you do, `xcrun`, `simctl` and even
