@@ -163,8 +163,8 @@ no CallKit UI confirmed, and no push delivered.
 | 2 | Outbound video + camera switch | | | |
 | 3 | Inbound, foreground | ✅ 2026-08-06 | | iPad Air 5, iPadOS 17.5.1. Called from `examples/web` as a second subscriber. CallKit UI appeared, **Accept works**, audio both ways. In-app sheet answer also works. |
 | 4 | Inbound, backgrounded | | | |
-| 5 | Cold-start VoIP push | | | |
-| 6 | Push with no matching call | | | |
+| 5 | Cold-start VoIP push | ✅ 2026-08-06 | | App killed via devicectl (pid gone, no JS). Push delivered; iOS relaunched the app and the native hook reported to CallKit before JavaScript existed. APNs token auth with a .p8 key. |
+| 6 | Push with no matching call | ✅ 2026-08-06 | | Every push in this session carried a `call_id` no SDK call ever matched; each ended itself as missed at the fusion timeout with no stuck entry. |
 | 7 | Decline before fusion | | | |
 | 8 | Audio routing | | | |
 | 9 | Backgrounded audio | | | |
