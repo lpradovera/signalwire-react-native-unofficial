@@ -33,8 +33,8 @@ beforeEach(() => {
   createObserver.mockReturnValue(observer);
 });
 
-function renderProvider(props: Record<string, unknown> = {}): void {
-  render(
+async function renderProvider(props: Record<string, unknown> = {}): Promise<void> {
+  await render(
     <SignalWireProvider credentialProvider={credentialProvider as never} {...props}>
       <Text>child</Text>
     </SignalWireProvider>
@@ -42,42 +42,42 @@ function renderProvider(props: Record<string, unknown> = {}): void {
 }
 
 describe('React Native SignalWireProvider', () => {
-  it('supplies the platform so callers never have to', () => {
-    renderProvider();
+  it('supplies the platform so callers never have to', async () => {
+    await renderProvider();
     expect(createPlatform).toHaveBeenCalledTimes(1);
     expect(core.mock.calls[0]?.[0]).toMatchObject({ platform });
   });
 
-  it('forwards platform options through', () => {
-    renderProvider({ platform: { netInfo: false } });
+  it('forwards platform options through', async () => {
+    await renderProvider({ platform: { netInfo: false } });
     expect(createPlatform).toHaveBeenCalledWith({ netInfo: false });
   });
 
-  it('omits the observer when callKit is off', () => {
-    renderProvider();
+  it('omits the observer when callKit is off', async () => {
+    await renderProvider();
     expect(createObserver).not.toHaveBeenCalled();
     expect(core.mock.calls[0]?.[0]).toMatchObject({ observer: undefined });
   });
 
-  it('supplies a CallKit observer when callKit is on', () => {
-    renderProvider({ callKit: true });
+  it('supplies a CallKit observer when callKit is on', async () => {
+    await renderProvider({ callKit: true });
     expect(createObserver).toHaveBeenCalledTimes(1);
     expect(core.mock.calls[0]?.[0]).toMatchObject({ observer });
   });
 
-  it('passes the credential provider and options through untouched', () => {
+  it('passes the credential provider and options through untouched', async () => {
     const options = { skipConnection: true };
-    renderProvider({ options });
+    await renderProvider({ options });
     expect(core.mock.calls[0]?.[0]).toMatchObject({ credentialProvider, options });
   });
 
-  it('builds the platform once across re-renders', () => {
-    const view = render(
+  it('builds the platform once across re-renders', async () => {
+    const view = await render(
       <SignalWireProvider credentialProvider={credentialProvider as never}>
         <Text>child</Text>
       </SignalWireProvider>
     );
-    view.rerender(
+    await view.rerender(
       <SignalWireProvider credentialProvider={credentialProvider as never}>
         <Text>child</Text>
       </SignalWireProvider>

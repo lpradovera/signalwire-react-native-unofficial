@@ -10,7 +10,7 @@ const TERMINAL = new Set(['disconnected', 'destroyed', 'failed']);
  * SDK's stream. This lives in the example rather than the package because
  * video components arrive with the phase 2 UI kit.
  */
-function useStreamElement(stream: MediaStream | null): React.RefObject<HTMLVideoElement> {
+function useStreamElement(stream: MediaStream | null): React.RefObject<HTMLVideoElement | null> {
   const ref = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {

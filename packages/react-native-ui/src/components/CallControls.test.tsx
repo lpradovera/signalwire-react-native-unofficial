@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import React from 'react';
 import { BehaviorSubject, Subject } from 'rxjs';
 
@@ -68,40 +68,40 @@ beforeEach(() => {
 });
 
 describe('CallControls', () => {
-  it('shows Mute while unmuted and Unmute while muted', () => {
+  it('shows Mute while unmuted and Unmute while muted', async () => {
     const call = createCall();
-    render(<CallControls call={call as never} />);
+    await render(<CallControls call={call as never} />);
     expect(screen.getByTestId('sw-mute').props.accessibilityLabel).toBe('Mute');
 
-    call._audioMuted$.next(true);
+    await act(async () => call._audioMuted$.next(true));
     expect(screen.getByTestId('sw-mute').props.accessibilityLabel).toBe('Unmute');
   });
 
-  it('mutes through the SDK rather than local state', () => {
+  it('mutes through the SDK rather than local state', async () => {
     const call = createCall();
-    render(<CallControls call={call as never} />);
+    await render(<CallControls call={call as never} />);
 
     fireEvent.press(screen.getByTestId('sw-mute'));
 
     expect(call.self.mute).toHaveBeenCalled();
   });
 
-  it('unmutes when already muted', () => {
+  it('unmutes when already muted', async () => {
     const call = createCall();
     call._audioMuted$.next(true);
-    render(<CallControls call={call as never} />);
+    await render(<CallControls call={call as never} />);
 
     fireEvent.press(screen.getByTestId('sw-mute'));
 
     expect(call.self.unmute).toHaveBeenCalled();
   });
 
-  it('reflects a mute that came from outside the component', () => {
+  it('reflects a mute that came from outside the component', async () => {
     const call = createCall();
-    render(<CallControls call={call as never} />);
+    await render(<CallControls call={call as never} />);
 
     // e.g. the CallKit mute button, or a server-side mute.
-    call._audioMuted$.next(true);
+    await act(async () => call._audioMuted$.next(true));
 
     expect(screen.getByTestId('sw-mute').props.accessibilityState.selected).toBe(true);
   });
@@ -109,7 +109,7 @@ describe('CallControls', () => {
   it('hangs up and notifies the caller', async () => {
     const call = createCall();
     const onHangup = jest.fn();
-    render(<CallControls call={call as never} onHangup={onHangup} />);
+    await render(<CallControls call={call as never} onHangup={onHangup} />);
 
     fireEvent.press(screen.getByTestId('sw-hangup'));
     await Promise.resolve();
@@ -117,28 +117,28 @@ describe('CallControls', () => {
     expect(call.hangup).toHaveBeenCalled();
   });
 
-  it('toggles the audio route', () => {
-    render(<CallControls call={createCall() as never} />);
+  it('toggles the audio route', async () => {
+    await render(<CallControls call={createCall() as never} />);
     fireEvent.press(screen.getByTestId('sw-route'));
     expect(audio.__state.setRoute).toHaveBeenCalledWith('speaker');
   });
 
-  it('hides the camera toggle when asked', () => {
-    render(<CallControls call={createCall() as never} showVideo={false} />);
+  it('hides the camera toggle when asked', async () => {
+    await render(<CallControls call={createCall() as never} showVideo={false} />);
     expect(screen.queryByTestId('sw-video')).toBeNull();
   });
 
-  it('hides the route toggle when asked', () => {
-    render(<CallControls call={createCall() as never} showAudioRoute={false} />);
+  it('hides the route toggle when asked', async () => {
+    await render(<CallControls call={createCall() as never} showAudioRoute={false} />);
     expect(screen.queryByTestId('sw-route')).toBeNull();
   });
 
-  it('renders with a null call without throwing', () => {
-    expect(() => render(<CallControls call={null} />)).not.toThrow();
+  it('renders with a null call without throwing', async () => {
+    await expect(render(<CallControls call={null} />)).resolves.toBeDefined();
   });
 
-  it('exposes every control to assistive technology', () => {
-    render(<CallControls call={createCall() as never} />);
+  it('exposes every control to assistive technology', async () => {
+    await render(<CallControls call={createCall() as never} />);
     for (const id of ['sw-mute', 'sw-video', 'sw-route', 'sw-hangup']) {
       const button = screen.getByTestId(id);
       expect(button.props.accessibilityRole).toBe('button');

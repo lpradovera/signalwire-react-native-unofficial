@@ -18,20 +18,20 @@ function Probe(): React.JSX.Element {
 describe('useAudioRoute', () => {
   afterEach(() => resetAudioRouteControllerForTesting());
 
-  it('reports the controller current route', () => {
-    const { getByTestId } = render(<Probe />);
+  it('reports the controller current route', async () => {
+    const { getByTestId } = await render(<Probe />);
     expect(getByTestId('route').props.children).toBe('earpiece');
   });
 
-  it('re-renders when the controller route changes', () => {
-    const { getByTestId } = render(<Probe />);
-    act(() => getAudioRouteController().setRoute('speaker'));
+  it('re-renders when the controller route changes', async () => {
+    const { getByTestId } = await render(<Probe />);
+    await act(async () => getAudioRouteController().setRoute('speaker'));
     expect(getByTestId('route').props.children).toBe('speaker');
   });
 
-  it('setRoute drives the controller', () => {
-    render(<Probe />);
-    act(() => result?.setRoute('bluetooth'));
+  it('setRoute drives the controller', async () => {
+    await render(<Probe />);
+    await act(async () => result?.setRoute('bluetooth'));
     expect(getAudioRouteController().route).toBe('bluetooth');
   });
 });

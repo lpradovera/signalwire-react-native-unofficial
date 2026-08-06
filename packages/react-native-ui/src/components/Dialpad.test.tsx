@@ -25,40 +25,40 @@ function createCall() {
 }
 
 describe('Dialpad', () => {
-  it('renders all twelve keys', () => {
-    render(<Dialpad />);
+  it('renders all twelve keys', async () => {
+    await render(<Dialpad />);
     for (const key of ['1', '5', '9', '*', '0', '#']) {
       expect(screen.getByTestId(`sw-key-${key}`)).toBeTruthy();
     }
   });
 
-  it('sends DTMF when given a call', () => {
+  it('sends DTMF when given a call', async () => {
     const call = createCall();
-    render(<Dialpad call={call as never} />);
+    await render(<Dialpad call={call as never} />);
 
     fireEvent.press(screen.getByTestId('sw-key-5'));
 
     expect(call.sendDigits).toHaveBeenCalledWith('5');
   });
 
-  it('reports digits to the caller', () => {
+  it('reports digits to the caller', async () => {
     const onDigit = jest.fn();
-    render(<Dialpad onDigit={onDigit} />);
+    await render(<Dialpad onDigit={onDigit} />);
 
     fireEvent.press(screen.getByTestId('sw-key-#'));
 
     expect(onDigit).toHaveBeenCalledWith('#');
   });
 
-  it('works with no call, for composing a number before dialling', () => {
+  it('works with no call, for composing a number before dialling', async () => {
     const onDigit = jest.fn();
-    render(<Dialpad onDigit={onDigit} />);
+    await render(<Dialpad onDigit={onDigit} />);
     expect(() => fireEvent.press(screen.getByTestId('sw-key-1'))).not.toThrow();
     expect(onDigit).toHaveBeenCalledWith('1');
   });
 
-  it('labels each key for assistive technology', () => {
-    render(<Dialpad />);
+  it('labels each key for assistive technology', async () => {
+    await render(<Dialpad />);
     expect(screen.getByTestId('sw-key-7').props.accessibilityLabel).toBe('Dial 7');
   });
 });

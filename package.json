@@ -23,5 +23,10 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.19.0"
+  },
+  "//overrides": "Expo SDK 54 expects React 19.1.0. Several Expo and RN packages declare react as an open peer, which npm auto-installs at the newest 19.x and hoists to the root -- leaving a second React beside the workspaces' pinned 19.1.0. Two React copies in one Metro bundle produce invalid-hook-call failures, so pin the whole tree to one version.",
+  "overrides": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
   }
 }

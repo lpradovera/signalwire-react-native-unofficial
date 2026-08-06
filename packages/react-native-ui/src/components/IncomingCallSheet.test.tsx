@@ -8,8 +8,8 @@ import { IncomingCallSheet } from './IncomingCallSheet';
 
 const incomingCalls$ = new BehaviorSubject<unknown[]>([]);
 
-function renderSheet(props: Record<string, unknown> = {}): void {
-  render(
+async function renderSheet(props: Record<string, unknown> = {}): Promise<void> {
+  await render(
     <SignalWireContext.Provider
       value={
         {
@@ -27,27 +27,27 @@ function renderSheet(props: Record<string, unknown> = {}): void {
 beforeEach(() => incomingCalls$.next([]));
 
 describe('IncomingCallSheet', () => {
-  it('renders nothing when no call is pending', () => {
-    renderSheet();
+  it('renders nothing when no call is pending', async () => {
+    await renderSheet();
     expect(screen.queryByTestId('sw-answer')).toBeNull();
   });
 
-  it('shows the caller name', () => {
+  it('shows the caller name', async () => {
     incomingCalls$.next([{ id: 'a', fromName: 'Ada Lovelace', answer: jest.fn(), reject: jest.fn() }]);
-    renderSheet();
+    await renderSheet();
     expect(screen.getByText('Ada Lovelace')).toBeTruthy();
   });
 
-  it('falls back to the handle, then to a placeholder', () => {
+  it('falls back to the handle, then to a placeholder', async () => {
     incomingCalls$.next([{ id: 'a', from: '+15551234', answer: jest.fn(), reject: jest.fn() }]);
-    renderSheet();
+    await renderSheet();
     expect(screen.getByText('+15551234')).toBeTruthy();
   });
 
   it('answers with audio and video by default', async () => {
     const call = { id: 'a', answer: jest.fn(async () => undefined), reject: jest.fn() };
     incomingCalls$.next([call]);
-    renderSheet();
+    await renderSheet();
 
     fireEvent.press(screen.getByTestId('sw-answer'));
     await Promise.resolve();
@@ -58,7 +58,7 @@ describe('IncomingCallSheet', () => {
   it('honours answerWith', async () => {
     const call = { id: 'a', answer: jest.fn(async () => undefined), reject: jest.fn() };
     incomingCalls$.next([call]);
-    renderSheet({ answerWith: { audio: true, video: false } });
+    await renderSheet({ answerWith: { audio: true, video: false } });
 
     fireEvent.press(screen.getByTestId('sw-answer'));
     await Promise.resolve();
@@ -69,7 +69,7 @@ describe('IncomingCallSheet', () => {
   it('rejects on decline', async () => {
     const call = { id: 'a', answer: jest.fn(), reject: jest.fn(async () => undefined) };
     incomingCalls$.next([call]);
-    renderSheet();
+    await renderSheet();
 
     fireEvent.press(screen.getByTestId('sw-decline'));
     await Promise.resolve();

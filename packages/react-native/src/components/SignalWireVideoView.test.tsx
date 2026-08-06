@@ -33,48 +33,48 @@ function createCall(local: unknown, remote: unknown) {
 }
 
 describe('SignalWireVideoView', () => {
-  it('renders nothing when there is no stream', () => {
+  it('renders nothing when there is no stream', async () => {
     const call = createCall(null, null);
-    const { queryByTestId } = render(<SignalWireVideoView call={call as never} kind="remote" />);
+    const { queryByTestId } = await render(<SignalWireVideoView call={call as never} kind="remote" />);
     expect(queryByTestId('signalwire-video')).toBeNull();
   });
 
-  it('renders the remote stream URL', () => {
+  it('renders the remote stream URL', async () => {
     const call = createCall(null, createStream('mock://remote', 'track-r'));
-    const { getByTestId } = render(<SignalWireVideoView call={call as never} kind="remote" />);
+    const { getByTestId } = await render(<SignalWireVideoView call={call as never} kind="remote" />);
     expect(getByTestId('signalwire-video').props.streamURL).toBe('mock://remote');
   });
 
-  it('renders the local stream URL when kind is local', () => {
+  it('renders the local stream URL when kind is local', async () => {
     const call = createCall(createStream('mock://local', 'track-l'), null);
-    const { getByTestId } = render(<SignalWireVideoView call={call as never} kind="local" />);
+    const { getByTestId } = await render(<SignalWireVideoView call={call as never} kind="local" />);
     expect(getByTestId('signalwire-video').props.streamURL).toBe('mock://local');
   });
 
-  it('mirrors a local view by default', () => {
+  it('mirrors a local view by default', async () => {
     const call = createCall(createStream('mock://local', 'track-l'), null);
-    const { getByTestId } = render(<SignalWireVideoView call={call as never} kind="local" />);
+    const { getByTestId } = await render(<SignalWireVideoView call={call as never} kind="local" />);
     expect(getByTestId('signalwire-video').props.mirror).toBe(true);
   });
 
-  it('does not mirror a remote view by default', () => {
+  it('does not mirror a remote view by default', async () => {
     const call = createCall(null, createStream('mock://remote', 'track-r'));
-    const { getByTestId } = render(<SignalWireVideoView call={call as never} kind="remote" />);
+    const { getByTestId } = await render(<SignalWireVideoView call={call as never} kind="remote" />);
     expect(getByTestId('signalwire-video').props.mirror).toBe(false);
   });
 
-  it('honours an explicit mirror prop', () => {
+  it('honours an explicit mirror prop', async () => {
     const call = createCall(createStream('mock://local', 'track-l'), null);
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <SignalWireVideoView call={call as never} kind="local" mirror={false} />
     );
     expect(getByTestId('signalwire-video').props.mirror).toBe(false);
   });
 
-  it('recomputes the URL when the track is replaced on the same stream object', () => {
+  it('recomputes the URL when the track is replaced on the same stream object', async () => {
     const remote = createStream('mock://remote-v1', 'track-1');
     const call = createCall(null, remote);
-    const { getByTestId, rerender } = render(
+    const { getByTestId, rerender } = await render(
       <SignalWireVideoView call={call as never} kind="remote" />
     );
     expect(getByTestId('signalwire-video').props.streamURL).toBe('mock://remote-v1');
@@ -82,21 +82,21 @@ describe('SignalWireVideoView', () => {
     // Same stream object, new track and new URL — the camera-switch case.
     remote.getVideoTracks.mockReturnValue([{ id: 'track-2' }]);
     remote.toURL.mockReturnValue('mock://remote-v2');
-    rerender(<SignalWireVideoView call={call as never} kind="remote" />);
+    await rerender(<SignalWireVideoView call={call as never} kind="remote" />);
 
     expect(getByTestId('signalwire-video').props.streamURL).toBe('mock://remote-v2');
   });
 
-  it('passes objectFit through', () => {
+  it('passes objectFit through', async () => {
     const call = createCall(null, createStream('mock://remote', 'track-r'));
-    const { getByTestId } = render(
+    const { getByTestId } = await render(
       <SignalWireVideoView call={call as never} kind="remote" objectFit="contain" />
     );
     expect(getByTestId('signalwire-video').props.objectFit).toBe('contain');
   });
 
-  it('renders nothing for a null call', () => {
-    const { queryByTestId } = render(<SignalWireVideoView call={null} kind="remote" />);
+  it('renders nothing for a null call', async () => {
+    const { queryByTestId } = await render(<SignalWireVideoView call={null} kind="remote" />);
     expect(queryByTestId('signalwire-video')).toBeNull();
   });
 });
