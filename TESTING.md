@@ -413,3 +413,43 @@ real Hermes runtime in one shot. If it red-screens on startup, capture the stack
   or a full Gradle build is not free.
 - Record results by updating the sign-off table in `docs/device-testing.md` and
   the "which fix worked" note in section 2c, then commit.
+
+---
+
+## Reaching the support server from a device
+
+A real device cannot reach the Mac's loopback, and the generated `Info.plist`
+sets `NSAllowsArbitraryLoads=false` with `NSAllowsLocalNetworking=true`. That
+combination decides what actually works:
+
+| Route | Works? | Why |
+| --- | --- | --- |
+| `http://localhost:3000` | Simulator only | The device has its own loopback |
+| `http://<LAN IP>:3000` | Yes, same Wi-Fi | Covered by `NSAllowsLocalNetworking`; expect an iOS "allow local network access" prompt on first launch |
+| `http://100.x.y.z:3000` (Tailscale IP) | **No** | Tailscale uses `100.64.0.0/10` (CGNAT), which is not one of the private ranges `NSAllowsLocalNetworking` covers, so ATS blocks it |
+| `https://<host>.<tailnet>.ts.net` | Yes | Real certificate, so plain ATS is satisfied; also avoids the local-network prompt |
+
+The Tailscale route survives changing networks, which matters when the Mac and
+the device are not on one Wi-Fi:
+
+```bash
+tailscale serve --bg 3000          # proxies https://<host>.<tailnet>.ts.net -> localhost:3000
+tailscale serve status
+tailscale serve --https=443 off    # when finished
+```
+
+Then set the app's endpoint, remembering that `EXPO_PUBLIC_` is what makes Expo
+inline it into the bundle:
+
+```bash
+# example/.env
+EXPO_PUBLIC_SW_TOKEN_URL=https://<host>.<tailnet>.ts.net/token
+```
+
+Verify from the Mac before blaming the app — a token minted over HTTPS proves
+the whole chain except the device's own network:
+
+```bash
+curl -X POST https://<host>.<tailnet>.ts.net/token \
+  -H 'content-type: application/json' -d '{}'
+```
