@@ -145,4 +145,23 @@ describe('CallControls', () => {
       expect(button.props.accessibilityLabel).toEqual(expect.any(String));
     }
   });
+
+  it('leaves the call screen even when hangup rejects', async () => {
+    // A call the far end never answered rejects here: the verto `bye` gets no
+    // response and times out. Gating navigation on that stranded the user on
+    // the call screen with no way back.
+    const call = createCall();
+    call.hangup = jest.fn(async () => {
+      throw new Error('RPC timeout');
+    });
+    const onHangup = jest.fn();
+    await render(<CallControls call={call as never} onHangup={onHangup} />);
+
+    fireEvent.press(screen.getByTestId('sw-hangup'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onHangup).toHaveBeenCalled();
+  });
 });

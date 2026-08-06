@@ -65,14 +65,13 @@ function peek<T>(observable$: Observable<T>): Peeked<T> {
  */
 export function useObservable<T>(observable$: Observable<T> | undefined, initialValue: T): T {
   // Survives store rebuilds, which happen on every render (see 1 above).
+  // Seeded once: callers pass literals such as `useObservable(x$, [])`, and
+  // re-adopting a fresh `[]` each render would make `getSnapshot` return a new
+  // reference every time, which trips React's "getSnapshot should be cached"
+  // infinite-loop guard. A deferred emission corrects the value a microtask
+  // later anyway, now that it is no longer discarded on the next render.
   const snapshotRef = useRef<T>(initialValue);
   const hasEmittedRef = useRef(false);
-
-  // Before the first emission the caller's synchronous getter is the source of
-  // truth, so track it rather than pinning the value seen at first render.
-  if (!hasEmittedRef.current) {
-    snapshotRef.current = initialValue;
-  }
 
   const store = useMemo<ObservableStore<T>>(() => {
     if (observable$) {

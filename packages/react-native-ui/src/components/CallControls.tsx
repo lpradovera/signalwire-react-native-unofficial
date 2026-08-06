@@ -1,4 +1,4 @@
-import { useCall } from '@signalwire/react';
+import { logger, useCall } from '@signalwire/react';
 import { useAudioRoute } from '@signalwire/react-native/audio';
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
@@ -15,7 +15,8 @@ export interface CallControlsProps {
   showVideo?: boolean;
   /** Hide the speaker toggle. Default `true`. */
   showAudioRoute?: boolean;
-  /** Called after hangup resolves, for navigating away. */
+  /** Called once the user has hung up, for navigating away. Always fires,
+   * even when the SDK teardown fails — see the handler below. */
   onHangup?: () => void;
   style?: StyleProp<ViewStyle>;
   testID?: string;
@@ -76,7 +77,15 @@ export function CallControls({
         label="End"
         variant="danger"
         onPress={() => {
-          void hangup().then(() => onHangup?.());
+          // Leaving must not depend on the SDK teardown succeeding. A call the
+          // far end never answered rejects here — the verto `bye` gets no
+          // response and times out — and gating navigation on that stranded
+          // the user on the call screen with no way back and no feedback.
+          void hangup()
+            .catch((error: unknown) => {
+              logger.warn('Hangup failed; leaving the call screen anyway:', error);
+            })
+            .finally(() => onHangup?.());
         }}
       />
     </View>
