@@ -18,5 +18,9 @@ server/.data/
 
 .DS_Store
 
+# Debug captures: wire logs contain subscriber tokens and the app identifier
+wire-log*.txt
+*.wire-log
+
 # Internal planning artifacts — kept locally, never published
 docs/superpowers/
