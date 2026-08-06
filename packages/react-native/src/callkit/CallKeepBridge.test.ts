@@ -243,4 +243,56 @@ describe('CallKeepBridge', () => {
     await bridge.setup({ appName: 'Demo' });
     expect((RNCallKeep.addEventListener as jest.Mock).mock.calls.length).toBe(first);
   });
+
+  /**
+   * Regression: `SignalWireProvider` calls `bindClient` immediately after
+   * constructing the client, before it has connected, so `client.session` is
+   * undefined. Reading it eagerly threw and red-screened the app on launch.
+   * Every other test here mocks a client that already has a session, which is
+   * exactly why the crash reached a simulator before it reached a test.
+   */
+  it('does not throw when bound before the client has a session', () => {
+    const isConnected$ = new BehaviorSubject(false);
+
+    expect(() => bridge.bindClient({ isConnected$, session: undefined } as never)).not.toThrow();
+  });
+
+  it('subscribes once the client connects and a session exists', async () => {
+    await bridge.setup({ appName: 'Demo' });
+
+    const isConnected$ = new BehaviorSubject(false);
+    const incoming$ = new Subject<unknown[]>();
+    const client = { isConnected$, session: undefined as unknown } as never;
+
+    bridge.bindClient(client);
+
+    // Session appears only once the client is connected, as it does in the SDK.
+    (client as { session: unknown }).session = { incomingCalls$: incoming$ };
+    isConnected$.next(true);
+
+    incoming$.next([createCall('c1')]);
+
+    expect(RNCallKeep.displayIncomingCall).toHaveBeenCalled();
+  });
+
+  it('re-subscribes to the new session after a reconnect', async () => {
+    await bridge.setup({ appName: 'Demo' });
+
+    const isConnected$ = new BehaviorSubject(false);
+    const first$ = new Subject<unknown[]>();
+    const client = { isConnected$, session: { incomingCalls$: first$ } } as never;
+
+    bridge.bindClient(client);
+    isConnected$.next(true);
+
+    // A reconnect replaces the session object entirely.
+    const second$ = new Subject<unknown[]>();
+    (client as { session: unknown }).session = { incomingCalls$: second$ };
+    isConnected$.next(false);
+    isConnected$.next(true);
+
+    second$.next([createCall('c2')]);
+
+    expect(RNCallKeep.displayIncomingCall).toHaveBeenCalled();
+  });
 });

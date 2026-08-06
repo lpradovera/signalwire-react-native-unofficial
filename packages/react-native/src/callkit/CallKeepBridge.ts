@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import RNCallKeep, { CONSTANTS } from 'react-native-callkeep';
-import { Subject, takeUntil } from 'rxjs';
+import { EMPTY, of, Subject, switchMap, takeUntil } from 'rxjs';
 
 import { getAudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
@@ -125,16 +125,34 @@ export class CallKeepBridge {
     return uuid;
   }
 
-  /** Mirrors the SDK's inbound calls into the registry. */
+  /**
+   * Mirrors the SDK's inbound calls into the registry.
+   *
+   * `SignalWireProvider` calls this immediately after constructing the client,
+   * *before* it has connected — at which point `client.session` does not exist
+   * yet. Reading it eagerly throws and takes the app down on launch, so the
+   * subscription is deferred until the client reports a connection, and
+   * re-established on every reconnect because the session is replaced.
+   *
+   * A client with no `isConnected$` (older SDKs, and the mocks in this
+   * package's tests) is treated as already connected.
+   */
   bindClient(client: SignalWire): void {
-    client.session.incomingCalls$.pipe(takeUntil(this.destroyed$)).subscribe((calls) => {
-      for (const call of calls) {
-        if (!this.registry.uuidForCall(call)) {
-          this.registry.attachIncomingCall(call);
-          this.watchCallStatus(call);
+    const connected$ = client.isConnected$ ?? of(true);
+
+    connected$
+      .pipe(
+        switchMap(() => client.session?.incomingCalls$ ?? EMPTY),
+        takeUntil(this.destroyed$)
+      )
+      .subscribe((calls) => {
+        for (const call of calls) {
+          if (!this.registry.uuidForCall(call)) {
+            this.registry.attachIncomingCall(call);
+            this.watchCallStatus(call);
+          }
         }
-      }
-    });
+      });
   }
 
   /** Registers an outbound call with the native UI. Returns its UUID. */
