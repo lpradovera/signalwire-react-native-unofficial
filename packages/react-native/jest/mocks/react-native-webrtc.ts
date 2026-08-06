@@ -15,6 +15,11 @@ export class MediaStream {
   toURL = jest.fn(() => 'mock://stream');
 }
 
+/** Like the real module: no setStreams — the shim under test must add it. */
+export class RTCRtpSender {
+  replaceTrack = jest.fn(async () => undefined);
+}
+
 export const mediaDevices = {
   getUserMedia: jest.fn(async () => new MediaStream()),
   enumerateDevices: jest.fn(async () => [

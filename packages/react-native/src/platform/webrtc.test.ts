@@ -1,4 +1,4 @@
-import { mediaDevices, RTCPeerConnection } from 'react-native-webrtc';
+import { mediaDevices, RTCPeerConnection, RTCRtpSender } from 'react-native-webrtc';
 
 import { createWebRTCApiProvider } from './webrtc';
 
@@ -33,5 +33,33 @@ describe('createWebRTCApiProvider', () => {
     expect(() => provider.mediaDevices.addEventListener('devicechange', listener)).not.toThrow();
     expect(() => provider.mediaDevices.removeEventListener('devicechange', listener)).not.toThrow();
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('shims RTCRtpSender.setStreams, which react-native-webrtc lacks', () => {
+    // The SDK's inbound-answer path calls sender.setStreams on the transceivers
+    // that setRemoteDescription created. Without the shim, answering ANY
+    // inbound call threw "undefined is not a function" after the user had
+    // already accepted on the native UI.
+    createWebRTCApiProvider();
+
+    // The runtime class is the jest mock; the type is the real module's, whose
+    // constructor takes an argument the mock does not need.
+    const MockSender = RTCRtpSender as unknown as new () => { setStreams?: (...s: unknown[]) => void };
+    const sender = new MockSender();
+    expect(typeof sender.setStreams).toBe('function');
+    expect(() => sender.setStreams?.()).not.toThrow();
+  });
+
+  it('does not replace a real setStreams implementation', () => {
+    const proto = (RTCRtpSender as unknown as { prototype: Record<string, unknown> }).prototype;
+    const native = jest.fn();
+    const previous = proto.setStreams;
+    proto.setStreams = native;
+    try {
+      createWebRTCApiProvider();
+      expect(proto.setStreams).toBe(native);
+    } finally {
+      proto.setStreams = previous;
+    }
   });
 });
