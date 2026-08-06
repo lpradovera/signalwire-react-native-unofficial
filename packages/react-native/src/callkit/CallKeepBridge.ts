@@ -168,6 +168,10 @@ export class CallKeepBridge {
   answerIncomingFromApp(call: Call): boolean {
     const uuid = this.registry.uuidForCall(call);
     if (!uuid || !this.isSetup) {
+      // The fallback is the silent-call trap, so a decline must say why.
+      logger.debug(
+        `In-app answer NOT routed through CallKit (uuid=${String(uuid)}, setup=${this.isSetup}); answering the SDK directly`
+      );
       return false;
     }
     logger.debug(`In-app answer routed through CallKit for ${uuid}`);
@@ -179,6 +183,9 @@ export class CallKeepBridge {
   rejectIncomingFromApp(call: Call): boolean {
     const uuid = this.registry.uuidForCall(call);
     if (!uuid || !this.isSetup) {
+      logger.debug(
+        `In-app reject NOT routed through CallKit (uuid=${String(uuid)}, setup=${this.isSetup})`
+      );
       return false;
     }
     logger.debug(`In-app reject routed through CallKit for ${uuid}`);
@@ -357,16 +364,31 @@ function generateUuid(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-let singleton: CallKeepBridge | null = null;
+/**
+ * Module-scope state is NOT process-wide here. tsup builds each subpath entry
+ * (`.`, `./callkit`, `./audio`) as a self-contained bundle, so this module is
+ * duplicated into `dist/index.*` AND `dist/callkit.*` — two copies, two
+ * module scopes. With a `let singleton` the app entry's `setup()` ran on the
+ * `/callkit` copy while the provider's registry lived on the root copy:
+ * CallKit rang from one brain, answers landed in the other, and the audio
+ * session was never coordinated — a connected call with no audio. Observed on
+ * device as `uuid=<valid>, setup=false`. `globalThis` is the one scope every
+ * copy shares.
+ */
+const CALLKIT_GLOBAL = '__signalwireRNCallKitBridge';
+
+type CallKitHolder = { [CALLKIT_GLOBAL]?: CallKeepBridge };
 
 /** The process-wide CallKit bridge. Safe to call before React mounts. */
 export function getCallKit(): CallKeepBridge {
-  singleton ??= new CallKeepBridge();
-  return singleton;
+  const holder = globalThis as CallKitHolder;
+  holder[CALLKIT_GLOBAL] ??= new CallKeepBridge();
+  return holder[CALLKIT_GLOBAL];
 }
 
 /** Test seam — drops the singleton. */
 export function resetCallKitForTesting(): void {
-  singleton?.destroy();
-  singleton = null;
+  const holder = globalThis as CallKitHolder;
+  holder[CALLKIT_GLOBAL]?.destroy();
+  delete holder[CALLKIT_GLOBAL];
 }

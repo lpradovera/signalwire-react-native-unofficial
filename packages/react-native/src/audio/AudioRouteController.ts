@@ -113,16 +113,23 @@ export class AudioRouteController {
   }
 }
 
-let singleton: AudioRouteController | null = null;
+/** Same duplication hazard as the CallKit bridge — see its note. One audio
+ * session exists per app, so the controller must be per-process, and only
+ * `globalThis` is shared across the subpath entry bundles. */
+const AUDIO_GLOBAL = '__signalwireRNAudioRoute';
+
+type AudioHolder = { [AUDIO_GLOBAL]?: AudioRouteController };
 
 /** The process-wide audio route controller. One audio session exists per app. */
 export function getAudioRouteController(): AudioRouteController {
-  singleton ??= new AudioRouteController();
-  return singleton;
+  const holder = globalThis as AudioHolder;
+  holder[AUDIO_GLOBAL] ??= new AudioRouteController();
+  return holder[AUDIO_GLOBAL];
 }
 
 /** Test seam — drops the singleton. */
 export function resetAudioRouteControllerForTesting(): void {
-  singleton?.destroy();
-  singleton = null;
+  const holder = globalThis as AudioHolder;
+  holder[AUDIO_GLOBAL]?.destroy();
+  delete holder[AUDIO_GLOBAL];
 }
