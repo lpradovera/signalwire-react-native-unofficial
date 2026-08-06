@@ -36,6 +36,14 @@ export interface CallNotification {
   readonly fromName?: string;
   /** Whether the native UI should offer video. Defaults to false. */
   readonly hasVideo?: boolean;
+  /**
+   * Extra key/value data delivered in the push payload untouched.
+   *
+   * Used to carry a bridge token: the device needs a reference to the parked
+   * caller, and the call SID itself must not travel — a push carrying it is a
+   * capability anyone replaying it could spend.
+   */
+  readonly data?: Record<string, string>;
 }
 
 export type DeliveryStatus = 'delivered' | 'token-expired' | 'failed';
@@ -62,6 +70,8 @@ export interface PushPayload {
   readonly from_name: string;
   /** iOS only: generated server-side so AppDelegate and JS agree on one id. */
   readonly uuid?: string;
+  /** Opaque extras, forwarded to the device untouched. */
+  readonly [extra: string]: string | undefined;
 }
 
 /**

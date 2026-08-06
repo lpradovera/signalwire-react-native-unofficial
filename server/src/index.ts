@@ -2,7 +2,9 @@ import { createApp } from './app.js';
 import { createSendersFromEnv } from './config.js';
 import { JsonFileDeviceStore } from './core/DeviceStore.js';
 import { NotificationService } from './core/NotificationService.js';
+import { BridgeTokenStore } from './core/BridgeTokenStore.js';
 import { createDevAuthenticateCaller, createTokenRoutes } from './routes/token.js';
+import { createSwmlRoutes } from './routes/swml.js';
 import { createMinterFromEnv } from './signalwire/subscriberTokens.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -51,11 +53,26 @@ if ('missing' in minted) {
   tokenRoutes = createTokenRoutes({ minter: minted.minter, authenticateCaller: () => null });
 }
 
+const service = new NotificationService({ store, senders, log });
+const bridgeTokens = new BridgeTokenStore();
+
+if (!process.env.PUBLIC_URL) {
+  log(
+    'PUBLIC_URL is unset — the park script falls back to SignalWire-generated ringback. ' +
+      'Set it to your tunnel to serve your own audio.'
+  );
+}
+
 const app = createApp({
   store,
-  service: new NotificationService({ store, senders, log }),
+  service,
   apiToken: process.env.API_TOKEN,
-  tokenRoutes
+  tokenRoutes,
+  swmlRoutes: createSwmlRoutes({
+    tokens: bridgeTokens,
+    service,
+    publicUrl: process.env.PUBLIC_URL
+  })
 });
 
 app.listen(PORT, () => log('Listening', { port: PORT, storePath: STORE_PATH }));

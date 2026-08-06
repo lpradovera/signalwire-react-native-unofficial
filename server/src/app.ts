@@ -3,6 +3,7 @@ import express from 'express';
 import { createDeviceRoutes } from './routes/devices.js';
 import { createNotifyRoutes } from './routes/notify.js';
 import { createSignalWireWebhook } from './signalwire/webhook.js';
+import { createSwmlRoutes } from './routes/swml.js';
 
 import type { DeviceStore } from './core/DeviceStore.js';
 import type { NotificationService } from './core/NotificationService.js';
@@ -23,6 +24,13 @@ export interface AppOptions {
    * failure names the missing configuration.
    */
   tokenRoutes?: Router;
+  /**
+   * SWML for the parked-caller inbound flow. Mounted outside the API-token
+   * guard: SignalWire fetches these, and it has no way to present that secret.
+   * They authorise on their own terms — /bridge spends a single-use token
+   * scoped to one subscriber.
+   */
+  swmlRoutes?: Router;
 }
 
 function requireApiToken(apiToken: string) {
@@ -43,7 +51,13 @@ function requireApiToken(apiToken: string) {
  * Builds the Express app without binding a port, so tests can drive it
  * directly. `src/index.ts` is the only place that listens.
  */
-export function createApp({ store, service, apiToken, tokenRoutes }: AppOptions): Express {
+export function createApp({
+  store,
+  service,
+  apiToken,
+  tokenRoutes,
+  swmlRoutes
+}: AppOptions): Express {
   const app = express();
 
   app.use(express.json({ limit: '64kb' }));
@@ -63,6 +77,10 @@ export function createApp({ store, service, apiToken, tokenRoutes }: AppOptions)
           'Subscriber tokens are not configured. Set SIGNALWIRE_SPACE, SIGNALWIRE_PROJECT_ID and SIGNALWIRE_API_TOKEN.'
       });
     });
+  }
+
+  if (swmlRoutes) {
+    app.use('/swml', swmlRoutes);
   }
 
   if (apiToken) {

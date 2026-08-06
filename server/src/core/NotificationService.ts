@@ -102,7 +102,10 @@ export class NotificationService {
         from_name: notification.fromName ?? 'Unknown caller',
         // iOS only: generated here so the AppDelegate hook and the JS side
         // agree on one identifier for the CallKit entry.
-        ...(device.platform === 'ios' ? { uuid: this.uuid() } : {})
+        ...(device.platform === 'ios' ? { uuid: this.uuid() } : {}),
+        // Opaque extras last: a bridge token rides here, and nothing above
+        // should be silently overwritten by it.
+        ...(notification.data ?? {})
       });
 
       return { token: device.token, platform: device.platform, status: 'delivered' };
