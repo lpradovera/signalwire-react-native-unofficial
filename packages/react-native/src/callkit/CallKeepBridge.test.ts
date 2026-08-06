@@ -363,4 +363,63 @@ describe('CallKeepBridge', () => {
     await bridge.setup({ appName: 'Demo' });
     expect(bridge.bindBridgeCall('never-existed', createCall('x') as never)).toBe(false);
   });
+
+  describe('cold start — the push was displayed before JavaScript existed', () => {
+    it('adopts the native entry, keeping the UUID CallKit is already showing', async () => {
+      await bridge.setup({ appName: 'Demo' });
+
+      callkeep.__emit('didDisplayIncomingCall', {
+        callUUID: 'native-uuid',
+        handle: '+15551234',
+        localizedCallerName: 'Ada',
+        fromPushKit: '1',
+        payload: { callId: 'a-leg', bridgeToken: 'opaque-token' }
+      });
+
+      const entry = bridge.registry.entryForUuid('native-uuid');
+      expect(entry?.state).toBe('pending-push');
+      expect(entry?.handle).toBe('+15551234');
+      // The opaque token must survive: JS cannot ask for it later, the push is gone.
+      expect(entry?.data).toEqual({ bridgeToken: 'opaque-token' });
+    });
+
+    it('ignores calls the app itself displayed, not PushKit', async () => {
+      await bridge.setup({ appName: 'Demo' });
+      callkeep.__emit('didDisplayIncomingCall', {
+        callUUID: 'not-a-push',
+        fromPushKit: '0',
+        payload: {}
+      });
+      expect(bridge.registry.entryForUuid('not-a-push')).toBeUndefined();
+    });
+
+    it('tolerates the event being replayed', async () => {
+      await bridge.setup({ appName: 'Demo' });
+      const event = {
+        callUUID: 'native-uuid',
+        handle: '+15551234',
+        fromPushKit: '1',
+        payload: { callId: 'a-leg' }
+      };
+      callkeep.__emit('didDisplayIncomingCall', event);
+      callkeep.__emit('didDisplayIncomingCall', event);
+
+      expect(bridge.registry.entries.filter((e) => e.uuid === 'native-uuid')).toHaveLength(1);
+    });
+
+    it('answering an adopted entry asks the app to place the bridge call', async () => {
+      await bridge.setup({ appName: 'Demo' });
+      callkeep.__emit('didDisplayIncomingCall', {
+        callUUID: 'native-uuid',
+        fromPushKit: '1',
+        payload: { bridgeToken: 'opaque-token' }
+      });
+      const asked: Array<Record<string, string> | undefined> = [];
+      bridge.registry.answerRequested$.subscribe((entry) => asked.push(entry.data));
+
+      callkeep.__emit('answerCall', { callUUID: 'native-uuid' });
+
+      expect(asked).toEqual([{ bridgeToken: 'opaque-token' }]);
+    });
+  });
 });

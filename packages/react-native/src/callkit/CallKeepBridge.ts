@@ -30,6 +30,7 @@ export interface CallKitSetupOptions {
 }
 
 const NATIVE_EVENTS = [
+  'didDisplayIncomingCall',
   'answerCall',
   'endCall',
   'didPerformDTMFAction',
@@ -234,6 +235,38 @@ export class CallKeepBridge {
   // ---------------------------------------------------------------- internals
 
   private registerNativeListeners(): void {
+    // A VoIP push is reported to CallKit natively, before JavaScript exists.
+    // This is how the registry learns about a call that is already ringing:
+    // without it the entry is created only when the app happens to be running,
+    // and a cold-start answer has nothing to apply an intent to.
+    RNCallKeep.addEventListener(
+      'didDisplayIncomingCall',
+      // callkeep types `payload` as bare `object`, so it is narrowed below
+      // rather than in the parameter list.
+      ({ callUUID, handle, localizedCallerName, fromPushKit, payload }) => {
+        const fields = (payload ?? {}) as Record<string, unknown>;
+        if (fromPushKit !== '1') {
+          return;
+        }
+        const data: Record<string, string> = {};
+        for (const [key, value] of Object.entries(fields)) {
+          if (key !== 'callId' && typeof value === 'string') {
+            data[key] = value;
+          }
+        }
+        const callId = typeof fields.callId === 'string' ? fields.callId : undefined;
+        logger.debug(`Native push displayed ${callUUID}`);
+        this.registry.adoptNativeEntry({
+          uuid: callUUID,
+          callId: callId && callId.length > 0 ? callId : undefined,
+          from: handle,
+          fromName: localizedCallerName,
+          data: Object.keys(data).length > 0 ? data : undefined
+        });
+        this.ensureTicking();
+      }
+    );
+
     RNCallKeep.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) => {
       logger.debug(`Native answer for ${callUUID}`);
       // Applied synchronously — the registry buffers it when the SDK call has

@@ -96,6 +96,13 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
                                                     userInfo:@{ @"token": [hex copy] }];
 }
 
+/** callkeep hands this dictionary back to JS on didDisplayIncomingCall. */
+- (NSDictionary *)payloadWithCallId:(NSString *)callId extras:(NSDictionary *)extras {
+  NSMutableDictionary *result = [NSMutableDictionary dictionaryWithDictionary:extras];
+  result[@"callId"] = callId;
+  return result;
+}
+
 - (void)pushRegistry:(PKPushRegistry *)registry
     didReceiveIncomingPushWithPayload:(PKPushPayload *)payload
                               forType:(PKPushType)type
@@ -108,6 +115,20 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
   NSString *callId = data[@"call_id"] ?: @"";
   NSString *handle = data[@"from"] ?: @"Unknown";
   NSString *callerName = data[@"from_name"] ?: @"Unknown caller";
+
+  // Everything the sender added beyond the known keys is forwarded verbatim.
+  // A bridge topology puts a single-use token here, and JavaScript cannot ask
+  // for it later: by the time the app is running, the push is gone.
+  NSMutableDictionary *extras = [NSMutableDictionary dictionary];
+  NSSet *known = [NSSet setWithArray:@[ @"uuid", @"call_id", @"from", @"from_name", @"aps" ]];
+  for (NSString *key in data) {
+    if (![known containsObject:key]) {
+      id value = data[key];
+      if ([value isKindOfClass:[NSString class]]) {
+        extras[key] = value;
+      }
+    }
+  }
 
   // Reported unconditionally, even when the payload is malformed: iOS kills an
   // app that takes a VoIP push without reporting a call, and a call that ends
@@ -122,7 +143,7 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
                    supportsGrouping:NO
                  supportsUngrouping:NO
                         fromPushKit:YES
-                            payload:@{ @"callId": callId }
+                            payload:[self payloadWithCallId:callId extras:extras]
               withCompletionHandler:completion];
 }
 

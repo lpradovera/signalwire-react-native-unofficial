@@ -128,6 +128,44 @@ export class CallRegistry {
     return uuid;
   }
 
+  /**
+   * Records a call the native layer already displayed.
+   *
+   * On a cold start the VoIP push is reported to CallKit before JavaScript
+   * exists, so the entry has a UUID the native side chose. Reporting it here
+   * rather than minting a new one keeps a single identity for the call — a
+   * second UUID would leave the ringing native entry orphaned, which is the
+   * stuck-call-log failure iOS penalises hardest.
+   *
+   * Idempotent: callkeep may replay the event, and the app may also call
+   * `reportIncomingPush` for the same call.
+   */
+  adoptNativeEntry(payload: PushPayload & { uuid: string }): void {
+    const existing = this.byUuid.get(payload.uuid);
+    if (existing) {
+      // Later knowledge wins, but nothing already learned is discarded.
+      this.write({
+        ...existing,
+        expectedCallId: existing.expectedCallId ?? payload.callId ?? null,
+        data: existing.data ?? payload.data
+      });
+      return;
+    }
+
+    this.write({
+      uuid: payload.uuid,
+      state: 'pending-push',
+      expectedCallId: payload.callId ?? null,
+      call: null,
+      handle: payload.from ?? UNKNOWN_HANDLE,
+      displayName: payload.fromName ?? UNKNOWN_NAME,
+      intent: null,
+      data: payload.data,
+      fuseDeadline: this.host.now() + this.fusionTimeoutMs
+    });
+    logger.debug(`Adopted native push entry ${payload.uuid}`);
+  }
+
   /** Fuses an inbound SDK call with a pending push, or creates a new entry. */
   attachIncomingCall(call: Call): void {
     if (this.uuidForCall(call)) {

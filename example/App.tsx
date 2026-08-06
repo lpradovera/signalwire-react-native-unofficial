@@ -7,6 +7,7 @@ import { IncomingCallSheet } from './src/components/IncomingCallSheet';
 import { CallScreen } from './src/screens/CallScreen';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
+import { useBridgeAnswer } from './src/useBridgeAnswer';
 import { useDeviceRegistration } from './src/useDeviceRegistration';
 import { useServerToken } from './src/useServerToken';
 
@@ -14,9 +15,11 @@ import type { Call, CredentialProvider } from '@signalwire/js';
 
 function Shell(): React.JSX.Element {
   const { isConnected } = useSignalWire();
+  const [activeCall, setActiveCall] = useState<Call | null>(null);
   // Must match the subscriber reference the token was minted for.
   useDeviceRegistration(process.env.EXPO_PUBLIC_SW_SUBSCRIBER_REF ?? 'rn-example');
-  const [activeCall, setActiveCall] = useState<Call | null>(null);
+  // Answering a parked-caller push means dialling, not answering — see the hook.
+  useBridgeAnswer(setActiveCall);
 
   // A CallKit Accept answers the call — audio and all — without touching
   // React. Subscribe to the registry so a native answer also brings up the
