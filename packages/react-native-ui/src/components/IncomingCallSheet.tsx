@@ -8,7 +8,11 @@ import { ControlButton } from './ControlButton';
 import type { Call, MediaOptions } from '@signalwire/js';
 
 export interface IncomingCallSheetProps {
-  /** Media to answer with. Defaults to audio and video. */
+  /**
+   * Media to answer with when the answer is NOT routed through the native call
+   * UI. Defaults to audio only: an SDP answer cannot introduce an m-line the
+   * offer lacks, so answering with video against an audio-only offer fails.
+   */
   answerWith?: MediaOptions;
   onAnswered?: (call: Call) => void;
   onRejected?: (call: Call) => void;
@@ -23,7 +27,7 @@ export interface IncomingCallSheetProps {
  * when no call is pending, so it is safe to mount permanently.
  */
 export function IncomingCallSheet({
-  answerWith = { audio: true, video: true },
+  answerWith = { audio: true, video: false },
   onAnswered,
   onRejected,
   testID

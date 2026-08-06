@@ -155,6 +155,37 @@ export class CallKeepBridge {
       });
   }
 
+  /**
+   * Answers an in-app-accepted call through the native UI instead of the SDK.
+   *
+   * `RNCallKeep.answerIncomingCall` performs the CallKit answer action: iOS
+   * dismisses its ringing screen, activates the audio session (releasing the
+   * `didActivateAudioSession` gate), and our `answerCall` listener runs the
+   * same registry flow as a lock-screen answer. Returns `false` when the call
+   * is unknown to the registry, in which case the caller must answer the SDK
+   * directly.
+   */
+  answerIncomingFromApp(call: Call): boolean {
+    const uuid = this.registry.uuidForCall(call);
+    if (!uuid || !this.isSetup) {
+      return false;
+    }
+    logger.debug(`In-app answer routed through CallKit for ${uuid}`);
+    RNCallKeep.answerIncomingCall(uuid);
+    return true;
+  }
+
+  /** The reject twin of {@link answerIncomingFromApp}. */
+  rejectIncomingFromApp(call: Call): boolean {
+    const uuid = this.registry.uuidForCall(call);
+    if (!uuid || !this.isSetup) {
+      return false;
+    }
+    logger.debug(`In-app reject routed through CallKit for ${uuid}`);
+    RNCallKeep.rejectCall(uuid);
+    return true;
+  }
+
   /** Registers an outbound call with the native UI. Returns its UUID. */
   trackCall(call: Call, handle: string, displayName: string): string {
     const uuid = this.registry.attachOutgoingCall(call, handle, displayName);

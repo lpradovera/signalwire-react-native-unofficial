@@ -315,4 +315,36 @@ describe('CallKeepBridge', () => {
     // to wait on and the start happens synchronously after the status change.
     expect(InCallManager.start).toHaveBeenCalled();
   });
+
+  it('routes an in-app answer through CallKit so iOS activates audio', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient({ session: { incomingCalls$: incoming$ } } as never);
+    const call = createCall('c1');
+    incoming$.next([call]);
+
+    const handled = bridge.answerIncomingFromApp(call as never);
+
+    expect(handled).toBe(true);
+    expect(RNCallKeep.answerIncomingCall).toHaveBeenCalled();
+    // The SDK answer comes later, from the native answerCall event — not here.
+    expect(call.answer).not.toHaveBeenCalled();
+  });
+
+  it('declines to handle an in-app answer for a call it does not know', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    expect(bridge.answerIncomingFromApp(createCall('stranger') as never)).toBe(false);
+    expect(RNCallKeep.answerIncomingCall).not.toHaveBeenCalled();
+  });
+
+  it('routes an in-app reject through CallKit', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient({ session: { incomingCalls$: incoming$ } } as never);
+    const call = createCall('c1');
+    incoming$.next([call]);
+
+    expect(bridge.rejectIncomingFromApp(call as never)).toBe(true);
+    expect(RNCallKeep.rejectCall).toHaveBeenCalled();
+  });
 });

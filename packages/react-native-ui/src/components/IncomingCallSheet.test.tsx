@@ -44,7 +44,7 @@ describe('IncomingCallSheet', () => {
     expect(screen.getByText('+15551234')).toBeTruthy();
   });
 
-  it('answers with audio and video by default', async () => {
+  it('answers audio-only by default — an answer cannot add an m-line', async () => {
     const call = { id: 'a', answer: jest.fn(async () => undefined), reject: jest.fn() };
     incomingCalls$.next([call]);
     await renderSheet();
@@ -52,7 +52,7 @@ describe('IncomingCallSheet', () => {
     fireEvent.press(screen.getByTestId('sw-answer'));
     await Promise.resolve();
 
-    expect(call.answer).toHaveBeenCalledWith({ audio: true, video: true });
+    expect(call.answer).toHaveBeenCalledWith({ audio: true, video: false });
   });
 
   it('honours answerWith', async () => {

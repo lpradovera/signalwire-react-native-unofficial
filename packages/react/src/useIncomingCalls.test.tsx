@@ -80,4 +80,44 @@ describe('useIncomingCalls', () => {
     };
     await expect(result?.reject(call as never)).resolves.toBeUndefined();
   });
+
+  it('lets the observer take over an in-app answer, skipping the SDK call', async () => {
+    // On React Native the observer routes the answer through CallKit so iOS
+    // activates the audio session; answering the SDK directly while the
+    // native UI still rings produces a connected but silent call.
+    const observer = { onIncomingAnswer: jest.fn(() => true) };
+    render(
+      <SignalWireContext.Provider
+        value={{ client: client as never, error: null, observer }}
+      >
+        <Probe />
+      </SignalWireContext.Provider>
+    );
+    const call = { answer: jest.fn(async () => undefined) };
+
+    await act(async () => {
+      await result?.answer(call as never);
+    });
+
+    expect(observer.onIncomingAnswer).toHaveBeenCalledWith(call);
+    expect(call.answer).not.toHaveBeenCalled();
+  });
+
+  it('answers the SDK directly when the observer declines', async () => {
+    const observer = { onIncomingAnswer: jest.fn(() => false) };
+    render(
+      <SignalWireContext.Provider
+        value={{ client: client as never, error: null, observer }}
+      >
+        <Probe />
+      </SignalWireContext.Provider>
+    );
+    const call = { answer: jest.fn(async () => undefined) };
+
+    await act(async () => {
+      await result?.answer(call as never, { audio: true, video: false });
+    });
+
+    expect(call.answer).toHaveBeenCalledWith({ audio: true, video: false });
+  });
 });

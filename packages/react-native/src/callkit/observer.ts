@@ -14,6 +14,8 @@ export function createCallKitObserver(): CallObserver {
   return {
     bindClient: (client) => getCallKit().bindClient(client),
     onOutgoingCall: (call, destination) =>
-      void getCallKit().trackCall(call, destination, destination)
+      void getCallKit().trackCall(call, destination, destination),
+    onIncomingAnswer: (call) => getCallKit().answerIncomingFromApp(call),
+    onIncomingReject: (call) => getCallKit().rejectIncomingFromApp(call)
   };
 }

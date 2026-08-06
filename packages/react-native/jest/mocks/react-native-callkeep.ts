@@ -4,6 +4,8 @@ const RNCallKeep = {
   setup: jest.fn(async () => undefined),
   setAvailable: jest.fn(),
   displayIncomingCall: jest.fn(),
+  answerIncomingCall: jest.fn(),
+  rejectCall: jest.fn(),
   startCall: jest.fn(),
   reportConnectedOutgoingCallWithUUID: jest.fn(),
   reportEndCallWithUUID: jest.fn(),
