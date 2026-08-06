@@ -159,6 +159,10 @@ export class CallKeepBridge {
   trackCall(call: Call, handle: string, displayName: string): string {
     const uuid = this.registry.attachOutgoingCall(call, handle, displayName);
     this.watchCallStatus(call);
+    // Deliberate breadcrumb: RNCallKeep's own logs are NSLog-only, invisible in
+    // Metro when launched outside Xcode, so without this line the entire
+    // outbound CallKit path is indistinguishable from never having run.
+    logger.debug(`Tracking outbound call ${uuid} for ${handle}`);
     return uuid;
   }
 
@@ -268,6 +272,7 @@ export class CallKeepBridge {
         return;
       }
       if (status === 'connected') {
+        logger.debug(`Call ${uuid} connected; starting the audio session`);
         this.registry.reportConnected(uuid);
         // Outbound calls never pass through the native answer handler, so this
         // is the only place their audio session gets started. Without it

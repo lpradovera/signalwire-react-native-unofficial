@@ -73,7 +73,7 @@ import App from './App';
 registerRootComponent(App);
 ```
 
-Three things break without it, all at import or first-call time:
+Four things break without it:
 
 - The SDK bundles `uuid`, which reads `crypto.getRandomValues`. Hermes has none.
 - The SDK parses dial destinations with `new URL('destination:' + address)`.
@@ -83,6 +83,10 @@ Three things break without it, all at import or first-call time:
   guarded only by `typeof window !== 'undefined'`. React Native satisfies that
   guard but provides neither `CustomEvent` nor `window.dispatchEvent`, so
   importing `@signalwire/js` throws.
+- The SDK calls ES2025 iterator helpers (`Iterator.prototype.map`/`.find`) on
+  Map iterators. Hermes does not implement them, so touching the directory
+  throws `values().map is not a function`. This one is lazy rather than
+  import-time, which makes it easy to miss in a quick smoke test.
 
 `createReactNativePlatform()` verifies the polyfills ran and throws
 `PolyfillNotInstalledError` naming the fix if they did not.

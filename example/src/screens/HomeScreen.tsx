@@ -10,6 +10,7 @@ export function HomeScreen({
   onCallStarted: (call: Call) => void;
 }): React.JSX.Element {
   const { user, directory, dial, disconnect, error } = useSignalWire();
+  const [dialError, setDialError] = useState<string | null>(null);
   // Seed from the synchronous getter, not a literal: `addresses$` is deferred
   // through asapScheduler like every SDK observable, so a `[]` here would show
   // an empty directory for a frame even when addresses are already loaded.
@@ -39,16 +40,23 @@ export function HomeScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoDial]);
 
+  // Callers use `void start(...)`, so a rejection here would otherwise vanish
+  // into an unhandled-promise warning instead of the screen.
   const start = async (target: string): Promise<void> => {
     if (!target.trim()) {
       return;
     }
-    // Video is opt-in: offering a sendonly video m-line to an audio-only
-    // destination is a plausible reason for a far end to accept the invite and
-    // never answer. EXPO_PUBLIC_SW_DIAL_VIDEO=1 restores it.
-    const wantVideo = process.env.EXPO_PUBLIC_SW_DIAL_VIDEO === '1';
-    const call = await dial(target.trim(), { audio: true, video: wantVideo });
-    onCallStarted(call);
+    setDialError(null);
+    try {
+      // Video is opt-in: offering a sendonly video m-line to an audio-only
+      // destination makes the far end accept the invite and never answer.
+      // EXPO_PUBLIC_SW_DIAL_VIDEO=1 restores it.
+      const wantVideo = process.env.EXPO_PUBLIC_SW_DIAL_VIDEO === '1';
+      const call = await dial(target.trim(), { audio: true, video: wantVideo });
+      onCallStarted(call);
+    } catch (dialFailure) {
+      setDialError((dialFailure as Error).message);
+    }
   };
 
   return (
@@ -61,6 +69,7 @@ export function HomeScreen({
       </View>
 
       {error ? <Text style={styles.error}>{error.message}</Text> : null}
+      {dialError ? <Text style={styles.error}>Dial failed: {dialError}</Text> : null}
 
       <TextInput
         style={styles.input}

@@ -49,6 +49,7 @@ export class AudioRouteController {
     try {
       InCallManager.start({ media });
       this.started = true;
+      logger.debug(`Audio session started (${media})`);
     } catch (error) {
       logger.warn('Failed to start the audio session:', error);
     }

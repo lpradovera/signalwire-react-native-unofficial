@@ -7,6 +7,7 @@ import type { Call, CredentialProvider } from '@signalwire/js';
 
 function Dialer(): React.JSX.Element {
   const { isConnected, user, dial, error } = useSignalWire();
+  const [dialError, setDialError] = useState<string | null>(null);
   const [destination, setDestination] = useState('/private/hello-world');
   const [call, setCall] = useState<Call | null>(null);
 
@@ -22,6 +23,7 @@ function Dialer(): React.JSX.Element {
       </p>
 
       {error ? <p className="error">{error.message}</p> : null}
+      {dialError ? <p className="error">Dial failed: {dialError}</p> : null}
 
       <input
         value={destination}
@@ -31,7 +33,9 @@ function Dialer(): React.JSX.Element {
       <button
         disabled={!isConnected}
         onClick={() => {
-          void dial(destination, { audio: true, video: true }).then(setCall);
+          void dial(destination, { audio: true, video: false })
+              .then(setCall)
+              .catch((dialFailure: Error) => setDialError(dialFailure.message));
         }}
       >
         Call

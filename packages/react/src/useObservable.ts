@@ -138,6 +138,10 @@ export function useObservable<T>(observable$: Observable<T> | undefined, initial
       },
       getSnapshot: (): T => snapshotRef.current
     };
+    // `sourceKey` is not read inside the callback — it exists purely to force a
+    // re-subscription when the underlying subject changes. That is exactly the
+    // "cache key that isn't a syntactic dependency" case the rule cannot see.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceKey]);
 
   return useSyncExternalStore(store.subscribe, store.getSnapshot);
