@@ -104,6 +104,33 @@ the SDK's deferred, fresh-identity observables, so `isConnected` stayed false
 for the life of a connected client; and the hangup button only navigated away
 if teardown resolved, stranding the user when a call went unanswered.
 
+### Inbound took five layered fixes — the order matters
+
+Item 3 failed five times, each failure hiding the next. Recorded because the
+symptom was identical every time (call connects, no audio) while the cause
+moved:
+
+1. **The answer offered video.** `IncomingCallSheet` and the native answer path
+   both defaulted to `{audio, video}`. An SDP answer cannot introduce an m-line
+   the offer lacks, so answering an audio-only call failed outright.
+2. **`RTCRtpSender.setStreams` does not exist in react-native-webrtc.** The
+   SDK's inbound path calls it on the transceivers `setRemoteDescription`
+   created. Outbound never touches it, which is why only inbound broke.
+3. **The in-app answer bypassed CallKit.** Answering the SDK directly leaves
+   iOS holding the audio session for a call it still thinks is ringing:
+   connected, silent, and the native UI keeps ringing.
+4. **Two CallKit bridges existed.** tsup builds each subpath entry
+   self-contained, so `CallKeepBridge` was duplicated into `dist/index.*` and
+   `dist/callkit.*`. `setup()` ran on one copy, the registry lived on the
+   other. The tell was `uuid=<valid>, setup=false` — impossible on one object.
+   Both singletons now live on `globalThis`.
+5. **A native answer never reached React.** CallKit Accept connected the call
+   with audio while `activeCall` stayed null, so the app looked frozen and only
+   the in-app button appeared to work. The registry now emits `answered$`.
+
+Only 1 and 2 are diagnosable from a log alone. 3–5 needed someone watching the
+device while reading the log, which is the argument for this whole document.
+
 ### Do not offer video to an audio-only destination
 
 Item 1 failed for hours against `/private/hello-world` with the far end
@@ -134,7 +161,7 @@ no CallKit UI confirmed, and no push delivered.
 | --- | --- | --- | --- | --- |
 | 1 | Outbound audio | ✅ 2026-08-06 | | iPad Air 5, iPadOS 17.5.1, Expo SDK 54 / RN 0.81.5, legacy arch. Audio confirmed by ear. **Dial audio-only.** See below. |
 | 2 | Outbound video + camera switch | | | |
-| 3 | Inbound, foreground | | | |
+| 3 | Inbound, foreground | ✅ 2026-08-06 | | iPad Air 5, iPadOS 17.5.1. Called from `examples/web` as a second subscriber. CallKit UI appeared, **Accept works**, audio both ways. In-app sheet answer also works. |
 | 4 | Inbound, backgrounded | | | |
 | 5 | Cold-start VoIP push | | | |
 | 6 | Push with no matching call | | | |

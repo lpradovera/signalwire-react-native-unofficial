@@ -17,7 +17,7 @@ injects platform implementations and shims the globals the SDK probes. If a fix
 seems to require editing the SDK, that is a signal to find an injection point or
 a `typeof`-guarded global to shim instead.
 
-### The five things that break `@signalwire/js` under React Native
+### The six things that break `@signalwire/js` under React Native
 
 Memorise these — most runtime failures trace back to one of them, and three are
 import-time crashes:
@@ -37,6 +37,11 @@ import-time crashes:
    Unlike 1–3 this is not an import-time crash — it lies dormant until a code
    path touches the directory, then throws `values().map is not a function`.
    Handled by `installIteratorHelpers()`.
+6. The SDK calls `RTCRtpSender.setStreams()` on its inbound-answer path.
+   `react-native-webrtc` does not implement it, so answering any inbound call
+   threw `undefined is not a function` — after the user had already accepted on
+   the native UI. Outbound calls never reach it. Handled by a no-op shim in
+   `createWebRTCApiProvider()`.
 
 1–3 and 5 are all installed by the single side-effect import
 `@signalwire/react-native/polyfills`, which **must be the first line** of the
@@ -71,7 +76,7 @@ just a stale ordering.
 | build | Four packages, each `ESM/CJS/DTS ⚡️ Build success` |
 | lint | no output, exit 0 |
 | type-check | no `error TS` lines, across seven workspaces |
-| test | 55 core + 13 react-ui + 157 react-native + 23 react-native-ui = **248**, plus 37 server |
+| test | 57 core + 13 react-ui + 167 react-native + 23 react-native-ui = **260**, plus 37 server |
 | bundle-check | `iOS Bundled … (~1090 modules)`, an `Android Bundled …` line, and a Vite `✓ built in …` |
 
 **Do not treat the Android module count as a gate.** Both platforms export
@@ -397,7 +402,10 @@ real Hermes runtime in one shot. If it red-screens on startup, capture the stack
 | --- | --- | --- |
 | Invite succeeds (verto 200), then silence; far end logs a media timeout | The offer contains an m-line the destination cannot answer — most often `video` (sendonly) against an audio-only resource | Dial `{ audio: true, video: false }`; check the offered m-lines before suspecting the network |
 | `values().map is not a function` | Hermes lacks ES2025 iterator helpers (breakage 5) | Polyfills import missing or stale build |
-| `DependencyError: Main peer connection not found` after a call ends | SDK-side: a getter that throws is read during teardown, e.g. when a server event arrives post-destroy | Cosmetic; not this package. Worth reporting upstream |
+| `DependencyError: Main peer connection not found` after a call ends | SDK-side: a getter that throws is read during teardown | Handled — `useCall` guards every getter read |
+| Inbound call connects but is silent, native UI keeps ringing | The app answered the SDK directly instead of through CallKit, so iOS never activated the audio session | Answer via the observer (`useIncomingCalls().answer`), never `call.answer()` directly, when CallKit is on |
+| CallKit Accept connects the call but the app UI does not react | Nothing surfaced the native answer to React | Subscribe to `getCallKit().registry.answered$` |
+| A bridge reports `setup=false` while its registry knows the call | Two copies of the module (subpath entry bundles) each held a `let singleton` | Fixed — singletons live on `globalThis`. If you add another, do the same |
 | ICE gathering times out; candidate list includes `100.x`/`fd7a:` addresses | A VPN (e.g. Tailscale) adds interfaces that slow gathering | Disable the VPN on the device, or accept slower setup |
 | `PolyfillNotInstalledError` | `@signalwire/react-native/polyfills` missing or not first | Make it line 1 of `index.js` |
 | Red screen: `CustomEvent is not defined` | Polyfills entry did not run before `@signalwire/js` | Same as above |
