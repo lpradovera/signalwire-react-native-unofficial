@@ -1,5 +1,5 @@
 import { useObservable, useSignalWire } from '@signalwire/react-native';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { Address, Call } from '@signalwire/js';
@@ -10,8 +10,19 @@ export function HomeScreen({
   onCallStarted: (call: Call) => void;
 }): React.JSX.Element {
   const { user, directory, dial, disconnect, error } = useSignalWire();
-  const addresses = useObservable<Address[]>(directory?.addresses$, []);
+  // Seed from the synchronous getter, not a literal: `addresses$` is deferred
+  // through asapScheduler like every SDK observable, so a `[]` here would show
+  // an empty directory for a frame even when addresses are already loaded.
+  const addresses = useObservable<Address[]>(directory?.addresses$, directory?.addresses ?? []);
   const [destination, setDestination] = useState('');
+
+  // The directory starts empty and does not fetch on its own — `addresses$` is
+  // a BehaviorSubject seeded with []. Without this the list is permanently
+  // "No addresses yet", which reads as "nothing to call" rather than "nothing
+  // asked for them".
+  useEffect(() => {
+    directory?.loadMore();
+  }, [directory]);
 
   const start = async (target: string): Promise<void> => {
     if (!target.trim()) {
