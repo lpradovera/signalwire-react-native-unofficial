@@ -239,6 +239,25 @@ open SignalWireRNExample.xcworkspace
 **Xcode 26 or newer is required** — any iOS 26 device needs it, and Xcode 16.x
 cannot build SDK 54 anyway.
 
+Machine setup gotchas, both hit on a fresh macOS box:
+
+- **Accept the Xcode licence first.** Until you do, `xcrun`, `simctl` and even
+  `brew install cocoapods` fail with the same licence error, which makes the
+  real cause easy to misread. Launching `Xcode.app` once and clicking Agree also
+  installs the first-run components; `sudo xcodebuild -license accept` does the
+  licence alone.
+- **`pod` may be shadowed.** If the machine uses asdf/rbenv, its shim wins over
+  Homebrew's and reports `No version is set for command pod`. Put Homebrew
+  first — `export PATH=/opt/homebrew/bin:$PATH` — for prebuild, `pod install`
+  and `expo run:ios`, since Expo shells out to `pod` itself.
+- **Replacing Xcode.app removes its simulator runtimes.** Check with
+  `xcrun simctl list runtimes`; if it is empty, fetch one through
+  Xcode → Settings → Components or `xcodebuild -downloadPlatform iOS` (~8 GB).
+- `expo prebuild` runs `pod install` at the end, and a cold CocoaPods cache
+  makes that first run take well over ten minutes. Let it finish rather than
+  interrupting it — a killed run leaves `ios/Pods` populated but no
+  `Podfile.lock`, and you have to rerun `pod install` by hand.
+
 Before checklist items 5–7 can work at all:
 
 1. Add the `AppDelegate` PushKit hook from `docs/native-setup.md`. The Expo
