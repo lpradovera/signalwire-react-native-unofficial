@@ -112,4 +112,45 @@ describe('ReactNativeStorage', () => {
 
     await expect(storage.setItem('token', 'A', 'local')).resolves.toBeUndefined();
   });
+
+  /**
+   * The peer floor is `>=1.23.0`, not `>=2.0.0`: Expo SDK 52 pins AsyncStorage
+   * to 1.23.1, and `AsyncStorageLike` needs only five methods that 1.x already
+   * provides. 1.x declares each with a trailing optional Node-style callback,
+   * so `AsyncStorage123` below is copied from its `types.d.ts`. Assigning it to
+   * `AsyncStorageLike` is the real assertion — it stops compiling the moment
+   * the contract outgrows 1.23, at which point the floor has to move with it.
+   */
+  it('works against the AsyncStorage 1.23 method surface', async () => {
+    interface AsyncStorage123 {
+      getItem(
+        key: string,
+        callback?: (error?: Error, result?: string) => void
+      ): Promise<string | null>;
+      setItem(key: string, value: string, callback?: (error?: Error) => void): Promise<void>;
+      removeItem(key: string, callback?: (error?: Error) => void): Promise<void>;
+      getAllKeys(
+        callback?: (error?: Error, keys?: readonly string[]) => void
+      ): Promise<readonly string[]>;
+      multiRemove(keys: readonly string[], callback?: (errors?: Error[]) => void): Promise<void>;
+    }
+
+    const map = new Map<string, string>();
+    const legacy: AsyncStorage123 = {
+      getItem: async (key) => map.get(key) ?? null,
+      setItem: async (key, value) => void map.set(key, value),
+      removeItem: async (key) => void map.delete(key),
+      getAllKeys: async () => [...map.keys()],
+      multiRemove: async (keys) => keys.forEach((key) => map.delete(key))
+    };
+
+    const backing: AsyncStorageLike = legacy;
+    const storage = new ReactNativeStorage(backing);
+
+    await storage.setItem('token', 'A', 'local');
+    expect(await storage.getItem('token', 'local')).toBe('A');
+
+    await storage.removeItem('token', 'local');
+    expect(await storage.getItem('token', 'local')).toBeNull();
+  });
 });
