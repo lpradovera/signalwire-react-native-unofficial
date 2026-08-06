@@ -29,6 +29,7 @@ export class CallRegistry {
   private readonly fusionTimeoutMs: number;
   private readonly _entries$ = new BehaviorSubject<CallEntry[]>([]);
   private readonly _answered$ = new Subject<Call>();
+  private readonly _answerRequested$ = new Subject<CallEntry>();
   private readonly byUuid = new Map<string, CallEntry>();
 
   constructor(options: CallRegistryOptions) {
@@ -50,6 +51,22 @@ export class CallRegistry {
    */
   get answered$(): Observable<Call> {
     return this._answered$.asObservable();
+  }
+
+  /**
+   * Emits when the user accepts a push entry that has no SDK call yet.
+   *
+   * The fusion model assumes the call is on its way to us — the server dials
+   * the subscriber and we wait. A bridge flow inverts that: the caller is
+   * parked on ringback and *we* place the call that joins them, so nothing
+   * will ever arrive to fuse with and the buffered intent would sit there
+   * until the entry timed out as missed.
+   *
+   * Subscribe to place that call, then hand it back with {@link bindCall} so
+   * it lands on the same native entry the user is already looking at.
+   */
+  get answerRequested$(): Observable<CallEntry> {
+    return this._answerRequested$.asObservable();
   }
 
   get entries(): CallEntry[] {
@@ -85,7 +102,9 @@ export class CallRegistry {
     } else {
       logger.warn(
         'Push payload has no callId. Fusion will fall back to matching a single ' +
-          'unmatched inbound call, which is unreliable with concurrent calls.'
+          'unmatched inbound call, which is unreliable with concurrent calls. ' +
+          'Expected if you bridge to a parked caller instead: no call is coming ' +
+          'to fuse with — subscribe to answerRequested$ and bind the call you place.'
       );
     }
 
@@ -101,6 +120,7 @@ export class CallRegistry {
       handle,
       displayName,
       intent: null,
+      data: payload.data,
       fuseDeadline: this.host.now() + this.fusionTimeoutMs
     });
 
@@ -161,6 +181,41 @@ export class CallRegistry {
     return uuid;
   }
 
+  /**
+   * Attaches a call to an entry that already exists, keeping its UUID.
+   *
+   * For the bridge flow: the user answered a push, we dialled to join them to
+   * a parked caller, and the resulting call belongs to the native entry that
+   * is already on screen. {@link attachOutgoingCall} would mint a second UUID
+   * and leave the original ringing forever — a stuck CallKit entry, which is
+   * the failure iOS penalises hardest.
+   *
+   * Returns `false` when the entry is gone (the caller hung up, or the user
+   * declined, while the call was being placed), which is the signal to hang
+   * that call straight back up.
+   */
+  bindCall(uuid: string, call: Call): boolean {
+    const entry = this.byUuid.get(uuid);
+    if (!entry || entry.state === 'ended') {
+      logger.debug(`No live entry for ${uuid}; the bridge call has nothing to attach to`);
+      return false;
+    }
+
+    // The intent is cleared: the user's answer is what caused this call to
+    // exist, so replaying it against the new call would answer an outbound
+    // leg that was never ringing.
+    this.write({
+      ...entry,
+      state: 'fused',
+      call,
+      expectedCallId: call.id,
+      intent: null,
+      fuseDeadline: null
+    });
+    logger.debug(`Bound bridge call ${call.id} to ${uuid}`);
+    return true;
+  }
+
   /** Applies an answer/reject, buffering it when the entry is still pending. */
   applyIntent(uuid: string, intent: CallIntent): void {
     const entry = this.byUuid.get(uuid);
@@ -170,7 +225,11 @@ export class CallRegistry {
 
     if (entry.state === 'pending-push' || !entry.call) {
       logger.debug(`Buffering "${intent}" for ${uuid} until the SDK call arrives`);
-      this.write({ ...entry, intent });
+      const buffered = { ...entry, intent };
+      this.write(buffered);
+      if (intent === 'answer') {
+        this._answerRequested$.next(buffered);
+      }
       return;
     }
 
@@ -236,6 +295,7 @@ export class CallRegistry {
     this.byUuid.clear();
     this._entries$.complete();
     this._answered$.complete();
+    this._answerRequested$.complete();
   }
 
   // ---------------------------------------------------------------- internals

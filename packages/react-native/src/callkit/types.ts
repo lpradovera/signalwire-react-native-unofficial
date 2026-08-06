@@ -13,6 +13,16 @@ export interface PushPayload {
   from?: string;
   /** Caller display name, shown in the native UI. */
   fromName?: string;
+  /**
+   * Opaque data the push carried, passed through untouched.
+   *
+   * This package does not interpret it. A bridge topology, for instance, sends
+   * a single-use token here that the app hands to its own backend, which
+   * resolves it to the parked caller — keeping the real call identifier off the
+   * device, where a push payload would otherwise act as a capability anyone
+   * replaying it could use.
+   */
+  data?: Record<string, string>;
 }
 
 export interface CallEntry {
@@ -23,6 +33,8 @@ export interface CallEntry {
   readonly handle: string;
   readonly displayName: string;
   readonly intent: CallIntent | null;
+  /** Opaque data from the push that created this entry, if any. */
+  readonly data?: Record<string, string>;
   /** Deadline for fusion, in `host.now()` milliseconds. Null once fused. */
   readonly fuseDeadline: number | null;
 }

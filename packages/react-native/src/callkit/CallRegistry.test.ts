@@ -372,4 +372,88 @@ describe('CallRegistry — ending', () => {
 
     expect(answered).toEqual([call]);
   });
+
+  describe('bridge flow — the caller is parked and we place the joining call', () => {
+    it('carries opaque push data through to the answer request', () => {
+      // The app needs whatever the server sent — a single-use bridge token,
+      // for instance — at the moment the user answers.
+      const host = createHost();
+      const registry = new CallRegistry({ host });
+      const uuid = registry.reportIncomingPush({
+        from: '+15551234',
+        data: { bridgeToken: 'opaque-single-use' }
+      });
+      const seen: Array<Record<string, string> | undefined> = [];
+      registry.answerRequested$.subscribe((entry) => seen.push(entry.data));
+
+      registry.applyIntent(uuid, 'answer');
+
+      expect(seen).toEqual([{ bridgeToken: 'opaque-single-use' }]);
+    });
+
+    it('asks for a call when the user answers a push that has none', () => {
+      const host = createHost();
+      const registry = new CallRegistry({ host });
+      const uuid = registry.reportIncomingPush({ callId: 'a-leg-sid' });
+      const asked: string[] = [];
+      registry.answerRequested$.subscribe((entry) => asked.push(entry.uuid));
+
+      registry.applyIntent(uuid, 'answer');
+
+      // Nothing is coming to fuse with: the app must place the call itself.
+      expect(asked).toEqual([uuid]);
+    });
+
+    it('does not ask for a call when the user declines', () => {
+      const host = createHost();
+      const registry = new CallRegistry({ host });
+      const uuid = registry.reportIncomingPush({ callId: 'a-leg-sid' });
+      const asked: string[] = [];
+      registry.answerRequested$.subscribe((entry) => asked.push(entry.uuid));
+
+      registry.applyIntent(uuid, 'reject');
+
+      expect(asked).toEqual([]);
+    });
+
+    it('binds the placed call to the same native entry, not a second one', () => {
+      const host = createHost();
+      const registry = new CallRegistry({ host });
+      const uuid = registry.reportIncomingPush({ callId: 'a-leg-sid' });
+      registry.applyIntent(uuid, 'answer');
+      const call = createCall('bridge-leg');
+
+      expect(registry.bindCall(uuid, call as never)).toBe(true);
+
+      // A second UUID would leave the original entry ringing forever.
+      expect(registry.entries).toHaveLength(1);
+      expect(registry.uuidForCall(call as never)).toBe(uuid);
+      expect(registry.entryForUuid(uuid)?.state).toBe('fused');
+    });
+
+    it('does not replay the answer intent against the call it created', () => {
+      // The user's answer is why this call exists; answering it would be
+      // answering an outbound leg that was never ringing.
+      const host = createHost();
+      const registry = new CallRegistry({ host });
+      const uuid = registry.reportIncomingPush({ callId: 'a-leg-sid' });
+      registry.applyIntent(uuid, 'answer');
+      const call = createCall('bridge-leg');
+
+      registry.bindCall(uuid, call as never);
+
+      expect(call.answer).not.toHaveBeenCalled();
+      expect(registry.entryForUuid(uuid)?.intent).toBeNull();
+    });
+
+    it('refuses to bind when the entry is already gone', () => {
+      // The parked caller hung up, or the user declined, while we were dialing.
+      const host = createHost();
+      const registry = new CallRegistry({ host });
+      const uuid = registry.reportIncomingPush({ callId: 'a-leg-sid' });
+      registry.endCall(uuid);
+
+      expect(registry.bindCall(uuid, createCall('bridge-leg') as never)).toBe(false);
+    });
+  });
 });

@@ -193,6 +193,22 @@ export class CallKeepBridge {
     return true;
   }
 
+  /**
+   * Attaches a call placed in response to a native answer to its existing
+   * entry. See {@link CallRegistry.bindCall}.
+   *
+   * Returns `false` when the entry is gone — the parked caller hung up, or
+   * the user declined, while the call was being placed — in which case hang
+   * the call straight back up rather than leaving it live with no native UI.
+   */
+  bindBridgeCall(uuid: string, call: Call): boolean {
+    const bound = this.registry.bindCall(uuid, call);
+    if (bound) {
+      this.watchCallStatus(call);
+    }
+    return bound;
+  }
+
   /** Registers an outbound call with the native UI. Returns its UUID. */
   trackCall(call: Call, handle: string, displayName: string): string {
     const uuid = this.registry.attachOutgoingCall(call, handle, displayName);

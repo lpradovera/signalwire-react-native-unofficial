@@ -347,4 +347,20 @@ describe('CallKeepBridge', () => {
     expect(bridge.rejectIncomingFromApp(call as never)).toBe(true);
     expect(RNCallKeep.rejectCall).toHaveBeenCalled();
   });
+
+  it('watches a bound bridge call so it tears the native entry down', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    const uuid = bridge.reportIncomingPush({ callId: 'a-leg-sid' });
+    const call = createCall('bridge-leg');
+
+    expect(bridge.bindBridgeCall(uuid, call as never)).toBe(true);
+    call.status$.next('disconnected');
+
+    expect(RNCallKeep.reportEndCallWithUUID).toHaveBeenCalled();
+  });
+
+  it('reports a bind failure so the caller can hang the orphan call up', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    expect(bridge.bindBridgeCall('never-existed', createCall('x') as never)).toBe(false);
+  });
 });
