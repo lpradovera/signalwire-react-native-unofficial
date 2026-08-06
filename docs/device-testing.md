@@ -81,6 +81,32 @@ Expect: each native entry maps to the correct SDK call; answering the second
 does not act on the first. If the push payloads lack `call_id`, this is the
 scenario that will fail first.
 
+## What the iOS Simulator established (2026-08-06)
+
+The Simulator cannot sign off any row below — it has no CallKit, and
+`Devices enumerated: {audioInputs: 0, audioOutputs: 0, videoInputs: 0}`, so no
+call carries real media. It did clear the whole path up to media, on
+macOS 26.3.1 / Xcode 26.6 / Expo SDK 54 / RN 0.81.5 / legacy architecture:
+
+- App builds, launches and boots to the token screen. Per TESTING.md that alone
+  clears all three import-time breakages on a real Hermes runtime.
+- `react-native-webrtc` 124.0.8 and `react-native-callkeep` 4.3.16 compile and
+  link, despite neither having a release targeting RN 0.81.
+- Subscriber token fetched from the support server, WebSocket authenticated,
+  `subscriber.online` returned 200, transport pings answered.
+- Outbound `dial()` produced an offer, gathered ICE including `typ relay`
+  candidates, and the `webrtc.verto` invite was accepted with code 200.
+
+It also found three bugs the 232 unit tests could not, all now fixed with
+regression tests: `bindClient` read `client.session` before the client had
+connected and crashed on launch; `useObservable` discarded every emission from
+the SDK's deferred, fresh-identity observables, so `isConnected` stayed false
+for the life of a connected client; and the hangup button only navigated away
+if teardown resolved, stranding the user when a call went unanswered.
+
+**Still entirely unverified: everything requiring real hardware.** No audio has
+been heard, no camera captured, no CallKit UI displayed, and no push delivered.
+
 ## Sign-off
 
 | # | Scenario | iOS | Android | Notes |
