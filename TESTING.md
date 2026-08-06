@@ -287,6 +287,45 @@ Machine setup gotchas, both hit on a fresh macOS box:
   makes that first run take well over ten minutes. Let it finish rather than
   interrupting it — a killed run leaves `ios/Pods` populated but no
   `Podfile.lock`, and you have to rerun `pod install` by hand.
+- **A wedged `syspolicyd` looks exactly like a CocoaPods bug.** If `pod install`
+  sits at 0% CPU with no network sockets and no child processes, check
+  `ps -o %cpu -p $(pgrep syspolicyd)`. Gatekeeper validates every freshly
+  downloaded binary, and when it spins at 100% the install blocks in `fcntl`
+  inside dyld's `mapSegments` — in a *different* process, which is why the pod
+  process itself looks idle. `sudo killall syspolicyd` clears it (the daemon
+  respawns). It cost hours here before a stack sample showed it.
+
+### The pod configuration that works
+
+Verified on macOS 26.3.1 / Xcode 26.6 / Expo SDK 54 / RN 0.81.5:
+
+```bash
+cd example/ios
+export PATH=/opt/homebrew/bin:$PATH
+RCT_USE_RN_DEP=1 pod install
+```
+
+`RCT_USE_RN_DEP=1` pulls the third-party dependencies (boost, glog, fmt,
+double-conversion) as prebuilt binaries. **Use it.** Without it, CocoaPods
+compiles glog from source by running `./configure`, which blocks forever
+reading a stdin that CocoaPods never writes to.
+
+**Do not add `RCT_USE_PREBUILT_RNCORE=1`.** Precompiled React core is broken on
+this toolchain — the `React-Core-prebuilt` umbrella header pulls in source-tree
+headers that are not part of its module, and `-Wnon-modular-include-in-framework-module`
+is promoted to an error:
+
+```
+error: include of non-modular header inside framework module 'React':
+  Pods/Headers/Public/React-Core/React/RCTAnimationDriver.h
+```
+
+Building React core from source (the default) avoids it and costs only build
+time.
+
+If a run is interrupted, `rm -rf ios/Pods ios/build ios/Podfile.lock` before
+retrying. The `~/Library/Caches/CocoaPods` cache survives, so it is a re-copy
+rather than a re-download.
 
 Before checklist items 5–7 can work at all:
 
