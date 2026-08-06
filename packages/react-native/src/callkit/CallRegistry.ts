@@ -285,7 +285,15 @@ export class CallRegistry {
   private runIntent(call: Call, intent: CallIntent): void {
     try {
       if (intent === 'answer') {
-        call.answer();
+        // Audio-only, explicitly. A bare answer() lets the SDK's defaults
+        // request video, and an SDP answer cannot introduce an m-line the
+        // offer lacks — so answering an audio-only call that way fails with
+        // "Error creating inbound answer" after the user has already accepted
+        // on the native UI. The call gives us no way to inspect the offered
+        // m-lines before answering; matching the offer automatically belongs
+        // in the SDK. Video answer stays available to in-app UI via
+        // useIncomingCalls().answer(call, { video: true }).
+        call.answer({ audio: true, video: false });
       } else {
         call.reject();
       }

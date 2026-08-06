@@ -8,7 +8,7 @@ import type { Call, CredentialProvider } from '@signalwire/js';
 function Dialer(): React.JSX.Element {
   const { isConnected, user, dial, error } = useSignalWire();
   const [dialError, setDialError] = useState<string | null>(null);
-  const [destination, setDestination] = useState('/private/hello-world');
+  const [destination, setDestination] = useState('/private/rn-example');
   const [call, setCall] = useState<Call | null>(null);
 
   if (call) {
@@ -60,7 +60,9 @@ export function App(): React.JSX.Element {
         const response = await fetch('/token', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({})
+          // A distinct reference: the browser must be a different subscriber from the
+          // iPad, or we would be calling ourselves.
+          body: JSON.stringify({ reference: 'web-caller' })
         });
         const body = (await response.json()) as { token?: string; error?: string };
         if (cancelled) {

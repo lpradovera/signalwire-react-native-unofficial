@@ -31,6 +31,11 @@ if (process.env.EXPO_PUBLIC_SW_WIRE_LOG === '1') {
     if (typeof value === 'string') {
       return value;
     }
+    // JSON.stringify(new Error(...)) is `{}` — none of an Error's properties
+    // are enumerable — which masked the one message this log exists to show.
+    if (value instanceof Error) {
+      return `${value.name}: ${value.message}\n${value.stack ?? ''}`;
+    }
     try {
       return JSON.stringify(value, null, 1);
     } catch {

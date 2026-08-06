@@ -328,4 +328,19 @@ describe('CallRegistry — ending', () => {
 
     expect(completed).toHaveBeenCalled();
   });
+
+  it('answers from the native UI audio-only, never letting SDK defaults add video', () => {
+    // An SDP answer cannot introduce an m-line the offer lacks; a bare
+    // answer() let the SDK request video against audio-only offers and the
+    // answer failed after the user had already accepted on the lock screen.
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    const call = createCall('c1');
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.attachIncomingCall(call as never);
+
+    registry.applyIntent(uuid, 'answer');
+
+    expect(call.answer).toHaveBeenCalledWith({ audio: true, video: false });
+  });
 });
