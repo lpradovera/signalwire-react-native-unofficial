@@ -71,7 +71,7 @@ just a stale ordering.
 | build | Four packages, each `ESM/CJS/DTS ⚡️ Build success` |
 | lint | no output, exit 0 |
 | type-check | no `error TS` lines, across seven workspaces |
-| test | 54 core + 13 react-ui + 157 react-native + 23 react-native-ui = **247**, plus 37 server |
+| test | 55 core + 13 react-ui + 157 react-native + 23 react-native-ui = **248**, plus 37 server |
 | bundle-check | `iOS Bundled … (~1090 modules)`, an `Android Bundled …` line, and a Vite `✓ built in …` |
 
 **Do not treat the Android module count as a gate.** Both platforms export

@@ -1,8 +1,13 @@
 import { useObservable, useSignalWire } from '@signalwire/react-native';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { Address, Call } from '@signalwire/js';
+
+// Module scope, not a ref: HomeScreen unmounts while a call is active and
+// remounts when it ends, so any per-mount guard re-arms after every call —
+// which auto-dialed in a loop, forever. Once per app launch is the contract.
+let autoDialConsumed = false;
 
 export function HomeScreen({
   onCallStarted
@@ -29,14 +34,13 @@ export function HomeScreen({
   // testing otherwise needs a human to tap for every rebuild, which makes an
   // iteration loop over native fixes painfully slow. Unset in normal use.
   const autoDial = process.env.EXPO_PUBLIC_SW_AUTODIAL;
-  const autoDialed = useRef(false);
   useEffect(() => {
-    if (!autoDial || autoDialed.current) {
+    if (!autoDial || autoDialConsumed) {
       return;
     }
-    autoDialed.current = true;
+    autoDialConsumed = true;
     void start(autoDial);
-    // `start` is recreated every render; the ref guard is what makes this once.
+    // `start` is recreated every render; the module-scope guard makes this once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoDial]);
 
