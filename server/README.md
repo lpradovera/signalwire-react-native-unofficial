@@ -150,3 +150,39 @@ Senders are exercised through the `PushSender` interface, so the suite needs no
 Apple or Google credentials. The JWT tests use freshly generated key pairs and
 assert the two things that produce unhelpful 403s in production: ES256 with the
 key id in the header, and a 64-byte JOSE signature rather than DER.
+
+## Subscriber tokens
+
+```
+POST /token  ->  { token, reference }
+```
+
+Mints a Fabric subscriber token so the app never holds project credentials. A
+subscriber token is short-lived and scoped to one subscriber; the project ID and
+API token that mint it are neither, and anyone who unzips an IPA containing them
+could mint tokens for every subscriber in the space.
+
+```bash
+SIGNALWIRE_SPACE=example.signalwire.com \
+SIGNALWIRE_PROJECT_ID=<project-id> \
+SIGNALWIRE_API_TOKEN=<api-token> \
+ALLOW_UNAUTHENTICATED_TOKENS=1 \
+DEV_SUBSCRIBER_REFERENCE=rn-example \
+npm run dev -w @signalwire/rn-push-server
+
+curl -X POST localhost:3000/token -H 'content-type: application/json' -d '{}'
+```
+
+`/token` sits **outside** the shared `API_TOKEN` guard, because the app calls it
+directly and cannot hold that secret. It carries its own auth instead:
+`authenticateCaller` in `src/routes/token.ts` maps an incoming request to a
+subscriber reference. **That function is the seam you replace** — real
+deployments send their own session credential and look up the user.
+
+`ALLOW_UNAUTHENTICATED_TOKENS=1` swaps in a stub that accepts anyone, and the
+server logs a warning at boot while it is on. Without it, and without your own
+`authenticateCaller`, every request is rejected — a closed default, because the
+open one mints tokens for arbitrary subscribers.
+
+The client never chooses its own reference when auth supplies one: whoever picks
+the reference picks whose calls they receive.

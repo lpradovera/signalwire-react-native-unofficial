@@ -1,11 +1,12 @@
 import { SignalWireProvider, useSignalWire } from '@signalwire/react-native';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { SafeAreaView, StyleSheet } from 'react-native';
 
 import { IncomingCallSheet } from './src/components/IncomingCallSheet';
 import { CallScreen } from './src/screens/CallScreen';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
+import { useServerToken } from './src/useServerToken';
 
 import type { Call, CredentialProvider } from '@signalwire/js';
 
@@ -31,6 +32,14 @@ function Shell(): React.JSX.Element {
 
 export default function App(): React.JSX.Element {
   const [token, setToken] = useState<string | null>(null);
+  const serverToken = useServerToken();
+
+  // The server token seeds state once; a manual entry always wins after that.
+  useEffect(() => {
+    if (serverToken.status === 'ready') {
+      setToken((current) => current ?? serverToken.token);
+    }
+  }, [serverToken]);
 
   // Memoized: a new identity tears down the client and rebuilds it.
   const credentialProvider = useMemo<CredentialProvider | null>(
@@ -41,7 +50,11 @@ export default function App(): React.JSX.Element {
   if (!credentialProvider) {
     return (
       <SafeAreaView style={styles.root}>
-        <ConnectScreen onSubmitToken={setToken} />
+        <ConnectScreen
+          onSubmitToken={setToken}
+          fetching={serverToken.status === 'loading'}
+          fetchError={serverToken.status === 'failed' ? serverToken.error : undefined}
+        />
       </SafeAreaView>
     );
   }

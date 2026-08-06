@@ -8,9 +8,15 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 
  * - without it, this is the "connecting" state rendered inside the provider.
  */
 export function ConnectScreen({
-  onSubmitToken
+  onSubmitToken,
+  fetching = false,
+  fetchError
 }: {
   onSubmitToken?: (token: string) => void;
+  /** A token request to the support server is in flight. */
+  fetching?: boolean;
+  /** Why the support server could not supply one. */
+  fetchError?: string;
 }): React.JSX.Element {
   const [token, setToken] = useState('');
 
@@ -18,10 +24,20 @@ export function ConnectScreen({
     return <ConnectingState />;
   }
 
+  if (fetching) {
+    return (
+      <View style={styles.root}>
+        <ActivityIndicator color="#60a5fa" />
+        <Text style={styles.subtitle}>Requesting a token from the server…</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.root}>
       <Text style={styles.title}>SignalWire</Text>
       <Text style={styles.subtitle}>Paste a subscriber token to connect.</Text>
+      {fetchError ? <Text style={styles.error}>Token server: {fetchError}</Text> : null}
 
       <TextInput
         style={styles.input}
@@ -60,6 +76,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, justifyContent: 'center', padding: 24, gap: 16 },
   title: { color: '#f8fafc', fontSize: 32, fontWeight: '700' },
   subtitle: { color: '#94a3b8', fontSize: 15, textAlign: 'center' },
+  error: { color: '#f87171', fontSize: 13, textAlign: 'center' },
   input: {
     backgroundColor: '#1e293b',
     borderRadius: 12,
