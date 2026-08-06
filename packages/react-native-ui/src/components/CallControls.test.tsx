@@ -146,6 +146,19 @@ describe('CallControls', () => {
     }
   });
 
+  it('leaves the call screen even when hangup never settles', async () => {
+    // A call whose media never arrived may leave the verto `bye` unanswered
+    // forever, so even a `.finally()` would not run. Navigation must not wait.
+    const call = createCall();
+    call.hangup = jest.fn(() => new Promise<undefined>(() => undefined));
+    const onHangup = jest.fn();
+    await render(<CallControls call={call as never} onHangup={onHangup} />);
+
+    fireEvent.press(screen.getByTestId('sw-hangup'));
+
+    expect(onHangup).toHaveBeenCalled();
+  });
+
   it('leaves the call screen even when hangup rejects', async () => {
     // A call the far end never answered rejects here: the verto `bye` gets no
     // response and times out. Gating navigation on that stranded the user on

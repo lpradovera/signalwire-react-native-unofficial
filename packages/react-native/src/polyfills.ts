@@ -16,12 +16,18 @@
  * - `installBaseGlobals()` must run before the SDK's entry point, which
  *   dispatches a `CustomEvent` on `window` at import time — React Native has
  *   `window` but neither `CustomEvent` nor `window.dispatchEvent`.
+ *
+ * `installIteratorHelpers()` has no ordering constraint — the SDK reaches those
+ * methods lazily, not at import — but it belongs here so a consumer gets it
+ * from the same single import.
  */
 import 'react-native-get-random-values';
 import 'react-native-url-polyfill/auto';
 
 import { installBaseGlobals } from './platform/baseGlobals';
+import { installIteratorHelpers } from './platform/iteratorHelpers';
 
 installBaseGlobals();
+installIteratorHelpers();
 
-export { installBaseGlobals };
+export { installBaseGlobals, installIteratorHelpers };

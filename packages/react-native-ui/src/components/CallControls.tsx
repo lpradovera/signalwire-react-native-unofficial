@@ -77,15 +77,16 @@ export function CallControls({
         label="End"
         variant="danger"
         onPress={() => {
-          // Leaving must not depend on the SDK teardown succeeding. A call the
-          // far end never answered rejects here — the verto `bye` gets no
-          // response and times out — and gating navigation on that stranded
-          // the user on the call screen with no way back and no feedback.
-          void hangup()
-            .catch((error: unknown) => {
-              logger.warn('Hangup failed; leaving the call screen anyway:', error);
-            })
-            .finally(() => onHangup?.());
+          // Leave first, tear down after. Gating navigation on `hangup()`
+          // stranded the user on the call screen whenever the SDK did not
+          // settle: a call the far end never answered rejects on an RPC
+          // timeout, and one whose media never arrived may not settle at all,
+          // so even a `.finally()` never runs. Ending a call is the one action
+          // that must not wait on the network.
+          onHangup?.();
+          void hangup().catch((error: unknown) => {
+            logger.warn('Hangup failed after leaving the call screen:', error);
+          });
         }}
       />
     </View>

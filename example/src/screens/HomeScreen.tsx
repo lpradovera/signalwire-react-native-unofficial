@@ -1,5 +1,5 @@
 import { useObservable, useSignalWire } from '@signalwire/react-native';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { Address, Call } from '@signalwire/js';
@@ -23,6 +23,21 @@ export function HomeScreen({
   useEffect(() => {
     directory?.loadMore();
   }, [directory]);
+
+  // Dev convenience: dial automatically on reaching this screen. Device
+  // testing otherwise needs a human to tap for every rebuild, which makes an
+  // iteration loop over native fixes painfully slow. Unset in normal use.
+  const autoDial = process.env.EXPO_PUBLIC_SW_AUTODIAL;
+  const autoDialed = useRef(false);
+  useEffect(() => {
+    if (!autoDial || autoDialed.current) {
+      return;
+    }
+    autoDialed.current = true;
+    void start(autoDial);
+    // `start` is recreated every render; the ref guard is what makes this once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoDial]);
 
   const start = async (target: string): Promise<void> => {
     if (!target.trim()) {
