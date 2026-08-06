@@ -64,7 +64,7 @@ feel impossible to debug — you end up with three unproven links and one sympto
 | 5 | App: upload tokens to your server | [3](#3-app-sending-the-token-to-your-server) | `GET /devices` lists them |
 | 6 | Server: senders configured | [4b](#4b-sending-an-apns-voip-push), [4c](#4c-sending-an-fcm-data-message) | Startup logs no "not configured" warning |
 | 7 | Send a push by hand, app in foreground | [5](#5-verifying-it-one-link-at-a-time) | `POST /notify` reports `delivered: 1` |
-| 8 | `AppDelegate` PushKit hook | [1d](#1d-appdelegate-report-to-callkit-before-javascript-boots) | CallKit UI appears with the app force-quit |
+| 8 | Native PushKit hook (generated) | [1d](#1d-the-native-pushkit-hook--generated-for-you) | CallKit UI appears with the app force-quit |
 | 9 | JS receives and reports | [1e](#1e-js-pick-the-call-up-from-callkeep), [2c](#2c-app-the-headless-background-handler) | `reportIncomingPush` is called |
 | 10 | Fusion | [5](#5-verifying-it-one-link-at-a-time) | Logs show `Fused call … into …` |
 | 11 | The trigger (webhook) | [4d](#4d-the-trigger) | A real inbound call pushes automatically |
@@ -149,49 +149,73 @@ export function registerVoipPush(uploadToken: (token: string) => Promise<void>):
 Call it once the user is authenticated, and re-upload whenever it changes —
 tokens rotate on reinstall, restore, and occasionally at the OS's discretion.
 
-### 1d. AppDelegate: report to CallKit before JavaScript boots
+### 1d. The native PushKit hook — generated for you
 
 **This is the step that cannot be skipped or moved to JS.** On a cold start the
 JS bundle is not running when the push arrives. Since iOS 13, if you do not
 report the call to CallKit *in the same callback*, the OS terminates your app
 and eventually stops delivering VoIP pushes to it entirely.
 
-Objective-C `AppDelegate.mm`:
+**With Expo, the config plugin now generates it.** `enableVoipPush` (the
+default) writes `SignalWireVoipPush.m` into the iOS project and adds it to the
+compile sources. It registers a `PKPushRegistry`, reports incoming pushes
+straight to CallKit, and bridges the device token to JavaScript. Nothing to add
+by hand, and `expo prebuild` regenerates it rather than clobbering it.
 
-```objc
-#import <PushKit/PushKit.h>
-#import "RNCallKeep.h"
+It is an Objective-C category rather than a patch to `AppDelegate.swift` for
+two reasons: regex-patching Expo's Swift template fails silently whenever the
+template changes, and Swift cannot `import RNCallKeep` at all — callkeep's
+podspec does not expose a consumable Swift module
+([callkeep#856](https://github.com/react-native-webrtc/react-native-callkeep/issues/856)).
 
-- (void)pushRegistry:(PKPushRegistry *)registry
-didReceiveIncomingPushWithPayload:(PKPushPayload *)payload
-             forType:(PKPushType)type
-withCompletionHandler:(void (^)(void))completion
-{
-  NSDictionary *data = payload.dictionaryPayload;
-  NSString *uuid       = data[@"uuid"];
-  NSString *callId     = data[@"call_id"];
-  NSString *handle     = data[@"from"] ?: @"Unknown";
-  NSString *callerName = data[@"from_name"] ?: @"Unknown caller";
+Verify it landed:
 
-  [RNCallKeep reportNewIncomingCall:uuid
-                             handle:handle
-                         handleType:@"generic"
-                           hasVideo:NO
-                localizedCallerName:callerName
-                    supportsHolding:YES
-                       supportsDTMF:YES
-                   supportsGrouping:NO
-                 supportsUngrouping:NO
-                        fromPushKit:YES
-                            payload:@{@"callId": callId ?: @"", @"uuid": uuid ?: @""}
-              withCompletionHandler:completion];
-}
+```bash
+npm run verify:prebuild    # asserts the file is generated AND compiled
 ```
 
-Expo SDK 52 generates a **Swift** `AppDelegate`. Either add the Swift equivalent
-or drop in a small Objective-C category. The config plugin deliberately does not
-patch this file: regex-patching Swift source fails silently, which is worse than
-not generating it.
+A generated `.m` that Xcode does not compile is silently ignored, and the
+failure only shows up much later as "pushes do nothing" — which is why the
+check asserts the `pbxproj` reference, not just the file.
+
+**Bare React Native** projects add the equivalent by hand. Copy the source from
+`packages/react-native/src/plugin/voipPushSource.ts` into your app target; it
+has no Expo dependencies.
+
+### 1d-bis. Registering the device token
+
+The generated module exposes the PushKit token to JS:
+
+```ts
+import { watchVoipToken } from '@signalwire/react-native/callkit';
+
+watchVoipToken((token) => {
+  void fetch(`${SERVER}/devices`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      externalUserId: subscriberReference,  // MUST match the token's reference
+      platform: 'ios',
+      token,
+      environment: 'sandbox'                // development builds are sandbox
+    })
+  });
+});
+```
+
+Two ways to get this wrong, both silent:
+
+- **`externalUserId` must be the subscriber reference the SignalWire token was
+  minted for.** The server looks devices up by exactly that key; a mismatch
+  sends the push to someone else's device, or nobody's.
+- **`environment` must match how the app was signed.** A development build is
+  sandbox. Sending a sandbox token to production APNs (or the reverse) fails at
+  Apple with a device-token mismatch, which reads like a bad token rather than
+  a wrong environment.
+
+`watchVoipToken` fires once with the token cached during launch — iOS issues it
+before React Native has a bridge, so waiting only for the change event would
+miss the first run after install — and again on every reissue.
 
 ### 1e. JS: pick the call up from callkeep
 
