@@ -93,6 +93,21 @@ describe('POST /swml/park', () => {
     assert.equal(response.status, 200);
   });
 
+  it('does not mistake the park resource for the subscriber', async () => {
+    // Callers dial the park resource; its name says nothing about who to ring.
+    // Resolving from it pushed to "rn-example-park" — a user that does not
+    // exist — and reported delivered: 0 with no error anywhere.
+    sent.length = 0;
+    await post('/swml/park', {
+      params: {
+        call: { call_id: 'a-leg-sid', to: '/public/rn-example-park' },
+        vars: { subscriber: 'rn-example' }
+      }
+    });
+
+    assert.equal(sent.length, 1, 'the push should reach the real subscriber');
+  });
+
   it('hangs up politely when the request lacks a call SID', async () => {
     const response = await post('/swml/park', { params: { call: { to: '/private/rn-example' } } });
     const swml = await response.json();
@@ -131,5 +146,19 @@ describe('POST /swml/bridge', () => {
     });
     const swml = await response.json();
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
+  });
+});
+
+describe('GET /swml/ringback', () => {
+  it('serves a playable WAV, since the park script points SignalWire at it', async () => {
+    const response = await fetch(`${base}/swml/ringback`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'audio/wav');
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    assert.equal(buffer.subarray(0, 4).toString(), 'RIFF');
+    assert.equal(buffer.subarray(8, 12).toString(), 'WAVE');
+    // 6 seconds of 8kHz mono 16-bit, plus the 44-byte header.
+    assert.equal(buffer.length, 44 + 6 * 8000 * 2);
   });
 });
