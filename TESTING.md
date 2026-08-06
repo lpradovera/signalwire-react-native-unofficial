@@ -8,19 +8,14 @@ memory of the original session.
 
 ## 0. Orientation (read first, 60 seconds)
 
-Two sibling repos live under `sw-rn-client/`:
-
-| Path | What it is | May I edit it? |
-| --- | --- | --- |
-| `signalwire-typescript-web/` | The SignalWire browser SDK (`@signalwire/js` v4) | **No. Read-only reference.** |
-| `signalwire-react-native/` | `@signalwire/react-native` — the package under test | Yes |
+This repository is a single npm workspace; there is no sibling checkout. The
+browser SDK it adapts is an ordinary dependency, read at
+`node_modules/@signalwire/js` when you need to check its behaviour.
 
 The package adapts the browser SDK to React Native *without forking it*: it
 injects platform implementations and shims the globals the SDK probes. If a fix
 seems to require editing the SDK, that is a signal to find an injection point or
 a `typeof`-guarded global to shim instead.
-
-Work from `signalwire-react-native/`. Branch: `feat/initial-package`.
 
 ### The four things that break `@signalwire/js` under React Native
 
@@ -71,7 +66,7 @@ just a stale ordering.
 | build | Four packages, each `ESM/CJS/DTS ⚡️ Build success` |
 | lint | no output, exit 0 |
 | type-check | no `error TS` lines, across seven workspaces |
-| test | 50 core + 13 react-ui + 148 react-native + 21 react-native-ui = **232**, plus 29 server |
+| test | 53 core + 13 react-ui + 153 react-native + 22 react-native-ui = **241**, plus 37 server |
 | bundle-check | `iOS Bundled … (~1090 modules)`, an `Android Bundled …` line, and a Vite `✓ built in …` |
 
 **Do not treat the Android module count as a gate.** Both platforms export
