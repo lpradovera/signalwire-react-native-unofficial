@@ -1,5 +1,6 @@
 import { withAndroidCallKit } from './withAndroidCallKit';
 import { withIosCallKit } from './withIosCallKit';
+import { withVoipPush } from './withVoipPush';
 
 import type { ConfigPlugin } from '@expo/config-plugins';
 
@@ -24,9 +25,14 @@ const DEFAULT_CAMERA = 'This app uses the camera for video calls.';
  * { "plugins": [["@signalwire/react-native", { "enableVoipPush": true }]] }
  * ```
  *
- * It does not patch `AppDelegate` source: reporting a cold-start VoIP push to
- * CallKit must happen in native code, and Expo SDK 52's Swift AppDelegate makes
- * regex patching fragile. See `docs/native-setup.md` for that step.
+ * With `enableVoipPush` it also generates the native PushKit hook, as a
+ * separate Objective-C category rather than a patch to `AppDelegate.swift`.
+ * Reporting a cold-start VoIP push to CallKit must happen in native code — the
+ * JS bundle is not running yet and iOS kills an app that does not report the
+ * call almost immediately — but regex-patching Expo's Swift template fails
+ * silently when the template changes, and Swift cannot import RNCallKeep
+ * (react-native-callkeep#856). A category avoids both problems and survives
+ * `expo prebuild` regenerating the AppDelegate.
  */
 const withSignalWire: ConfigPlugin<SignalWirePluginOptions | undefined> = (config, options) => {
   const {
@@ -42,7 +48,9 @@ const withSignalWire: ConfigPlugin<SignalWirePluginOptions | undefined> = (confi
     enableVoipPush
   });
 
-  return withAndroidCallKit(withIos, { enableCallKit });
+  const withPush = enableVoipPush ? withVoipPush(withIos) : withIos;
+
+  return withAndroidCallKit(withPush, { enableCallKit });
 };
 
 export default withSignalWire;

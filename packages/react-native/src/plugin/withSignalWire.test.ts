@@ -14,7 +14,13 @@ jest.mock('@expo/config-plugins', () => ({
     const ios = (config.ios ?? {}) as { infoPlist?: Record<string, unknown> };
     const result = action({ modResults: ios.infoPlist ?? {} });
     return { ...config, ios: { ...ios, infoPlist: result.modResults } };
-  }
+  },
+  // The VoIP mods write a file and edit the Xcode project — both are
+  // filesystem work with no meaning outside a real prebuild, so they pass the
+  // config through untouched here. `verify:prebuild` asserts their real
+  // behaviour against actual generated output.
+  withDangerousMod: (config: Record<string, unknown>) => config,
+  withXcodeProject: (config: Record<string, unknown>) => config
 }));
 
 interface TestConfig {

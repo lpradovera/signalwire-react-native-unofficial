@@ -19,6 +19,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const example = join(root, 'example');
 
 const IOS_PLIST = 'ios/SignalWireRNExample/Info.plist';
+const IOS_VOIP_SOURCE = 'ios/SignalWireRNExample/SignalWireVoipPush.m';
+const IOS_PBXPROJ = 'ios/SignalWireRNExample.xcodeproj/project.pbxproj';
 const ANDROID_MANIFEST = 'android/app/src/main/AndroidManifest.xml';
 
 const EXPECTED_ANDROID_PERMISSIONS = [
@@ -72,6 +74,32 @@ check(
 prebuild('ios');
 check(IOS_PLIST, readFileSync(join(example, IOS_PLIST), 'utf8'), EXPECTED_PLIST_ENTRIES);
 
+// The VoIP hook is native code that only runs if Xcode compiles it. Writing
+// the file is not enough: an unreferenced .m is silently ignored, and the
+// failure shows up much later as "pushes do nothing".
+check(IOS_VOIP_SOURCE, readFileSync(join(example, IOS_VOIP_SOURCE), 'utf8'), [
+  'PKPushRegistry',
+  'reportNewIncomingCall',
+  'call_id',
+  'SignalWireVoipTokenNotification'
+]);
+check(IOS_PBXPROJ, readFileSync(join(example, IOS_PBXPROJ), 'utf8'), [
+  'SignalWireVoipPush.m in Sources'
+]);
+
+// Injecting twice would make Xcode compile the translation unit twice and fail
+// on duplicate symbols, so the mod must be idempotent across repeat prebuilds.
+{
+  const pbxproj = readFileSync(join(example, IOS_PBXPROJ), 'utf8');
+  const occurrences = pbxproj.split('SignalWireVoipPush.m in Sources').length - 1;
+  if (occurrences !== 2) {
+    failures.push(
+      `${IOS_PBXPROJ}: expected exactly 2 references to "SignalWireVoipPush.m in Sources" ` +
+        `(one PBXBuildFile, one in the Sources phase), found ${occurrences}`
+    );
+  }
+}
+
 if (failures.length > 0) {
   console.error(`\n${failures.length} plugin assertion(s) failed:`);
   for (const failure of failures) {
@@ -81,6 +109,7 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `\n✓ ${EXPECTED_ANDROID_PERMISSIONS.length} Android permissions and ` +
-    `${EXPECTED_PLIST_ENTRIES.length} iOS Info.plist entries applied by the plugin.`
+  `\n✓ ${EXPECTED_ANDROID_PERMISSIONS.length} Android permissions, ` +
+    `${EXPECTED_PLIST_ENTRIES.length} iOS Info.plist entries, and the VoIP push ` +
+    `hook (generated and compiled) applied by the plugin.`
 );
