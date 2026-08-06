@@ -37,6 +37,9 @@ export const VOIP_PUSH_SOURCE = `//
 #import <PushKit/PushKit.h>
 #import <UIKit/UIKit.h>
 
+#import <React/RCTBridgeModule.h>
+#import <React/RCTEventEmitter.h>
+
 #import "RNCallKeep.h"
 
 // Posted whenever the PushKit token changes, so JavaScript can register the
@@ -67,6 +70,14 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
   self.registry.desiredPushTypes = [NSSet setWithObject:PKPushTypeVoIP];
 }
 
++ (NSString *)cachedToken {
+  return objc_getAssociatedObject(self, @selector(cachedToken));
+}
+
++ (void)setCachedToken:(NSString *)token {
+  objc_setAssociatedObject(self, @selector(cachedToken), token, OBJC_ASSOCIATION_COPY_NONATOMIC);
+}
+
 - (void)pushRegistry:(PKPushRegistry *)registry
     didUpdatePushCredentials:(PKPushCredentials *)credentials
                      forType:(PKPushType)type {
@@ -75,6 +86,11 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
   for (NSUInteger i = 0; i < credentials.token.length; i++) {
     [hex appendFormat:@"%02x", bytes[i]];
   }
+  // Cached because the token arrives during launch, long before React Native
+  // has a bridge to deliver it over. Without this the first launch after
+  // install registers no device and the first push silently goes nowhere.
+  [SignalWireVoipPushDelegate setCachedToken:[hex copy]];
+
   [[NSNotificationCenter defaultCenter] postNotificationName:SignalWireVoipTokenNotification
                                                       object:nil
                                                     userInfo:@{ @"token": [hex copy] }];
@@ -108,6 +124,54 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
                         fromPushKit:YES
                             payload:@{ @"callId": callId }
               withCompletionHandler:completion];
+}
+
+@end
+
+/**
+ * Bridges the PushKit token to JavaScript.
+ *
+ * getToken exists alongside the event because of the ordering problem above:
+ * a listener attached after the token arrived would wait forever, so JS reads
+ * the cached value once at startup and subscribes for later refreshes.
+ */
+@interface SignalWireVoipPush : RCTEventEmitter <RCTBridgeModule>
+@end
+
+@implementation SignalWireVoipPush
+
+RCT_EXPORT_MODULE();
+
++ (BOOL)requiresMainQueueSetup {
+  return NO;
+}
+
+- (NSArray<NSString *> *)supportedEvents {
+  return @[ @"SignalWireVoipToken" ];
+}
+
+- (void)startObserving {
+  [[NSNotificationCenter defaultCenter] addObserver:self
+                                           selector:@selector(onToken:)
+                                               name:SignalWireVoipTokenNotification
+                                             object:nil];
+}
+
+- (void)stopObserving {
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)onToken:(NSNotification *)note {
+  NSString *token = note.userInfo[@"token"];
+  if (token != nil) {
+    [self sendEventWithName:@"SignalWireVoipToken" body:@{ @"token": token }];
+  }
+}
+
+RCT_EXPORT_METHOD(getToken
+                  : (RCTPromiseResolveBlock)resolve reject
+                  : (RCTPromiseRejectBlock)reject) {
+  resolve([SignalWireVoipPushDelegate cachedToken]);
 }
 
 @end

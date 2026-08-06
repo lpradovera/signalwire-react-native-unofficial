@@ -7,12 +7,15 @@ import { IncomingCallSheet } from './src/components/IncomingCallSheet';
 import { CallScreen } from './src/screens/CallScreen';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
+import { useDeviceRegistration } from './src/useDeviceRegistration';
 import { useServerToken } from './src/useServerToken';
 
 import type { Call, CredentialProvider } from '@signalwire/js';
 
 function Shell(): React.JSX.Element {
   const { isConnected } = useSignalWire();
+  // Must match the subscriber reference the token was minted for.
+  useDeviceRegistration(process.env.EXPO_PUBLIC_SW_SUBSCRIBER_REF ?? 'rn-example');
   const [activeCall, setActiveCall] = useState<Call | null>(null);
 
   // A CallKit Accept answers the call — audio and all — without touching

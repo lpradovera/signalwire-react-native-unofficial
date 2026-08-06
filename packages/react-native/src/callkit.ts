@@ -10,6 +10,9 @@
  *
  * // your VoIP push handler
  * getCallKit().reportIncomingPush({ callId, from, fromName });
+ *
+ * // register the device for VoIP push
+ * watchVoipToken((token) => void registerDevice(token));
  * ```
  */
 export { CallKeepBridge, getCallKit, resetCallKitForTesting } from './callkit/CallKeepBridge';
@@ -23,3 +26,5 @@ export type {
   CallRegistryOptions,
   PushPayload
 } from './callkit/types';
+
+export { getVoipToken, onVoipTokenChange, watchVoipToken } from './push/voipToken';
