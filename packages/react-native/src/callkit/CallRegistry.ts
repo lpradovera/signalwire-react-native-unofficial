@@ -1,4 +1,4 @@
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, Subject } from 'rxjs';
 
 import { logger } from '@signalwire/react';
 
@@ -28,6 +28,7 @@ export class CallRegistry {
   private readonly host: CallRegistryHost;
   private readonly fusionTimeoutMs: number;
   private readonly _entries$ = new BehaviorSubject<CallEntry[]>([]);
+  private readonly _answered$ = new Subject<Call>();
   private readonly byUuid = new Map<string, CallEntry>();
 
   constructor(options: CallRegistryOptions) {
@@ -37,6 +38,18 @@ export class CallRegistry {
 
   get entries$(): Observable<CallEntry[]> {
     return this._entries$.asObservable();
+  }
+
+  /**
+   * Emits each call the moment it is answered through the native UI.
+   *
+   * This is how a native answer reaches the app's own screens. Without it,
+   * tapping CallKit's Accept connects the call — audio and all — while the
+   * React tree never learns: `activeCall` stays null, no call screen appears,
+   * and the accept button looks like it did nothing.
+   */
+  get answered$(): Observable<Call> {
+    return this._answered$.asObservable();
   }
 
   get entries(): CallEntry[] {
@@ -222,6 +235,7 @@ export class CallRegistry {
   destroy(): void {
     this.byUuid.clear();
     this._entries$.complete();
+    this._answered$.complete();
   }
 
   // ---------------------------------------------------------------- internals
@@ -285,6 +299,7 @@ export class CallRegistry {
   private runIntent(call: Call, intent: CallIntent): void {
     try {
       if (intent === 'answer') {
+        this._answered$.next(call);
         // Audio-only, explicitly. A bare answer() lets the SDK's defaults
         // request video, and an SDP answer cannot introduce an m-line the
         // offer lacks — so answering an audio-only call that way fails with

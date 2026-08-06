@@ -343,4 +343,33 @@ describe('CallRegistry — ending', () => {
 
     expect(call.answer).toHaveBeenCalledWith({ audio: true, video: false });
   });
+
+  it('emits on answered$ when a native answer runs', () => {
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    const call = createCall('c1');
+    registry.attachIncomingCall(call as never);
+    const uuid = registry.uuidForCall(call as never)!;
+    const answered: unknown[] = [];
+    registry.answered$.subscribe((c) => answered.push(c));
+
+    registry.applyIntent(uuid, 'answer');
+
+    expect(answered).toEqual([call]);
+  });
+
+  it('emits on answered$ when a buffered lock-screen answer fuses later', () => {
+    // Cold-start shape: the user answers the push before the SDK call exists.
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.applyIntent(uuid, 'answer');
+    const answered: unknown[] = [];
+    registry.answered$.subscribe((c) => answered.push(c));
+
+    const call = createCall('c1');
+    registry.attachIncomingCall(call as never);
+
+    expect(answered).toEqual([call]);
+  });
 });

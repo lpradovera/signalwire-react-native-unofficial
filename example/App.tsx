@@ -1,4 +1,5 @@
 import { SignalWireProvider, useSignalWire } from '@signalwire/react-native';
+import { getCallKit } from '@signalwire/react-native/callkit';
 import React, { useEffect, useMemo, useState } from 'react';
 import { SafeAreaView, StyleSheet } from 'react-native';
 
@@ -13,6 +14,14 @@ import type { Call, CredentialProvider } from '@signalwire/js';
 function Shell(): React.JSX.Element {
   const { isConnected } = useSignalWire();
   const [activeCall, setActiveCall] = useState<Call | null>(null);
+
+  // A CallKit Accept answers the call — audio and all — without touching
+  // React. Subscribe to the registry so a native answer also brings up the
+  // call screen; otherwise the accept button looks like it did nothing.
+  useEffect(() => {
+    const subscription = getCallKit().registry.answered$.subscribe(setActiveCall);
+    return () => subscription.unsubscribe();
+  }, []);
 
   if (!isConnected) {
     return <ConnectScreen />;
