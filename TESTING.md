@@ -283,6 +283,14 @@ Machine setup gotchas, both hit on a fresh macOS box:
 - **Replacing Xcode.app removes its simulator runtimes.** Check with
   `xcrun simctl list runtimes`; if it is empty, fetch one through
   Xcode → Settings → Components or `xcodebuild -downloadPlatform iOS` (~8 GB).
+- **After rebuilding `packages/*/dist`, check the module count of the next
+  bundle.** Without watchman, Metro's fallback watcher misses dist changes and
+  happily serves a cached bundle — `iOS Bundled 27ms (1 module)` after a
+  12-package rebuild means the fix you just made is NOT on the device. This
+  bit three times in one day (a stale `NativeJSLogger` red screen, and twice
+  shipping a fix that never arrived). `brew install watchman` ends the class;
+  until then, restart Metro with `--clear` after every dist rebuild and expect
+  a full ~1200-module bundle.
 - `expo prebuild` runs `pod install` at the end, and a cold CocoaPods cache
   makes that first run take well over ten minutes. Let it finish rather than
   interrupting it — a killed run leaves `ios/Pods` populated but no
