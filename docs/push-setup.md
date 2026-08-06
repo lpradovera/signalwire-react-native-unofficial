@@ -611,3 +611,67 @@ versions of steps 4 to 6.
 | Push arrives, CallKit shows, call never connects | Fusion failed — check `call_id` matches what the SDK reports. Look for the "fusion by fallback" warning in the logs |
 | Stuck entry in the iOS call log | Push never fused and the deadline never fired |
 | Works on one device, not another | Per-device token staleness, or OEM battery management on Android |
+
+---
+
+## Appendix: the parked-caller inbound flow
+
+The straightforward design — SignalWire dials the subscriber, a push wakes the
+device, the invite arrives — loses a race it cannot win. A device woken by push
+needs several seconds to launch, fetch a token, open a WebSocket and
+authenticate; an invite arriving before that fails, and cold start is precisely
+the case push exists for.
+
+Parking the caller removes the race instead of tuning it:
+
+```
+1. inbound call ──▶ SWML: POST <public>/swml/park
+2. server: mint a single-use token for the call SID, push it, answer + ringback
+3. device wakes; CallKit rings before any JavaScript exists
+4. user answers ──▶ app dials <bridge address>?bridgeToken=…
+5. SWML: POST <public>/swml/bridge  ──▶ { connect: { to: "call:<sid>" } }
+6. bridged
+```
+
+The caller hears ringback throughout, so the wait is invisible, and the device
+joins whenever it is ready — there is no deadline to miss.
+
+### Why a token and not the call SID
+
+The push carries an opaque token. A payload containing the SID is a
+**capability**: anyone replaying it could bridge into the call. A token is
+single-use, expires in 60s and is bound to one subscriber, so redemption is a
+decision the server makes rather than a fact the device asserts.
+
+`/swml/bridge` sits outside the API-token guard, because SignalWire fetches it
+and cannot present that secret — it authorises on the token alone. Losing the
+subscriber check would let any subscriber holding a token join any parked call.
+
+### What each side does
+
+| Piece | Where |
+| --- | --- |
+| Park, mint, push | `server/src/routes/swml.ts` |
+| Token lifetime and authorisation | `server/src/core/BridgeTokenStore.ts` |
+| Forward opaque payload to JS | generated `SignalWireVoipPush.m` |
+| Adopt the natively-displayed entry | `CallKeepBridge` / `CallRegistry.adoptNativeEntry` |
+| Ask the app to dial | `CallRegistry.answerRequested$` |
+| Attach the placed call | `CallRegistry.bindCall` |
+| Example wiring | `example/src/useBridgeAnswer.ts` |
+
+### Running it
+
+```bash
+tailscale funnel 3000        # or ngrok http 3000 — SignalWire must reach you
+PUBLIC_URL=https://<host>.ts.net npm run dev -w @signalwire/rn-push-server
+```
+
+Then create a SignalWire resource whose SWML handler is `<public>/swml/park`,
+and point `EXPO_PUBLIC_SW_BRIDGE_ADDRESS` at an address whose handler is
+`<public>/swml/bridge`.
+
+**Still unverified:** the exact request shape SignalWire sends to a SWML
+handler. `callSidFrom` and `calledAddressFrom` accept several plausible field
+names and the handler logs the whole body — point a real call at it, read the
+log, then delete the guesses. The `ring:2:us` fallback for ringback is likewise
+from memory; set `PUBLIC_URL` and serve your own audio if it is wrong.
