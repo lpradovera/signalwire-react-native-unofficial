@@ -1,6 +1,6 @@
 import { act, render } from '@testing-library/react';
 import React from 'react';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { asapScheduler, BehaviorSubject, observeOn, Subject } from 'rxjs';
 
 import { useObservable } from './useObservable';
 
@@ -82,5 +82,74 @@ describe('useObservable', () => {
 
     expect(snapshots.length).toBeGreaterThan(1);
     expect(snapshots[0]).toBe(snapshots[snapshots.length - 1]);
+  });
+
+  /**
+   * The SDK does not hand out plain BehaviorSubjects. Its getters return
+   * `deferEmission(subject.asObservable())`, i.e. `observeOn(asapScheduler)` —
+   * a *new object every access* whose replay lands in a microtask. Reproduced
+   * here because the friendly mocks above hid a bug that left `isConnected`
+   * false for the whole life of a connected client.
+   */
+  describe('against the SDK observable shape', () => {
+    /** Mimics `get isConnected$()`: fresh identity, deferred emission. */
+    function sdkGetter<T>(subject: BehaviorSubject<T>) {
+      return () => subject.asObservable().pipe(observeOn(asapScheduler));
+    }
+
+    function SdkProbe({ getter, current }: { getter: () => any; current: () => string }) {
+      const value = useObservable<string>(getter(), current());
+      return <span data-testid="value">{value}</span>;
+    }
+
+    it('uses the synchronous getter until the deferred emission arrives', () => {
+      const subject = new BehaviorSubject('connected');
+      const { getByTestId } = render(
+        <SdkProbe getter={sdkGetter(subject)} current={() => subject.value} />
+      );
+
+      // Nothing has emitted yet — asapScheduler defers it — so the value must
+      // come from the caller's synchronous getter, not the stale first render.
+      expect(getByTestId('value').textContent).toBe('connected');
+    });
+
+    it('keeps a deferred emission through the re-render it triggers', async () => {
+      const subject = new BehaviorSubject('connecting');
+      const { getByTestId } = render(
+        <SdkProbe getter={sdkGetter(subject)} current={() => subject.value} />
+      );
+
+      await act(async () => {
+        subject.next('connected');
+        await Promise.resolve();
+      });
+
+      // Regression: the store was rebuilt on every render because the getter
+      // returns a new object, resetting the snapshot to the first-render value.
+      expect(getByTestId('value').textContent).toBe('connected');
+    });
+
+    it('does not strand the initial value when identity changes every render', async () => {
+      const subject = new BehaviorSubject(false);
+
+      function Flip() {
+        const connected = useObservable<boolean>(
+          subject.asObservable().pipe(observeOn(asapScheduler)),
+          subject.value
+        );
+        return <span data-testid="value">{String(connected)}</span>;
+      }
+
+      const { getByTestId, rerender } = render(<Flip />);
+      expect(getByTestId('value').textContent).toBe('false');
+
+      await act(async () => {
+        subject.next(true);
+        await Promise.resolve();
+      });
+      rerender(<Flip />);
+
+      expect(getByTestId('value').textContent).toBe('true');
+    });
   });
 });

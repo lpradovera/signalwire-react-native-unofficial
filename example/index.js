@@ -4,8 +4,12 @@
 // CustomEvent/window stubs the SDK's entry point dispatches on at import time.
 import '@signalwire/react-native/polyfills';
 
+import { setLogLevel } from '@signalwire/js';
 import { getCallKit } from '@signalwire/react-native/callkit';
 import { registerRootComponent } from 'expo';
+
+// TEMPORARY: diagnosing why the client never reaches `connected`.
+setLogLevel('debug');
 
 import App from './App';
 
