@@ -21,6 +21,29 @@ interface Peeked<T> {
  * replay to a microtask — so this reports "nothing emitted" for most SDK
  * observables, and the caller's synchronous getter carries the value instead.
  */
+/**
+ * Walks an observable's `source` chain to the object it ultimately reads from.
+ *
+ * The SDK hands out `subject.asObservable().pipe(observeOn(asapScheduler))`,
+ * building a new wrapper on every property access. Each wrapper keeps a
+ * `source` reference, so following that chain reaches the underlying subject —
+ * whose identity is stable for the life of the client or call.
+ *
+ * That gives a dependency that changes when the *source* genuinely changes
+ * (a new call, a rebuilt client) but not merely because the getter was read
+ * again, which is the difference between re-subscribing when it matters and
+ * re-subscribing on every render.
+ */
+function rootSource(observable$: Observable<unknown> | undefined): unknown {
+  let current: unknown = observable$;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  while (current && (current as any).source) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    current = (current as any).source;
+  }
+  return current;
+}
+
 function peek<T>(observable$: Observable<T>): Peeked<T> {
   let value: T | undefined;
   let emitted = false;
@@ -64,18 +87,33 @@ function peek<T>(observable$: Observable<T>): Peeked<T> {
  * its "Connecting…" screen with a healthy authenticated WebSocket underneath.
  */
 export function useObservable<T>(observable$: Observable<T> | undefined, initialValue: T): T {
-  // Survives store rebuilds, which happen on every render (see 1 above).
-  // Seeded once: callers pass literals such as `useObservable(x$, [])`, and
-  // re-adopting a fresh `[]` each render would make `getSnapshot` return a new
-  // reference every time, which trips React's "getSnapshot should be cached"
-  // infinite-loop guard. A deferred emission corrects the value a microtask
-  // later anyway, now that it is no longer discarded on the next render.
+  // Survives store rebuilds and re-subscriptions.
   const snapshotRef = useRef<T>(initialValue);
   const hasEmittedRef = useRef(false);
 
+  // The subscribe callback reads the latest observable through a ref rather
+  // than closing over it, so it can stay referentially stable (see below).
+  const sourceRef = useRef(observable$);
+  sourceRef.current = observable$;
+
+  // Deliberately NOT keyed on `observable$`. Its identity changes on every
+  // access — `get isConnected$()` returns a fresh `asObservable().pipe(...)` —
+  // so keying on it hands React a new `subscribe` every render, and React
+  // re-subscribes each time. For an observable that emits a fresh object per
+  // emission (`addresses$` builds a new array; `participants$` likewise) the
+  // `Object.is` guard below never matches, so every re-subscription reports a
+  // change, which renders, which re-subscribes: an infinite loop that locks
+  // the JS thread hard enough for Chrome to offer to kill the page.
+  //
+  // Keyed on the root subject instead: stable across repeated getter reads, but
+  // genuinely different when the call or client behind it changes, so a real
+  // swap still re-subscribes.
+  const sourceKey = rootSource(observable$);
+
   const store = useMemo<ObservableStore<T>>(() => {
-    if (observable$) {
-      const peeked = peek(observable$);
+    const source = sourceRef.current;
+    if (source) {
+      const peeked = peek(source);
       if (peeked.emitted) {
         snapshotRef.current = peeked.value as T;
         hasEmittedRef.current = true;
@@ -84,10 +122,11 @@ export function useObservable<T>(observable$: Observable<T> | undefined, initial
 
     return {
       subscribe(onStoreChange: () => void): () => void {
-        if (!observable$) {
+        const current = sourceRef.current;
+        if (!current) {
           return () => undefined;
         }
-        const subscription = observable$.subscribe((next) => {
+        const subscription = current.subscribe((next) => {
           if (hasEmittedRef.current && Object.is(next, snapshotRef.current)) {
             return;
           }
@@ -99,7 +138,7 @@ export function useObservable<T>(observable$: Observable<T> | undefined, initial
       },
       getSnapshot: (): T => snapshotRef.current
     };
-  }, [observable$]);
+  }, [sourceKey]);
 
   return useSyncExternalStore(store.subscribe, store.getSnapshot);
 }

@@ -4,7 +4,7 @@
 // CustomEvent/window stubs the SDK's entry point dispatches on at import time.
 import '@signalwire/react-native/polyfills';
 
-import { setLogger, setLogLevel } from '@signalwire/js';
+import { setDebugOptions, setLogger, setLogLevel } from '@signalwire/js';
 import { getCallKit } from '@signalwire/react-native/callkit';
 import { registerRootComponent } from 'expo';
 
@@ -13,7 +13,14 @@ import { registerRootComponent } from 'expo';
 // when signalling succeeds but media never arrives. Stringify instead, and
 // keep SDP on its own lines so candidate/m-line detail survives.
 setLogLevel('trace');
+// Logs every WebSocket frame, which is where the verto invite and its SDP live
+// — the SDK does not log the offer at any log level.
+setDebugOptions({ logWsTraffic: true });
 setLogger({
+  // Required by the SDK's internal logger shape; without it the ws traffic
+  // enabled above is silently dropped.
+  wsTraffic: (o) =>
+    console.log('[sw:ws]', o?.type, o?.raw ?? fmt(o?.payload)),
   trace: (...a) => console.log('[sw:trace]', ...a.map(fmt)),
   debug: (...a) => console.log('[sw:debug]', ...a.map(fmt)),
   info: (...a) => console.log('[sw:info]', ...a.map(fmt)),

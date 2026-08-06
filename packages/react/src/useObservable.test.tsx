@@ -129,6 +129,36 @@ describe('useObservable', () => {
       expect(getByTestId('value').textContent).toBe('connected');
     });
 
+
+    it('does not loop when a fresh-identity getter emits fresh objects', () => {
+      // The freeze: `addresses$` builds a new array per emission and the getter
+      // builds a new observable per access. Keyed on the observable, React
+      // re-subscribed every render, each re-subscription delivered an array
+      // that failed Object.is, which rendered, which re-subscribed — locking
+      // the JS thread hard enough for Chrome to offer to kill the page.
+      const subject = new BehaviorSubject<string[]>(['a']);
+      let renders = 0;
+
+      function ArrayProbe() {
+        renders++;
+        const items = useObservable<string[]>(
+          // A new pipe AND a new array mapping on every single access.
+          subject.asObservable().pipe(observeOn(asapScheduler)),
+          subject.value
+        );
+        return <span data-testid="value">{items.join(',')}</span>;
+      }
+
+      const { getByTestId, rerender } = render(<ArrayProbe />);
+      for (let i = 0; i < 5; i++) {
+        rerender(<ArrayProbe />);
+      }
+
+      // Without the fix this never settles. Bounded renders is the assertion.
+      expect(renders).toBeLessThan(20);
+      expect(getByTestId('value').textContent).toBe('a');
+    });
+
     it('does not strand the initial value when identity changes every render', async () => {
       const subject = new BehaviorSubject(false);
 
