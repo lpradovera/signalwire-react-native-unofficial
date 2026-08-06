@@ -104,14 +104,35 @@ the SDK's deferred, fresh-identity observables, so `isConnected` stayed false
 for the life of a connected client; and the hangup button only navigated away
 if teardown resolved, stranding the user when a call went unanswered.
 
-**Still entirely unverified: everything requiring real hardware.** No audio has
-been heard, no camera captured, no CallKit UI displayed, and no push delivered.
+### Do not offer video to an audio-only destination
+
+Item 1 failed for hours against `/private/hello-world` with the far end
+accepting the invite (verto **200**) and never answering, then timing out with
+no media. The cause was the dial options, not the transport:
+
+```js
+dial(target, { audio: true, video: true })   // offers a sendonly video m-line
+```
+
+An audio-only destination never answers that offer. `setRemoteDescription` is
+never called, so no media can flow, and the failure looks like a network
+problem — ICE completes, TURN relay candidates are present, the offer is
+well-formed. Dropping to `{ audio: true, video: false }` connected on the first
+attempt, with audio both ways.
+
+This reproduced identically in `examples/web/`, which is what exonerated the
+React Native layer: same SDK, same core, browser WebRTC, same silence. If a
+call reaches "invite successful" and then nothing, check the m-lines offered
+before suspecting the network.
+
+**Still unverified: everything else requiring hardware.** No camera captured,
+no CallKit UI confirmed, and no push delivered.
 
 ## Sign-off
 
 | # | Scenario | iOS | Android | Notes |
 | --- | --- | --- | --- | --- |
-| 1 | Outbound audio | | | |
+| 1 | Outbound audio | ✅ 2026-08-06 | | iPad Air 5, iPadOS 17.5.1, Expo SDK 54 / RN 0.81.5, legacy arch. Audio confirmed by ear. **Dial audio-only.** See below. |
 | 2 | Outbound video + camera switch | | | |
 | 3 | Inbound, foreground | | | |
 | 4 | Inbound, backgrounded | | | |

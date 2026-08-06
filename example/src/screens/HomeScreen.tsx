@@ -43,7 +43,11 @@ export function HomeScreen({
     if (!target.trim()) {
       return;
     }
-    const call = await dial(target.trim(), { audio: true, video: true });
+    // Video is opt-in: offering a sendonly video m-line to an audio-only
+    // destination is a plausible reason for a far end to accept the invite and
+    // never answer. EXPO_PUBLIC_SW_DIAL_VIDEO=1 restores it.
+    const wantVideo = process.env.EXPO_PUBLIC_SW_DIAL_VIDEO === '1';
+    const call = await dial(target.trim(), { audio: true, video: wantVideo });
     onCallStarted(call);
   };
 
