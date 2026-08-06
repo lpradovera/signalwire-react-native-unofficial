@@ -53,6 +53,25 @@ if ('missing' in minted) {
   tokenRoutes = createTokenRoutes({ minter: minted.minter, authenticateCaller: () => null });
 }
 
+/**
+ * `PARK_ROUTES` maps dialled destinations to subscribers, e.g.
+ * `+15551234567:rn-example`. Needed the moment a phone number points at the
+ * park resource: nothing in an E.164 number names a user.
+ */
+function parseParkRoutes(raw: string | undefined): Record<string, string> {
+  if (!raw) {
+    return {};
+  }
+  const routes: Record<string, string> = {};
+  for (const pair of raw.split(',')) {
+    const [destination, subscriber] = pair.split(':').map((part) => part.trim());
+    if (destination && subscriber) {
+      routes[destination] = subscriber;
+    }
+  }
+  return routes;
+}
+
 const service = new NotificationService({ store, senders, log });
 const bridgeTokens = new BridgeTokenStore();
 
@@ -71,7 +90,8 @@ const app = createApp({
   swmlRoutes: createSwmlRoutes({
     tokens: bridgeTokens,
     service,
-    publicUrl: process.env.PUBLIC_URL
+    publicUrl: process.env.PUBLIC_URL,
+    routes: parseParkRoutes(process.env.PARK_ROUTES)
   })
 });
 

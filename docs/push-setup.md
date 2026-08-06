@@ -670,6 +670,23 @@ Then create a SignalWire resource whose SWML handler is `<public>/swml/park`,
 and point `EXPO_PUBLIC_SW_BRIDGE_ADDRESS` at an address whose handler is
 `<public>/swml/bridge`.
 
+### Pointing a phone number at it
+
+Set `PARK_ROUTES` so the number resolves to a subscriber:
+
+```bash
+PARK_ROUTES=+15551234567:rn-example
+```
+
+Without it the resolver falls back to the last path segment of the dialled
+destination, which for a number is the number — the push is addressed to a
+subscriber that does not exist and reports `delivered: 0` with no error. That
+exact mistake happened here with the park resource's own name, which is why the
+fallback is now last rather than first.
+
+The caller ID is read from the call params and shown on the lock screen, so a
+real number appears as itself rather than "Unknown".
+
 **Still unverified:** the exact request shape SignalWire sends to a SWML
 handler. `callSidFrom` and `calledAddressFrom` accept several plausible field
 names and the handler logs the whole body — point a real call at it, read the

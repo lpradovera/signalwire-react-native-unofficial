@@ -13,10 +13,19 @@ export interface SwmlRouteOptions {
    */
   publicUrl?: string;
   /**
-   * Maps the dialled address to a subscriber reference. Defaults to the last
-   * path segment, so `/private/rn-example` resolves to `rn-example`.
+   * Maps a dialled destination to a subscriber reference.
+   *
+   * Once a phone number points at the park resource, `to` is an E.164 number
+   * and nothing about it names a user — this is where that lookup goes. The
+   * default reads an explicit hint, then {@link routes}, then a single
+   * configured subscriber.
    */
   resolveSubscriber?: (req: Request) => string | undefined;
+  /**
+   * Destination → subscriber reference. Populated from `PARK_ROUTES`, e.g.
+   * `+15551234567:rn-example,+15559998888:other-user`.
+   */
+  routes?: Record<string, string>;
 }
 
 /** Reads the call SID from whichever field SignalWire used. */
@@ -29,6 +38,30 @@ function callSidFrom(body: Record<string, unknown>): string | undefined {
     }
   }
   return undefined;
+}
+
+/** Reads the caller's identity, which becomes the name on the CallKit screen. */
+function callerFrom(body: Record<string, unknown>): { from?: string; fromName?: string } {
+  const params = (body.params ?? body) as Record<string, unknown>;
+  const call = (params.call ?? {}) as Record<string, unknown>;
+
+  let from: string | undefined;
+  for (const candidate of [call.from, params.from, params.From, params.from_number]) {
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      from = candidate;
+      break;
+    }
+  }
+
+  let fromName: string | undefined;
+  for (const candidate of [call.from_name, params.from_name, params.CallerName, call.caller_name]) {
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      fromName = candidate;
+      break;
+    }
+  }
+
+  return { from, fromName };
 }
 
 /** Reads the dialled destination, to decide who to ring. */
@@ -55,7 +88,14 @@ function calledAddressFrom(body: Record<string, unknown>): string | undefined {
  * record. Replace this; the scaffold takes an explicit hint and falls back to a
  * single configured subscriber so one device can be tested end to end.
  */
-function defaultResolveSubscriber(req: Request): string | undefined {
+function makeDefaultResolveSubscriber(routes: Record<string, string>) {
+  return (req: Request): string | undefined => defaultResolveSubscriber(req, routes);
+}
+
+function defaultResolveSubscriber(
+  req: Request,
+  routes: Record<string, string> = {}
+): string | undefined {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const params = (body.params ?? body) as Record<string, unknown>;
   const vars = (params.vars ?? params.userVariables ?? {}) as Record<string, unknown>;
@@ -65,15 +105,27 @@ function defaultResolveSubscriber(req: Request): string | undefined {
     return hint;
   }
 
+  const address = calledAddressFrom(body);
+  if (address) {
+    const withoutQuery = address.split('?')[0] ?? address;
+    // Exact match first: a phone number is the whole destination, and matching
+    // it loosely would route calls to the wrong person.
+    const routed = routes[withoutQuery] ?? routes[address];
+    if (routed) {
+      return routed;
+    }
+  }
+
   const configured = process.env.DEV_SUBSCRIBER_REFERENCE;
   if (configured && configured.length > 0) {
     return configured;
   }
 
-  const address = calledAddressFrom(body);
   if (!address) {
     return undefined;
   }
+  // Last resort, and only meaningful for a Fabric address: a phone number has
+  // no user in it, so this returns the number and the push goes nowhere.
   const withoutQuery = address.split('?')[0] ?? address;
   const segments = withoutQuery.split('/').filter(Boolean);
   return segments[segments.length - 1];
@@ -95,7 +147,8 @@ export function createSwmlRoutes({
   tokens,
   service,
   publicUrl,
-  resolveSubscriber = defaultResolveSubscriber
+  routes = {},
+  resolveSubscriber = makeDefaultResolveSubscriber(routes)
 }: SwmlRouteOptions): Router {
   const router = Router();
 
@@ -119,6 +172,7 @@ export function createSwmlRoutes({
       return;
     }
 
+    const caller = callerFrom(body);
     const token = tokens.mint(callSid, externalUserId);
 
     // Push before the SWML is returned, so the device is already waking while
@@ -130,8 +184,11 @@ export function createSwmlRoutes({
       // this indirection exists to withhold. The SID stays in the log line
       // below, which never leaves the server.
       correlationId: token.token,
-      from: (body.from as string) ?? 'Unknown',
-      fromName: (body.fromName as string) ?? 'Incoming call',
+      // Read from the call params, not the request root: with a phone number
+      // pointed at this resource, this is the caller ID the user sees on the
+      // lock screen, and getting it from the wrong place shows "Unknown".
+      from: caller.from ?? 'Unknown',
+      fromName: caller.fromName ?? caller.from ?? 'Incoming call',
       data: { bridgeToken: token.token }
     });
 

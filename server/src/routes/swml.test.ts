@@ -93,6 +93,51 @@ describe('POST /swml/park', () => {
     assert.equal(response.status, 200);
   });
 
+  it('puts the real caller id on the push, from the call params', async () => {
+    // With a phone number pointed at this resource, this is what shows on the
+    // lock screen. Reading it from the request root instead showed "Unknown".
+    sent.length = 0;
+    await post('/swml/park', {
+      params: {
+        call: { call_id: 'a-leg-sid', to: '/public/rn-example-park', from: '+15551234567' },
+        vars: { subscriber: 'rn-example' }
+      }
+    });
+
+    const payload = sent[0]?.payload as Record<string, string>;
+    assert.equal(payload.from, '+15551234567');
+  });
+
+  it('routes a dialled phone number to its subscriber', async () => {
+    // An E.164 number names no user, so the fallback would push into the void.
+    const routed = createApp({
+      store,
+      service,
+      swmlRoutes: createSwmlRoutes({
+        tokens,
+        service,
+        routes: { '+15551234567': 'rn-example' }
+      })
+    });
+    const routedServer = await new Promise<Server>((resolve) => {
+      const srv = routed.listen(0, () => resolve(srv));
+    });
+    const addr = routedServer.address();
+    const routedBase = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
+
+    sent.length = 0;
+    await fetch(`${routedBase}/swml/park`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        params: { call: { call_id: 'a-leg-sid', to: '+15551234567', from: '+15559998888' } }
+      })
+    });
+    routedServer.close();
+
+    assert.equal(sent.length, 1, 'the number should route to its subscriber');
+  });
+
   it('does not mistake the park resource for the subscriber', async () => {
     // Callers dial the park resource; its name says nothing about who to ring.
     // Resolving from it pushed to "rn-example-park" — a user that does not
