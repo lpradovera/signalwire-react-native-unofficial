@@ -15,6 +15,18 @@ import App from './App';
 // when signalling succeeds but media never arrives. Set EXPO_PUBLIC_SW_WIRE_LOG=1
 // to stringify everything and log each WebSocket frame.
 if (process.env.EXPO_PUBLIC_SW_WIRE_LOG === '1') {
+  // LogBox prints an Error's message but not its stack, which makes "where was
+  // this thrown" unanswerable from the console. Append the stack ourselves.
+  const originalConsoleError = console.error;
+  console.error = (...args) => {
+    originalConsoleError(...args);
+    for (const arg of args) {
+      if (arg instanceof Error && arg.stack) {
+        originalConsoleError('[stack]', arg.stack);
+      }
+    }
+  };
+
   const fmt = (value) => {
     if (typeof value === 'string') {
       return value;

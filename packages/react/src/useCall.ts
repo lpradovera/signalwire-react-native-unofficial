@@ -29,24 +29,63 @@ export interface UseCallResult {
   sendDigits(digits: string): Promise<void>;
 }
 
+/**
+ * Reads a property that may throw, treating a throw as absence.
+ *
+ * The SDK's getters are not merely lazy — some throw once the call is torn
+ * down. `status$` builds on `signalingStatus$`, which dereferences
+ * `mainPeerConnection`, and that getter throws `DependencyError` after the
+ * peer connection is destroyed. A late emission then re-renders a still-
+ * mounted component, `useCall` reads `call.status$`, and the render throws —
+ * surfacing as an error toast after every completed call.
+ *
+ * "Safe with a null call" has to include a dead one: last-known/fallback
+ * state during teardown beats throwing in render.
+ */
+function guard<T>(read: () => T): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
 /** Reactive state and actions for a single call. Safe with a null call. */
 export function useCall(call: Call | null | undefined): UseCallResult {
-  const status = useObservable<CallStatus>(call?.status$, call?.status ?? ('new' as CallStatus));
-  const participants = useObservable(call?.participants$, call?.participants ?? NO_PARTICIPANTS);
-  const self = useObservable(call?.self$, call?.self ?? null);
+  const status = useObservable<CallStatus>(
+    guard(() => call?.status$),
+    guard(() => call?.status) ?? ('new' as CallStatus)
+  );
+  const participants = useObservable(
+    guard(() => call?.participants$),
+    guard(() => call?.participants) ?? NO_PARTICIPANTS
+  );
+  const self = useObservable(
+    guard(() => call?.self$),
+    guard(() => call?.self) ?? null
+  );
   const localStream = useObservable<MediaStream | null>(
-    call?.localStream$,
-    call?.localStream ?? null
+    guard(() => call?.localStream$),
+    guard(() => call?.localStream) ?? null
   );
   const remoteStream = useObservable<MediaStream | null>(
-    call?.remoteStream$,
-    call?.remoteStream ?? null
+    guard(() => call?.remoteStream$),
+    guard(() => call?.remoteStream) ?? null
   );
-  const error = useObservable<CallError | null>(call?.errors$, null);
+  const error = useObservable<CallError | null>(
+    guard(() => call?.errors$),
+    null
+  );
 
   // audioMuted$ / videoMuted$ emit `undefined` until server data arrives.
-  const audioMuted = useObservable<boolean | undefined>(self?.audioMuted$, self?.audioMuted);
-  const videoMuted = useObservable<boolean | undefined>(self?.videoMuted$, self?.videoMuted);
+  const audioMuted = useObservable<boolean | undefined>(
+    guard(() => self?.audioMuted$),
+    guard(() => self?.audioMuted)
+  );
+  const videoMuted = useObservable<boolean | undefined>(
+    guard(() => self?.videoMuted$),
+    guard(() => self?.videoMuted)
+  );
 
   const hangup = useCallback((): Promise<void> => call?.hangup() ?? Promise.resolve(), [call]);
 

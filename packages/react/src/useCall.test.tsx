@@ -183,4 +183,32 @@ describe('useCall', () => {
     expect(getByTestId('status').textContent).toBe('connected');
     expect(first._status$.observed).toBe(false);
   });
+
+  /**
+   * Regression: the SDK's getters are not merely lazy — `status$` builds on
+   * `signalingStatus$`, which dereferences the peer connection and THROWS
+   * `DependencyError` once the call is torn down. A late emission re-rendered
+   * a still-mounted component and the render threw, surfacing as an error
+   * toast after every completed call on device.
+   */
+  it('survives a call whose getters throw after teardown', () => {
+    const call = createFakeCall();
+    const { getByTestId, rerender } = render(<Probe call={call} />);
+    expect(getByTestId('status').textContent).toBe('ringing');
+
+    // Simulate teardown: every getter now throws, as the real SDK's do.
+    const dead = new Proxy(call, {
+      get(target, prop) {
+        if (prop === 'hangup' || prop === 'toggleHold' || prop === 'sendDigits') {
+          return Reflect.get(target, prop);
+        }
+        throw new Error('Dependency Main peer connection not found');
+      }
+    });
+
+    expect(() => rerender(<Probe call={dead as never} />)).not.toThrow();
+    // Last-known state survives — the snapshot outlives the getters. Resetting
+    // to 'new' mid-teardown would flash a bogus state; a crash is worse still.
+    expect(getByTestId('status').textContent).toBe('ringing');
+  });
 });
