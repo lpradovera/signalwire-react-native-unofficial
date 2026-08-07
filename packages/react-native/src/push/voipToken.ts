@@ -4,12 +4,27 @@ import { logger } from '@signalwire/react';
 
 interface VoipPushModule {
   getToken(): Promise<string | null>;
+  getPendingCall?(): Promise<PendingCall | null>;
+  clearPendingCall?(): Promise<void>;
+}
+
+/** The push a cold-started app woke for, as cached natively. */
+export interface PendingCall {
+  uuid: string;
+  callId?: string;
+  handle?: string;
+  callerName?: string;
+  [key: string]: string | undefined;
 }
 
 const TOKEN_EVENT = 'SignalWireVoipToken';
 
 function nativeModule(): VoipPushModule | undefined {
-  return (NativeModules as Record<string, VoipPushModule | undefined>).SignalWireVoipPush;
+  // NativeModules can be absent entirely — a bare host, or a test that mocks
+  // react-native down to the pieces it needs. Reading through it blindly
+  // throws before any of the guards below get a chance to run.
+  const modules = NativeModules as Record<string, VoipPushModule | undefined> | undefined;
+  return modules?.SignalWireVoipPush;
 }
 
 /**
@@ -99,4 +114,43 @@ export function watchVoipToken(listener: (token: string) => void): () => void {
   });
 
   return onVoipTokenChange(emit);
+}
+
+/**
+ * Reads the push this launch was woken by, if any.
+ *
+ * On a cold start the incoming call is reported to CallKit natively, long
+ * before JavaScript exists. callkeep's `didDisplayIncomingCall` is delivered
+ * only to listeners attached at the time, and its `didLoadWithEvents` replay
+ * does not fire on iOS here — so the registry never learned about the call,
+ * and the user's answer arrived with nothing to apply it to. The native side
+ * caches the payload for exactly this reason, as it already does the token.
+ */
+export async function getPendingVoipCall(): Promise<PendingCall | null> {
+  if (Platform.OS !== 'ios') {
+    return null;
+  }
+  const module = nativeModule();
+  if (!module?.getPendingCall) {
+    return null;
+  }
+  try {
+    return (await module.getPendingCall()) ?? null;
+  } catch (error) {
+    logger.warn('Failed to read the pending VoIP call:', error);
+    return null;
+  }
+}
+
+/** Clears the cached push, so a later launch does not adopt it again. */
+export async function clearPendingVoipCall(): Promise<void> {
+  const module = nativeModule();
+  if (!module?.clearPendingCall) {
+    return;
+  }
+  try {
+    await module.clearPendingCall();
+  } catch (error) {
+    logger.warn('Failed to clear the pending VoIP call:', error);
+  }
 }

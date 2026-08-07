@@ -1,4 +1,4 @@
-import { BehaviorSubject, Subject } from 'rxjs';
+import { BehaviorSubject, Subject, concat, defer, from } from 'rxjs';
 
 import { logger } from '@signalwire/react';
 
@@ -66,7 +66,24 @@ export class CallRegistry {
    * it lands on the same native entry the user is already looking at.
    */
   get answerRequested$(): Observable<CallEntry> {
-    return this._answerRequested$.asObservable();
+    // Replays answers that are still waiting for a call to be placed.
+    //
+    // A plain Subject drops anything emitted before its subscriber exists,
+    // and on a cold start that is the normal order: the push launches the
+    // app, the user answers from the lock screen, and the intent is applied
+    // while React is still mounting. The answer reached JavaScript and was
+    // buffered on the entry, but the hook that dials the bridge subscribed a
+    // moment too late and never saw it — so nothing dialled and the caller
+    // sat on a parked leg until it timed out.
+    //
+    // Only entries still awaiting a call are replayed: once one is bound the
+    // request is satisfied, so a later subscriber must not redial it.
+    return defer(() => {
+      const outstanding = this.entries.filter(
+        (entry) => entry.intent === 'answer' && entry.state !== 'ended' && !entry.call
+      );
+      return concat(from(outstanding), this._answerRequested$);
+    });
   }
 
   get entries(): CallEntry[] {

@@ -5,9 +5,25 @@ import { EMPTY, of, Subject, switchMap, takeUntil } from 'rxjs';
 import { getAudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
+import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
 import { CallRegistry } from './CallRegistry';
 
 import type { CallRegistryHost, PushPayload } from './types';
+
+/** The `didDisplayIncomingCall` payload, which callkeep types loosely. */
+interface DisplayEvent {
+  callUUID: string;
+  handle: string;
+  localizedCallerName: string;
+  fromPushKit: string;
+  payload?: object;
+}
+
+/** One entry of callkeep's `didLoadWithEvents` replay array. */
+interface LoadedEvent {
+  name: string;
+  data: unknown;
+}
 import type { Call, SignalWire } from '@signalwire/js';
 
 const TICK_INTERVAL_MS = 2000;
@@ -46,7 +62,9 @@ const NATIVE_EVENTS = [
   'didPerformDTMFAction',
   'didToggleHoldCallAction',
   'didPerformSetMutedCallAction',
-  'didActivateAudioSession'
+  'didActivateAudioSession',
+  // Replays what fired before JavaScript existed. See handleLoadedEvents.
+  'didLoadWithEvents'
 ] as const;
 
 /**
@@ -80,6 +98,16 @@ export class CallKeepBridge {
     };
 
     this.registry = new CallRegistry({ host, fusionTimeoutMs: options.fusionTimeoutMs });
+
+    // Registered here, not in setup(): callkeep flushes the events it buffered
+    // while JavaScript was starting as soon as the bundle finishes loading,
+    // which can be before an app gets around to calling setup(). A listener
+    // added later receives nothing, and on a cold start that is every event
+    // the call has had so far — the incoming-call display and the user's
+    // answer both happen before React mounts.
+    RNCallKeep.addEventListener('didLoadWithEvents', (events) =>
+      this.handleLoadedEvents(events as LoadedEvent[])
+    );
   }
 
   /** Performs the native handshake. Call once, from the app entry file. */
@@ -125,6 +153,7 @@ export class CallKeepBridge {
     RNCallKeep.setAvailable(true);
     this.registerNativeListeners();
     this.isSetup = true;
+    await this.adoptPendingNativeCall();
     logger.debug('CallKit ready');
   }
 
@@ -290,7 +319,101 @@ export class CallKeepBridge {
       'didDisplayIncomingCall',
       // callkeep types `payload` as bare `object`, so it is narrowed below
       // rather than in the parameter list.
-      ({ callUUID, handle, localizedCallerName, fromPushKit, payload }) => {
+      (event) => this.handleDidDisplayIncomingCall(event as DisplayEvent)
+    );
+
+    RNCallKeep.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) =>
+      this.handleAnswerCall(callUUID)
+    );
+
+    this.registerRemainingListeners();
+  }
+
+  /**
+   * Rebuilds the entry for a call this launch was woken by.
+   *
+   * A cold start is the normal case for an incoming call, and in it the
+   * CallKit screen is already on display before any JavaScript runs. Without
+   * this the registry has no entry, so the answer that follows is applied to
+   * nothing: no bridge is dialled and the caller waits on a parked leg until
+   * it times out.
+   */
+  private async adoptPendingNativeCall(): Promise<void> {
+    const pending = await getPendingVoipCall();
+    if (!pending?.uuid) {
+      return;
+    }
+    if (this.registry.entryForUuid(pending.uuid)) {
+      return;
+    }
+
+    const { uuid, callId, handle, callerName, ...rest } = pending;
+    const data: Record<string, string> = {};
+    for (const [key, value] of Object.entries(rest)) {
+      if (typeof value === 'string') {
+        data[key] = value;
+      }
+    }
+
+    logger.debug(`Adopting pending native call ${uuid} from the launch push`);
+    this.registry.adoptNativeEntry({
+      uuid,
+      callId: callId && callId.length > 0 ? callId : undefined,
+      from: handle ?? 'Unknown',
+      fromName: callerName ?? 'Incoming call',
+      data: Object.keys(data).length > 0 ? data : undefined
+    });
+    this.ensureTicking();
+    await clearPendingVoipCall();
+  }
+
+  /** Replays the events callkeep buffered while JavaScript was starting. */
+  private handleLoadedEvents(events: LoadedEvent[]): void {
+    // Logged even when empty: "callkeep never flushed" and "callkeep flushed
+    // nothing" are different faults with the same silence.
+    logger.debug(`didLoadWithEvents: ${Array.isArray(events) ? events.length : 'not-an-array'}`);
+    if (!Array.isArray(events) || events.length === 0) {
+      return;
+    }
+    for (const event of events) {
+      logger.debug(`  replayed event: ${String(event?.name)}`);
+    }
+
+    // Order matters: a display must be adopted before its answer is applied,
+    // and callkeep delivers them in the order they happened.
+    for (const event of events) {
+      if (event?.name === 'RNCallKeepDidDisplayIncomingCall') {
+        this.handleDidDisplayIncomingCall(event.data as DisplayEvent);
+      } else if (event?.name === 'RNCallKeepPerformAnswerCallAction') {
+        this.handleAnswerCall((event.data as { callUUID: string }).callUUID);
+      } else if (event?.name === 'RNCallKeepPerformEndCallAction') {
+        this.handleEndCall((event.data as { callUUID: string }).callUUID);
+      }
+    }
+  }
+
+  private handleAnswerCall(callUUID: string): void {
+    logger.debug(`Native answer for ${callUUID}`);
+    // Applied synchronously — the registry buffers it when the SDK call has
+    // not arrived yet. Only the audio start waits for the audio session.
+    this.registry.applyIntent(callUUID, 'answer');
+    void this.startAudioWhenSessionReady();
+  }
+
+  private handleEndCall(callUUID: string): void {
+    logger.debug(`Native end for ${callUUID}`);
+    const entry = this.registry.entryForUuid(callUUID);
+    if (entry?.state === 'pending-push') {
+      this.registry.applyIntent(callUUID, 'reject');
+      return;
+    }
+    this.registry.endCall(callUUID);
+    this.stopAudio();
+  }
+
+  private handleDidDisplayIncomingCall(event: DisplayEvent): void {
+    {
+      const { callUUID, handle, localizedCallerName, fromPushKit, payload } = event;
         const fields = (payload ?? {}) as Record<string, unknown>;
         if (fromPushKit !== '1') {
           return;
@@ -311,27 +434,13 @@ export class CallKeepBridge {
           data: Object.keys(data).length > 0 ? data : undefined
         });
         this.ensureTicking();
-      }
+    }
+  }
+
+  private registerRemainingListeners(): void {
+    RNCallKeep.addEventListener('endCall', ({ callUUID }: { callUUID: string }) =>
+      this.handleEndCall(callUUID)
     );
-
-    RNCallKeep.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) => {
-      logger.debug(`Native answer for ${callUUID}`);
-      // Applied synchronously — the registry buffers it when the SDK call has
-      // not arrived yet. Only the audio start waits for the audio session.
-      this.registry.applyIntent(callUUID, 'answer');
-      void this.startAudioWhenSessionReady();
-    });
-
-    RNCallKeep.addEventListener('endCall', ({ callUUID }: { callUUID: string }) => {
-      logger.debug(`Native end for ${callUUID}`);
-      const entry = this.registry.entryForUuid(callUUID);
-      if (entry?.state === 'pending-push') {
-        this.registry.applyIntent(callUUID, 'reject');
-        return;
-      }
-      this.registry.endCall(callUUID);
-      this.stopAudio();
-    });
 
     RNCallKeep.addEventListener(
       'didPerformDTMFAction',

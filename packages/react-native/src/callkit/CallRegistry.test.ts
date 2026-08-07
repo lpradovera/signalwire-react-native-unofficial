@@ -456,4 +456,55 @@ describe('CallRegistry — ending', () => {
       expect(registry.bindCall(uuid, createCall('bridge-leg') as never)).toBe(false);
     });
   });
+
+  it('replays an answer to a subscriber that mounts after it', () => {
+    // The cold-start order: push launches the app, the user answers from the
+    // lock screen, and the intent is applied while React is still mounting.
+    // A plain Subject drops that, so nothing dials the bridge and the caller
+    // waits on a parked leg until it times out.
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.applyIntent(uuid, 'answer');
+
+    const seen: string[] = [];
+    registry.answerRequested$.subscribe((entry) => seen.push(entry.uuid));
+
+    expect(seen).toEqual([uuid]);
+  });
+
+  it('does not replay once a call has been bound', () => {
+    // Otherwise a later subscriber redials a bridge that already exists.
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.applyIntent(uuid, 'answer');
+    registry.bindCall(uuid, createCall('c1') as never);
+
+    const seen: string[] = [];
+    registry.answerRequested$.subscribe((entry) => seen.push(entry.uuid));
+
+    expect(seen).toEqual([]);
+  });
+
+  it('does not replay an ended entry', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.applyIntent(uuid, 'answer');
+    registry.endCall(uuid);
+
+    const seen: string[] = [];
+    registry.answerRequested$.subscribe((entry) => seen.push(entry.uuid));
+
+    expect(seen).toEqual([]);
+  });
+
+  it('still delivers live answers to an existing subscriber', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const seen: string[] = [];
+    registry.answerRequested$.subscribe((entry) => seen.push(entry.uuid));
+
+    const uuid = registry.reportIncomingPush({ callId: 'c2' });
+    registry.applyIntent(uuid, 'answer');
+
+    expect(seen).toEqual([uuid]);
+  });
 });

@@ -1,8 +1,19 @@
 import { useSignalWire } from '@signalwire/react-native';
 import { getCallKit } from '@signalwire/react-native/callkit';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 import type { Call } from '@signalwire/js';
+
+/** How long a cold-started app may take to come online before giving up. */
+const BRIDGE_CONNECT_TIMEOUT_MS = 15000;
+
+/** Resolves when `ready` returns true, or after `timeoutMs`. */
+async function waitFor(ready: () => boolean, timeoutMs: number): Promise<void> {
+  const started = Date.now();
+  while (!ready() && Date.now() - started < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+}
 
 /**
  * Places the call that joins a parked caller, when the user answers a push.
@@ -18,7 +29,12 @@ import type { Call } from '@signalwire/js';
  * server resolves the token and serves the SWML that performs the connect.
  */
 export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
-  const { dial } = useSignalWire();
+  const { dial, isConnected } = useSignalWire();
+
+  // Read through a ref so the effect does not re-subscribe when the
+  // connection flips, which would drop a replayed answer on the floor.
+  const connectedRef = useRef(isConnected);
+  connectedRef.current = isConnected;
 
   useEffect(() => {
     const bridge = getCallKit();
@@ -40,6 +56,20 @@ export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
 
       void (async () => {
         try {
+          // Wait for the client to actually be connected before dialling.
+          // On a cold start the push wakes the app and the answer can arrive
+          // while the WebSocket is still being established; dialling then
+          // fails, and the caller is left parked with nothing coming.
+          if (!connectedRef.current) {
+            console.log('Bridge answer waiting for the SDK connection');
+            await waitFor(() => connectedRef.current, BRIDGE_CONNECT_TIMEOUT_MS);
+          }
+          if (!connectedRef.current) {
+            console.warn('SDK never connected; cannot bridge');
+            bridge.registry.endCall(entry.uuid);
+            return;
+          }
+
           // Claim the entry first: this dial joins a call the user has already
           // answered, so CallKit must adopt it rather than be told about a
           // second, outgoing call — it rejects that transaction outright.

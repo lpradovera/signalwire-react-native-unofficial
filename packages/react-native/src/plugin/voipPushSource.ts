@@ -78,6 +78,24 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
   return objc_getAssociatedObject(self, @selector(cachedToken));
 }
 
+/**
+ * The last push, kept for JavaScript that did not exist when it arrived.
+ *
+ * callkeep reports the incoming call to CallKit natively, but its
+ * didDisplayIncomingCall event is delivered to JavaScript listeners that, on
+ * a cold start, are not attached yet — and its didLoadWithEvents replay does
+ * not fire on iOS here. The registry therefore had no entry, and the user's
+ * answer arrived with nothing to apply it to. This is the same problem the
+ * token cache solves, and the same solution.
+ */
++ (NSDictionary *)cachedCall {
+  return objc_getAssociatedObject(self, @selector(cachedCall));
+}
+
++ (void)setCachedCall:(NSDictionary *)call {
+  objc_setAssociatedObject(self, @selector(cachedCall), call, OBJC_ASSOCIATION_COPY_NONATOMIC);
+}
+
 + (void)setCachedToken:(NSString *)token {
   objc_setAssociatedObject(self, @selector(cachedToken), token, OBJC_ASSOCIATION_COPY_NONATOMIC);
 }
@@ -135,6 +153,13 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
       }
     }
   }
+
+  NSMutableDictionary *pending = [NSMutableDictionary dictionaryWithDictionary:extras];
+  pending[@"uuid"] = uuid;
+  pending[@"callId"] = callId;
+  pending[@"handle"] = handle;
+  pending[@"callerName"] = callerName;
+  [SignalWireVoipPushDelegate setCachedCall:pending];
 
   // Reported unconditionally, even when the payload is malformed: iOS kills an
   // app that takes a VoIP push without reporting a call, and a call that ends
@@ -200,6 +225,21 @@ RCT_EXPORT_METHOD(getToken
                   : (RCTPromiseResolveBlock)resolve reject
                   : (RCTPromiseRejectBlock)reject) {
   resolve([SignalWireVoipPushDelegate cachedToken]);
+}
+
+/** The last push, so a cold-started app can rebuild the call it woke for. */
+RCT_EXPORT_METHOD(getPendingCall
+                  : (RCTPromiseResolveBlock)resolve reject
+                  : (RCTPromiseRejectBlock)reject) {
+  resolve([SignalWireVoipPushDelegate cachedCall]);
+}
+
+/** Clears it once JavaScript has taken it, so it is not adopted twice. */
+RCT_EXPORT_METHOD(clearPendingCall
+                  : (RCTPromiseResolveBlock)resolve reject
+                  : (RCTPromiseRejectBlock)reject) {
+  [SignalWireVoipPushDelegate setCachedCall:nil];
+  resolve(nil);
 }
 
 @end

@@ -10,7 +10,13 @@ import { Subject } from 'rxjs';
 import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
 import { CallKeepBridge } from './CallKeepBridge';
 
-jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
+const nativeModules: { SignalWireVoipPush?: Record<string, unknown> } = {};
+jest.mock('react-native', () => ({
+  Platform: { OS: 'ios' },
+  get NativeModules() {
+    return nativeModules;
+  }
+}));
 
 const callkeep = RNCallKeep as unknown as typeof RNCallKeep & {
   __emit: (event: string, payload: unknown) => void;
@@ -241,5 +247,101 @@ describe('CallKeepBridge — the fusion tick timer', () => {
     (call.status$ as { next: (v: string) => void }).next('ended');
 
     expect(RNCallKeep.reportEndCallWithUUID).toHaveBeenCalled();
+  });
+
+  it('replays a cold-start answer that fired before JavaScript existed', () => {
+    // The normal case for an incoming call: the push launches a killed app,
+    // the user answers from the lock screen, and both happen before React
+    // mounts. callkeep buffers those into didLoadWithEvents; without handling
+    // it the answer reaches nobody, nothing dials the bridge, and the caller
+    // waits on a parked leg until it times out.
+    const answered: string[] = [];
+    bridge.registry.answerRequested$.subscribe((entry) => answered.push(entry.uuid));
+
+    callkeep.__emit('didLoadWithEvents', [
+      {
+        name: 'RNCallKeepDidDisplayIncomingCall',
+        data: {
+          callUUID: 'cold-uuid',
+          handle: '+15551234567',
+          localizedCallerName: 'Ada',
+          fromPushKit: '1',
+          payload: { callId: 'c-cold', bridgeToken: 'tok-1' }
+        }
+      },
+      { name: 'RNCallKeepPerformAnswerCallAction', data: { callUUID: 'cold-uuid' } }
+    ]);
+
+    expect(answered).toContain('cold-uuid');
+  });
+
+  it('carries the bridge token through the replayed display event', () => {
+    // Without the token the answer cannot dial anything, so replaying the
+    // answer alone would still strand the caller.
+    let seen: Record<string, string> | undefined;
+    bridge.registry.answerRequested$.subscribe((entry) => {
+      seen = entry.data;
+    });
+
+    callkeep.__emit('didLoadWithEvents', [
+      {
+        name: 'RNCallKeepDidDisplayIncomingCall',
+        data: {
+          callUUID: 'cold-uuid-2',
+          handle: '+15551234567',
+          localizedCallerName: 'Ada',
+          fromPushKit: '1',
+          payload: { callId: 'c-cold-2', bridgeToken: 'tok-2' }
+        }
+      },
+      { name: 'RNCallKeepPerformAnswerCallAction', data: { callUUID: 'cold-uuid-2' } }
+    ]);
+
+    expect(seen?.bridgeToken).toBe('tok-2');
+  });
+
+  it('ignores an empty replay, which is the warm-start case', () => {
+    expect(() => callkeep.__emit('didLoadWithEvents', [])).not.toThrow();
+  });
+
+  it('adopts the launch push, which is the only record of a cold-start call', async () => {
+    // On a cold start CallKit is already showing the call before any
+    // JavaScript runs. callkeep's didDisplayIncomingCall went to listeners
+    // that did not exist, and its didLoadWithEvents replay does not fire on
+    // iOS here, so without adopting the cached push the registry has no
+    // entry and the user's answer is applied to nothing.
+    nativeModules.SignalWireVoipPush = {
+      getToken: async () => 'tok',
+      getPendingCall: async () => ({
+        uuid: 'launch-uuid',
+        callId: 'c-launch',
+        handle: '+15551234567',
+        callerName: 'Ada',
+        bridgeToken: 'bt-1'
+      }),
+      clearPendingCall: async () => undefined
+    };
+
+    const fresh = new CallKeepBridge();
+    await fresh.setup({ appName: 'Demo' });
+
+    const entry = fresh.registry.entryForUuid('launch-uuid');
+    expect(entry).toBeDefined();
+    expect(entry?.data?.bridgeToken).toBe('bt-1');
+    delete nativeModules.SignalWireVoipPush;
+  });
+
+  it('does not adopt anything when the app was not woken by a push', async () => {
+    nativeModules.SignalWireVoipPush = {
+      getToken: async () => 'tok',
+      getPendingCall: async () => null,
+      clearPendingCall: async () => undefined
+    };
+
+    const fresh = new CallKeepBridge();
+    await fresh.setup({ appName: 'Demo' });
+
+    expect(fresh.registry.entries).toHaveLength(0);
+    delete nativeModules.SignalWireVoipPush;
   });
 });
