@@ -422,4 +422,20 @@ describe('CallKeepBridge', () => {
       expect(asked).toEqual([{ bridgeToken: 'opaque-token' }]);
     });
   });
+
+  it('asks for READ_PHONE_NUMBERS, which the outgoing connection needs', async () => {
+    // Declared but ungranted, the call connects and then the app dies with
+    // SecurityException inside VoiceConnectionService.createConnection —
+    // which reads as a crash on answer, not a missing runtime grant.
+    const bridge = new CallKeepBridge();
+    await bridge.setup({ appName: 'Demo' });
+
+    const options = (RNCallKeep.setup as jest.Mock).mock.calls[0][0] as {
+      android: { additionalPermissions: string[] };
+    };
+
+    expect(options.android.additionalPermissions).toContain(
+      'android.permission.READ_PHONE_NUMBERS'
+    );
+  });
 });

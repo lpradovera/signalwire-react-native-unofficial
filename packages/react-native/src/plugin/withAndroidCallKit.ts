@@ -18,7 +18,11 @@ const BASE_PERMISSIONS = [
 
 const CALLKIT_PERMISSIONS = [
   'android.permission.MANAGE_OWN_CALLS',
-  'android.permission.READ_PHONE_STATE'
+  'android.permission.READ_PHONE_STATE',
+  // ConnectionService reads the phone account while building an outgoing
+  // connection. callkeep declares this too, but declaring it here keeps the
+  // requirement visible where the rest of them are.
+  'android.permission.READ_PHONE_NUMBERS'
 ];
 
 /** callkeep's ConnectionService, which Telecom binds to place and receive calls. */

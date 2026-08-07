@@ -30,6 +30,9 @@ const TICK_INTERVAL_MS = 2000;
 const AUDIO_SESSION_TIMEOUT_MS = 3000;
 const HANDLE_TYPE = 'generic';
 
+/** Runtime permissions callkeep's ConnectionService needs on Android. */
+const ANDROID_CALL_PERMISSIONS = ['android.permission.READ_PHONE_NUMBERS'];
+
 /** Call statuses after which the native entry must be torn down. */
 // 'ended' is what the SDK actually reports — the wire shows call_state
 // created -> answered -> ending -> ended, and none of the three names below
@@ -140,7 +143,19 @@ export class CallKeepBridge {
         cancelButton: 'Cancel',
         okButton: 'OK',
         imageName: options.imageName,
-        additionalPermissions: [],
+        // Requested at runtime, not merely declared. callkeep's
+        // ConnectionService calls TelecomManager.getPhoneAccount() while
+        // building an outgoing connection, and that needs READ_PHONE_NUMBERS
+        // — a dangerous permission, so the manifest entry callkeep ships is
+        // not enough. Ungranted, the call connects and then the *app* dies:
+        //
+        //   FATAL EXCEPTION: main
+        //   SecurityException: Neither user nor current process has
+        //   android.permission.READ_PHONE_NUMBERS
+        //     at VoiceConnectionService.createConnection
+        //
+        // which looks like a crash on answer rather than a missing grant.
+        additionalPermissions: ANDROID_CALL_PERMISSIONS,
         selfManaged: true,
         foregroundService: {
           channelId: options.androidChannelId ?? 'signalwire-calls',
