@@ -5,6 +5,34 @@ import { CallView } from './CallView';
 
 import type { Call, CredentialProvider } from '@signalwire/js';
 
+/**
+ * Acquires the microphone before dialling, so a permission problem reports
+ * itself as one.
+ *
+ * The SDK takes local media before it sends the invite. If the browser is
+ * sitting on an unanswered permission prompt, getUserMedia never settles, the
+ * invite never goes out, and the only symptom is the SDK's own 10s
+ * "Call create timeout" — which points at the network, at SignalWire, or at
+ * the destination address, all of which are fine. Asking first turns an
+ * invisible browser prompt into a message that names the actual cause.
+ */
+async function ensureMicrophone(): Promise<void> {
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (error) {
+    const name = (error as DOMException).name;
+    throw new Error(
+      name === 'NotAllowedError'
+        ? 'Microphone permission denied. Allow it for this site, then call again.'
+        : `Could not open the microphone (${name}).`
+    );
+  }
+  // Released immediately: this was a permission check, and the SDK opens its
+  // own stream. Holding this one would leave the recording indicator on.
+  stream.getTracks().forEach((track) => track.stop());
+}
+
 function Dialer(): React.JSX.Element {
   const { isConnected, user, dial, error } = useSignalWire();
   const [dialError, setDialError] = useState<string | null>(null);
@@ -33,9 +61,11 @@ function Dialer(): React.JSX.Element {
       <button
         disabled={!isConnected}
         onClick={() => {
-          void dial(destination, { audio: true, video: false })
-              .then(setCall)
-              .catch((dialFailure: Error) => setDialError(dialFailure.message));
+          setDialError(null);
+          void ensureMicrophone()
+            .then(() => dial(destination, { audio: true, video: false }))
+            .then(setCall)
+            .catch((dialFailure: Error) => setDialError(dialFailure.message));
         }}
       >
         Call
