@@ -1,4 +1,6 @@
 import { watchPushToken } from '@signalwire/react-native/callkit';
+
+import { DEVICES_URL } from './endpoints';
 import { useEffect } from 'react';
 
 /**
@@ -15,7 +17,7 @@ import { useEffect } from 'react';
  */
 export function useDeviceRegistration(externalUserId: string): void {
   useEffect(() => {
-    const url = process.env.EXPO_PUBLIC_SW_DEVICES_URL;
+    const url = DEVICES_URL;
     if (!url) {
       return;
     }

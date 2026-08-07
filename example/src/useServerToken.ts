@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { TOKEN_URL } from './endpoints';
 import { SUBSCRIBER_REFERENCE } from './subscriber';
 
 /**
@@ -19,7 +20,6 @@ export type ServerTokenState =
   | { status: 'ready'; token: string }
   | { status: 'failed'; error: string };
 
-const TOKEN_URL = process.env.EXPO_PUBLIC_SW_TOKEN_URL;
 
 export function useServerToken(): ServerTokenState {
   const [state, setState] = useState<ServerTokenState>(
