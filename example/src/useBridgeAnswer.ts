@@ -40,12 +40,17 @@ export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
 
       void (async () => {
         try {
+          // Claim the entry first: this dial joins a call the user has already
+          // answered, so CallKit must adopt it rather than be told about a
+          // second, outgoing call — it rejects that transaction outright.
+          bridge.beginBridgeDial(entry.uuid);
+
           // Audio only: an SDP answer cannot introduce an m-line the offer
           // lacks, and this destination is a voice bridge.
           const call = await dial(`${address}?bridgeToken=${encodeURIComponent(token)}`, {
             audio: true,
             video: false
-          });
+          }).finally(() => bridge.endBridgeDial());
 
           // Bind before showing it: the entry may already be gone — the caller
           // hung up, or the user declined, while we were dialling — and a call

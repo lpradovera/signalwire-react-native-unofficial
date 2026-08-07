@@ -53,6 +53,8 @@ export class CallKeepBridge {
   private isSetup = false;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private releaseAudioGate: (() => void) | null = null;
+  /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
+  private pendingBridgeUuid: string | null = null;
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     const host: CallRegistryHost = {
@@ -210,8 +212,43 @@ export class CallKeepBridge {
     return bound;
   }
 
+  /**
+   * Claims the next outbound call for an entry that is already on screen.
+   *
+   * A bridge answer dials out to join a caller the user has *already*
+   * answered, so the native entry exists. Without this claim the dial takes
+   * the ordinary outbound path and reports a second call to CallKit while the
+   * answered one is still live — CallKit rejects the transaction
+   * ("Error requesting transaction"), the dial dies, and the entry is torn
+   * down as missed. Nothing in the logs names the cause.
+   *
+   * Paired with {@link endBridgeDial}, which must run whether or not the dial
+   * succeeded: a claim left behind would swallow the next ordinary call.
+   */
+  beginBridgeDial(uuid: string): void {
+    this.pendingBridgeUuid = uuid;
+  }
+
+  /** Releases a claim made by {@link beginBridgeDial}. */
+  endBridgeDial(): void {
+    this.pendingBridgeUuid = null;
+  }
+
   /** Registers an outbound call with the native UI. Returns its UUID. */
   trackCall(call: Call, handle: string, displayName: string): string {
+    const claimed = this.pendingBridgeUuid;
+    if (claimed !== null) {
+      this.pendingBridgeUuid = null;
+      if (this.bindBridgeCall(claimed, call)) {
+        logger.debug(`Adopted bridge call ${call.id} into existing entry ${claimed}`);
+        return claimed;
+      }
+      // The entry died while we were dialling. Fall through and report a
+      // normal outbound call, so the user is not left on a live call with no
+      // native UI to end it.
+      logger.debug(`Entry ${claimed} vanished during the bridge dial`);
+    }
+
     const uuid = this.registry.attachOutgoingCall(call, handle, displayName);
     this.watchCallStatus(call);
     // Deliberate breadcrumb: RNCallKeep's own logs are NSLog-only, invisible in

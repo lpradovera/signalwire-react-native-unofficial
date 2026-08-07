@@ -36,6 +36,25 @@ export interface SwmlRouteOptions {
   parkSeconds?: number;
 }
 
+/**
+ * Collects the user variables, wherever SignalWire put them.
+ *
+ * A destination dialled as `/public/x?bridgeToken=abc` arrives as
+ * `params.vars.userVariables.bridgeToken` — nested one level deeper than the
+ * obvious `params.vars`. Reading only the outer object found no token, so the
+ * bridge hung up and the device's leg died with cause USER_BUSY, which names
+ * neither the token nor the route.
+ *
+ * Every level is merged, most specific last, because this shape is observed
+ * rather than documented: if it moves again, the other levels still match.
+ */
+function variablesFrom(body: Record<string, unknown>): Record<string, unknown> {
+  const params = (body.params ?? body) as Record<string, unknown>;
+  const vars = (params.vars ?? {}) as Record<string, unknown>;
+  const nested = (vars.userVariables ?? params.userVariables ?? {}) as Record<string, unknown>;
+  return { ...params, ...vars, ...nested };
+}
+
 /** Reads the call SID from whichever field SignalWire used. */
 function callSidFrom(body: Record<string, unknown>): string | undefined {
   const params = (body.params ?? body) as Record<string, unknown>;
@@ -72,6 +91,21 @@ function callerFrom(body: Record<string, unknown>): { from?: string; fromName?: 
   return { from, fromName };
 }
 
+/**
+ * Reads the subscriber from the caller's address, for the bridge leg.
+ *
+ * A subscriber dials out as `/private/<reference>`; that reference is who the
+ * bridge token must belong to.
+ */
+function subscriberFromCaller(body: Record<string, unknown>): string | undefined {
+  const { from } = callerFrom(body);
+  if (!from || !from.includes('/')) {
+    return undefined;
+  }
+  const segments = (from.split('?')[0] ?? from).split('/').filter(Boolean);
+  return segments[segments.length - 1];
+}
+
 /** Reads the dialled destination, to decide who to ring. */
 function calledAddressFrom(body: Record<string, unknown>): string | undefined {
   const params = (body.params ?? body) as Record<string, unknown>;
@@ -106,7 +140,7 @@ function defaultResolveSubscriber(
 ): string | undefined {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const params = (body.params ?? body) as Record<string, unknown>;
-  const vars = (params.vars ?? params.userVariables ?? {}) as Record<string, unknown>;
+  const vars = variablesFrom(body);
 
   const hint = vars.subscriber ?? params.subscriber ?? req.query.subscriber;
   if (typeof hint === 'string' && hint.length > 0) {
@@ -204,6 +238,7 @@ export function createSwmlRoutes({
 
     console.log(
       JSON.stringify({
+        at: new Date().toISOString(),
         message: 'Parked caller and pushed',
         callSid,
         externalUserId,
@@ -287,12 +322,36 @@ export function createSwmlRoutes({
   router.post('/bridge', (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const params = (body.params ?? body) as Record<string, unknown>;
-    const vars = (params.vars ?? params.userVariables ?? params) as Record<string, unknown>;
+    const vars = variablesFrom(body);
 
     const token = (vars.bridgeToken ?? vars.bridge_token ?? req.query.token) as string | undefined;
-    const externalUserId = resolveSubscriber(req) ?? (vars.subscriber as string | undefined);
+    // The subscriber here is the CALLER — the device redeeming its token —
+    // not the destination. Resolving from `to` yields the bridge resource
+    // ("rn-example-bridge"), so every token looks like it belongs to someone
+    // else and is rejected as wrong-subscriber. A configured
+    // DEV_SUBSCRIBER_REFERENCE hides this locally; nothing hides it in
+    // production, where a single wrong name fails every bridge.
+    const externalUserId =
+      (vars.subscriber as string | undefined) ??
+      subscriberFromCaller(body) ??
+      resolveSubscriber(req);
 
     if (!token || !externalUserId) {
+      // Logged with the request shape, not just the fact of failure. A device
+      // dials `?bridgeToken=...`, so if the token is not in `vars` here then
+      // SignalWire did not forward the query string the way we assumed — and
+      // without this line that is indistinguishable from never being called
+      // at all. The device only sees the leg end, with cause USER_BUSY.
+      console.warn(
+        JSON.stringify({
+          message: 'Bridge request missing token or subscriber',
+          hasToken: Boolean(token),
+          externalUserId,
+          varKeys: Object.keys(vars),
+          paramKeys: Object.keys(params),
+          query: req.query
+        })
+      );
       res.json({ version: '1.0.0', sections: { main: [{ hangup: {} }] } });
       return;
     }
@@ -308,6 +367,19 @@ export function createSwmlRoutes({
       res.json({ version: '1.0.0', sections: { main: [{ hangup: {} }] } });
       return;
     }
+
+    // Logged on the way out, not just on failure. Without this a successful
+    // bridge is indistinguishable from one that never arrived: the route is
+    // silent, so "SignalWire never called us" and "we bridged fine and the
+    // problem is downstream" look identical from the log.
+    console.log(
+      JSON.stringify({
+        at: new Date().toISOString(),
+        message: 'Bridged device to parked caller',
+        callSid: redeemed.callSid,
+        externalUserId
+      })
+    );
 
     res.json({
       version: '1.0.0',

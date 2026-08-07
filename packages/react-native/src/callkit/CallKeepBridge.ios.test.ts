@@ -192,4 +192,39 @@ describe('CallKeepBridge — the fusion tick timer', () => {
     expect(RNCallKeep.reportEndCallWithUUID).not.toHaveBeenCalled();
     expect(bridge.registry.entryForUuid(uuid)?.state).toBe('fused');
   });
+
+  it('adopts a bridge dial into the answered entry instead of a second call', () => {
+    // CallKit rejects a startCall transaction while an answered call is live:
+    // "Error requesting transaction". The dial then dies and the entry is torn
+    // down as missed, with nothing in the logs naming the cause.
+    const uuid = bridge.reportIncomingPush({ callId: 'c1' });
+    (RNCallKeep.startCall as jest.Mock).mockClear();
+
+    bridge.beginBridgeDial(uuid);
+    const tracked = bridge.trackCall(createCall('bridge-call') as never, 'bridge', 'bridge');
+
+    expect(tracked).toBe(uuid);
+    expect(RNCallKeep.startCall).not.toHaveBeenCalled();
+  });
+
+  it('releases the claim, so the next ordinary dial is not swallowed', () => {
+    const uuid = bridge.reportIncomingPush({ callId: 'c1' });
+    bridge.beginBridgeDial(uuid);
+    bridge.endBridgeDial();
+    (RNCallKeep.startCall as jest.Mock).mockClear();
+
+    bridge.trackCall(createCall('normal-call') as never, '+15559998888', 'Someone');
+
+    expect(RNCallKeep.startCall).toHaveBeenCalled();
+  });
+
+  it('still reports an outbound call when the entry died mid-dial', () => {
+    // Otherwise the user is on a live call with no native UI to end it.
+    bridge.beginBridgeDial('never-existed');
+    (RNCallKeep.startCall as jest.Mock).mockClear();
+
+    bridge.trackCall(createCall('orphan') as never, 'bridge', 'bridge');
+
+    expect(RNCallKeep.startCall).toHaveBeenCalled();
+  });
 });

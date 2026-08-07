@@ -204,6 +204,36 @@ describe('POST /swml/bridge', () => {
   });
 });
 
+describe('POST /swml/bridge — the shape SignalWire actually sends', () => {
+  it('finds the token nested under vars.userVariables', async () => {
+    // Observed, not documented. A destination dialled as
+    // `/public/x?bridgeToken=abc` arrives here as
+    // params.vars.userVariables.bridgeToken. Reading only params.vars found
+    // nothing, so the route hung up and the device's leg died with
+    // cause USER_BUSY — a code that names neither the token nor the route.
+    const { token } = tokens.mint('parked-sid', 'rn-example');
+    const response = await post('/swml/bridge', {
+      params: {
+        call: { to: '/public/rn-example-bridge', from: '/private/rn-example' },
+        vars: { userVariables: { bridgeToken: token } }
+      }
+    });
+    const swml = await response.json();
+
+    assert.deepEqual(swml.sections.main[0], { connect: { to: 'call:parked-sid' } });
+  });
+
+  it('still accepts the flat shape, so a change of shape is not fatal', async () => {
+    const { token } = tokens.mint('parked-sid-2', 'rn-example');
+    const response = await post('/swml/bridge', {
+      params: { call: { to: '/private/rn-example' }, vars: { bridgeToken: token } }
+    });
+    const swml = await response.json();
+
+    assert.deepEqual(swml.sections.main[0], { connect: { to: 'call:parked-sid-2' } });
+  });
+});
+
 describe('GET /swml/ringback', () => {
   it('serves a playable WAV, since the park script points SignalWire at it', async () => {
     const response = await fetch(`${base}/swml/ringback`);
