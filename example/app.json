@@ -7,12 +7,21 @@
     "scheme": "signalwire-example",
     "userInterfaceStyle": "dark",
     "newArchEnabled": false,
-    "ios": { "supportsTablet": true },
+    "ios": {
+      "supportsTablet": true
+    },
     "android": {},
     "plugins": [
+      "@react-native-firebase/app",
       "expo-dev-client",
       "@config-plugins/react-native-webrtc",
-      ["@signalwire/react-native", { "enableCallKit": true, "enableVoipPush": true }]
+      [
+        "@signalwire/react-native",
+        {
+          "enableCallKit": true,
+          "enableVoipPush": true
+        }
+      ]
     ]
   }
 }

@@ -5,7 +5,7 @@
 import '@signalwire/react-native/polyfills';
 
 import { setDebugOptions, setLogger, setLogLevel } from '@signalwire/js';
-import { getCallKit } from '@signalwire/react-native/callkit';
+import { getCallKit, registerAndroidCallPush } from '@signalwire/react-native/callkit';
 import { registerRootComponent } from 'expo';
 
 import App from './App';
@@ -59,5 +59,11 @@ if (process.env.EXPO_PUBLIC_SW_WIRE_LOG === '1') {
 // Set up native call UI before React mounts, so a VoIP push arriving on a cold
 // start finds a bridge ready to report it to CallKit.
 void getCallKit().setup({ appName: 'SignalWire RN Example', supportsVideo: true });
+
+// Android call pushes, registered here rather than in a component: the
+// background handler runs in a headless task when the app is killed, which is
+// the normal state for an incoming call, and React never mounts in that case.
+// No-op on iOS, where PushKit delivers natively before JavaScript exists.
+registerAndroidCallPush();
 
 registerRootComponent(App);

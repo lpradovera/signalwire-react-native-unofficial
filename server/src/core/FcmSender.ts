@@ -22,6 +22,42 @@ export interface FcmConfig {
  *   the system tray and the app's background handler never runs.
  * - `android.priority: 'high'` is what lets it pierce Doze.
  */
+/**
+ * Keys FCM refuses inside a data payload.
+ *
+ * `from` is the one that bites: it is the natural name for a caller, APNs
+ * accepts it happily, and FCM rejects the whole message with
+ * `400 Invalid data payload key: from` — so Android push fails while iOS
+ * works, from the same call, with the same payload.
+ *
+ * https://firebase.google.com/docs/cloud-messaging/concept-options
+ */
+const RESERVED_KEYS = new Set(['from', 'to', 'notification', 'message_type', 'collapse_key']);
+
+/** `sw_` prefix for anything FCM reserves; the device maps it back. */
+function safeKey(key: string): string {
+  return RESERVED_KEYS.has(key) || key.startsWith('google') || key.startsWith('gcm')
+    ? `sw_${key}`
+    : key;
+}
+
+/**
+ * Builds the data payload, renaming keys FCM will not accept.
+ *
+ * Every value is a string: FCM data values must be strings, and a number or
+ * null here is rejected for the whole message rather than coerced.
+ */
+export function dataPayload(payload: Record<string, unknown>): Record<string, string> {
+  const data: Record<string, string> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+    data[safeKey(key)] = String(value);
+  }
+  return data;
+}
+
 export class FcmSender implements PushSender {
   readonly platform = 'android' as const;
 
@@ -75,11 +111,7 @@ export class FcmSender implements PushSender {
         body: JSON.stringify({
           message: {
             token: device.token,
-            data: {
-              call_id: payload.call_id,
-              from: payload.from,
-              from_name: payload.from_name
-            },
+            data: dataPayload(payload),
             android: { priority: 'high' }
           }
         })

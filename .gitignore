@@ -24,3 +24,8 @@ wire-log*.txt
 
 # Internal planning artifacts — kept locally, never published
 docs/superpowers/
+
+# Firebase project files: per-project, and the service account key they pair
+# with is a send-as-your-project credential. Never committed.
+google-services.json
+GoogleService-Info.plist

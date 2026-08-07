@@ -55,6 +55,18 @@ module.exports = ({ config }) => {
         }
       }
     },
-    android: { ...config.android, package: appId }
+    android: {
+      ...config.android,
+      package: appId,
+      // Firebase needs this file to build, and it is per-project, so it is
+      // read from the environment for the same reason SW_APP_ID is: it is not
+      // something to hard-code into a public repository. Point
+      // GOOGLE_SERVICES_JSON at the file Firebase gave you (a path relative to
+      // this directory works). Without it the Android build fails at the
+      // google-services plugin, not at runtime.
+      ...(process.env.GOOGLE_SERVICES_JSON
+        ? { googleServicesFile: process.env.GOOGLE_SERVICES_JSON }
+        : {})
+    }
   };
 };
