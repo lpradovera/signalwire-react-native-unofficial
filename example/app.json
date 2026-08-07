@@ -12,7 +12,6 @@
     },
     "android": {},
     "plugins": [
-      "@react-native-firebase/app",
       "expo-dev-client",
       "@config-plugins/react-native-webrtc",
       [

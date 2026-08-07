@@ -50,7 +50,17 @@ function prebuild(platform) {
   process.stdout.write(`  prebuild ${platform}… `);
   execFileSync('npx', ['expo', 'prebuild', '--platform', platform, '--no-install', '--clean'], {
     cwd: example,
-    stdio: 'pipe'
+    stdio: 'pipe',
+    env: {
+      ...process.env,
+      // This check is about *our* config plugin. Firebase's plugin demands an
+      // iOS GoogleService-Info.plist whenever it is applied — even for an
+      // Android-only setup, and even when prebuilding iOS, which uses PushKit
+      // and no Firebase at all. Leaving it enabled makes this check fail for
+      // a reason that has nothing to do with what it verifies.
+      GOOGLE_SERVICES_JSON: '',
+      EXPO_NO_DOTENV: '1'
+    }
   });
   process.stdout.write('ok\n');
 }

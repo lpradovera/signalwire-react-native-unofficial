@@ -42,8 +42,18 @@ const TAILNET_ATS_EXCEPTION = {
 module.exports = ({ config }) => {
   const appId = process.env.SW_APP_ID || PLACEHOLDER_APP_ID;
 
+  // Firebase is Android-only here: iOS uses PushKit, not FCM. Adding the
+  // plugin unconditionally makes an iOS prebuild demand a
+  // GoogleService-Info.plist that this app has no use for, so an iOS-only
+  // consumer cannot prebuild at all. Applied only when Android push is
+  // actually configured.
+  const plugins = process.env.GOOGLE_SERVICES_JSON
+    ? ['@react-native-firebase/app', ...(config.plugins ?? [])]
+    : (config.plugins ?? []);
+
   return {
     ...config,
+    plugins,
     ios: {
       ...config.ios,
       bundleIdentifier: appId,
