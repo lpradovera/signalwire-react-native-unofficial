@@ -29,3 +29,9 @@ docs/superpowers/
 # with is a send-as-your-project credential. Never committed.
 google-services.json
 GoogleService-Info.plist
+
+# Editor swap files. A vim .swp of a .env holds the .env's contents:
+# server/.env.swp was committed and published with live credentials.
+*.swp
+*.swo
+*~
