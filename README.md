@@ -10,6 +10,34 @@ CallKit and ConnectionService.
 
 Supports iOS 13+ and Android 8+, on React Native 0.76+ (bare or Expo).
 
+## What is verified
+
+Tested on hardware and an emulator, not just in unit tests.
+
+| | iOS | Android |
+| --- | --- | --- |
+| Outbound calls, with audio | ✅ iPad, iPadOS 17 | ✅ emulator, Android 16 |
+| Inbound push → native call UI | ✅ PushKit + CallKit | ✅ FCM + ConnectionService |
+| Answer from a **running** app | ✅ | ✅ |
+| Answer from a **killed** app | ✅ | ✅ (release build — see note) |
+| Two-way audio on a bridged call | ✅ | ✅ |
+| Hang-up propagation, both directions | ✅ | ✅ |
+
+Android cold start needs a **release** build to be tested meaningfully: the
+Expo dev client starts a second JS runtime for the activity, so the entry
+created by the headless push task is not in the context that draws the UI. One
+`Android call push registered` line means one runtime; two means you are
+testing the dev client, not your app.
+
+**Known gaps**
+
+- **Android has no lock-screen call UI.** `backToForeground()` only works on an
+  unlocked device; a locked phone needs a full-screen-intent notification,
+  which this package does not yet implement.
+- **A voice call forces speakerphone.** The audio session mode is chosen from
+  the app's `supportsVideo` capability rather than the call's own media, so a
+  voice call in a video-capable app starts in video mode.
+
 ## Packages
 
 | Install this | If you are building | Contains |
@@ -21,6 +49,21 @@ Supports iOS 13+ and Android 8+, on React Native 0.76+ (bare or Expo).
 
 The hooks are identical on both. React Native apps install one package and get
 everything; browser apps install the core and skip the native weight entirely.
+
+### Entry points
+
+| Import | For |
+| --- | --- |
+| `@signalwire/react-native` | Provider, hooks, video view |
+| `@signalwire/react-native/polyfills` | **Must be line 1** of your entry file |
+| `@signalwire/react-native/callkit` | Native call UI, push tokens, `registerAndroidCallPush` |
+| `@signalwire/react-native/audio` | Speaker / earpiece / Bluetooth routing |
+| `@signalwire/react-native/ringing` | `useRingingPushes`, for drawing your own incoming-call UI |
+
+`./ringing` is deliberately separate from `./callkit`: the latter imports
+`react-native-callkeep`, which constructs a `NativeEventEmitter` at import
+time. A component library that only wants to *draw* ringing calls should not be
+forced to install native call UI.
 
 ## Repository layout
 
@@ -124,6 +167,11 @@ plugins: ['@babel/plugin-transform-class-static-block'];
 ```
 
 ## Quick start
+
+New to this? [**docs/tutorial.md**](docs/tutorial.md) walks from
+`create-expo-app` to a ringing phone, with a checkpoint at each stage. The
+snippet below is the 30-second version.
+
 
 ```tsx
 import {

@@ -240,64 +240,148 @@ RNCallKeep.addEventListener('didDisplayIncomingCall', ({ payload }) => {
 
 ## 2. Android
 
-Android has no PushKit equivalent. You send a **high-priority FCM data message**
-and build the call UI yourself — which is what `CallKeepBridge` already does via
-ConnectionService.
+Android has no PushKit. You send a **high-priority FCM data message**, and the
+app builds the call UI itself — because a self-managed ConnectionService gets
+none from the system. Everything below is verified on an Android 16 emulator,
+hot and cold.
 
-### 2a. Firebase
+### 2a. Version ceiling — read this before installing
 
-1. Create a Firebase project and add an Android app with your package name
-   (`com.signalwire.rnexample` in the example).
-2. Download `google-services.json` into `android/app/`.
-3. With Expo, add it to `app.json`:
-   ```json
-   { "expo": { "android": { "googleServicesFile": "./google-services.json" } } }
-   ```
+`@react-native-firebase` **v23 and later require the New Architecture.** This
+package targets the legacy architecture, which the WebRTC stack still needs, so
+**v22.4.0 is the last usable line**:
 
 ```bash
-npm install @react-native-firebase/app @react-native-firebase/messaging
+npm install @react-native-firebase/app@22 @react-native-firebase/messaging@22
 ```
 
-### 2b. App: report the FCM token
+Install v23+ and Gradle fails with:
+
+```
+Gradle build daemon disappeared unexpectedly (it may have been killed or may have crashed)
+```
+
+which reads like an out-of-memory kill. The real message —
+`New Architecture support is required for @react-native-firebase/app` — appears
+only in `~/.gradle/daemon/*/daemon-*.out.log`.
+
+Versions below 22 predate the modular API this package calls, so the supported
+range is `>=22.0.0` and, on legacy architecture, `<23`.
+
+### 2b. Firebase project
+
+1. Create a Firebase project, add an **Android** app with your package name.
+2. Download `google-services.json`.
+3. Point Expo at it. Keep it out of the repository — it is per-project:
+
+   ```js
+   // app.config.js
+   android: {
+     googleServicesFile: process.env.GOOGLE_SERVICES_JSON
+   }
+   ```
+
+4. For the server, generate a **service account key**: Project settings →
+   Service accounts → *Generate new private key*. Its `project_id`,
+   `client_email` and `private_key` become `FCM_PROJECT_ID`, `FCM_CLIENT_EMAIL`
+   and `FCM_PRIVATE_KEY`. That key can send as your whole project — treat it
+   like a password.
+
+> **A wrinkle worth knowing.** Firebase's Expo plugin demands an iOS
+> `GoogleService-Info.plist` whenever it is applied, even for an Android-only
+> setup and even when prebuilding iOS, which uses PushKit and no Firebase at
+> all. Either add an iOS app in Firebase purely to obtain that file, or apply
+> the plugin conditionally, as `example/app.config.js` does.
+
+### 2c. Register the token
+
+`watchPushToken` returns whichever token this platform issues, so no platform
+branch is needed. Getting that branch wrong is silent: the device registers
+under the wrong platform, the server picks the wrong sender, and the push
+simply never arrives.
 
 ```ts
-// src/push/android.ts
-import messaging from '@react-native-firebase/messaging';
+import { watchPushToken } from '@signalwire/react-native/callkit';
 
-export async function registerFcmPush(
-  uploadToken: (token: string) => Promise<void>
-): Promise<void> {
-  await messaging().requestPermission();
-  await uploadToken(await messaging().getToken());
-  messaging().onTokenRefresh((token) => void uploadToken(token));
-}
-```
-
-### 2c. App: the headless background handler
-
-Registered at module scope, **not** inside a component — a killed app has no
-component tree:
-
-```js
-// index.js, after the polyfills import
-import messaging from '@react-native-firebase/messaging';
-import { getCallKit } from '@signalwire/react-native/callkit';
-
-messaging().setBackgroundMessageHandler(async (message) => {
-  const { call_id: callId, from, from_name: fromName } = message.data ?? {};
-  getCallKit().reportIncomingPush({ callId, from, fromName });
+watchPushToken(({ platform, token }) => {
+  void fetch(DEVICES_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ externalUserId, platform, token })
+  });
 });
 ```
 
-### 2d. Android 14+
+`environment: 'sandbox'` is APNs-only; FCM has no sandbox/production split.
 
-Starting a foreground service from the background is restricted. For a locked
-device, present the call with a **full-screen intent**
-(`USE_FULL_SCREEN_INTENT`) rather than relying on a foreground-service start.
-callkeep's self-managed ConnectionService mode handles this when configured —
-see its Android setup guide.
+### 2d. Handle the push
 
----
+Call this from your entry file, **outside React**. Android delivers to two
+different places depending on whether the app is alive, and registering only
+one of them looks like flakiness — calls arrive when the app happens to be
+open and vanish when it is not.
+
+```js
+// index.js
+import { registerAndroidCallPush } from '@signalwire/react-native/callkit';
+
+registerAndroidCallPush();   // no-op on iOS and without Firebase installed
+```
+
+That wires `setBackgroundMessageHandler` (a headless task, used when the app is
+killed — the normal case for an incoming call) and `onMessage` (foreground,
+where the background handler never fires), reports the call to
+ConnectionService, and brings the app forward.
+
+### 2e. Draw the call yourself
+
+**Android shows no incoming-call UI.** callkeep is registered self-managed, so
+Telecom tracks the call and draws nothing — by design. Without a sheet of your
+own, the push lands, a connection exists, and the user sees nothing at all.
+
+The kit's component handles both sources, and defaults to including native
+pushes on Android and not on iOS, where CallKit already drew the call:
+
+```tsx
+import { IncomingCallSheet } from '@signalwire/react-native-ui';
+
+<IncomingCallSheet onAnswered={setCall} />
+```
+
+Rolling your own? Use `useRingingPushes` from
+`@signalwire/react-native/ringing` — a separate entry point, because the
+`./callkit` barrel pulls in `react-native-callkeep`, which builds a
+`NativeEventEmitter` at import time and would make an optional peer mandatory.
+
+### 2f. Permissions
+
+The config plugin declares what is needed, but two things need doing at
+runtime:
+
+- **`READ_PHONE_NUMBERS` must be granted, not merely declared.** callkeep's
+  ConnectionService reads the phone account while building an outgoing
+  connection. Ungranted, the call connects and *then* the app dies with
+  `SecurityException` inside `VoiceConnectionService.createConnection` — which
+  reads as a crash on answer rather than a missing grant. This package requests
+  it during `setup()`.
+- **`POST_NOTIFICATIONS`** (Android 13+) for anything you want to show.
+
+The plugin also declares callkeep's `VoiceConnectionService` with
+`android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"`.
+callkeep ships permissions only, and without that declaration Telecom refuses
+the phone account and the app dies on **every** launch.
+
+### 2g. Reserved keys in the payload
+
+FCM rejects a data payload containing `from`, `to`, `notification`,
+`message_type`, `collapse_key`, or anything prefixed `google`/`gcm` — with
+`400 Invalid data payload key`, failing the whole message. APNs accepts the
+same payload happily, so this presents as "Android push is broken" while iOS
+works, from the same call.
+
+Send those keys prefixed (`sw_from`) and map them back on the device;
+`decodePushData` in this package does exactly that, and the example server
+shows the sending half.
 
 ## 3. App: sending the token to your server
 
