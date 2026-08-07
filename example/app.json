@@ -21,7 +21,8 @@
           "enableCallKit": true,
           "enableVoipPush": true
         }
-      ]
+      ],
+      "./plugins/withCleartextTraffic"
     ]
   }
 }
