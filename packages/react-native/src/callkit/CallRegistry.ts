@@ -12,7 +12,32 @@ import type {
 import type { Call } from '@signalwire/js';
 import type { Observable } from 'rxjs';
 
-const DEFAULT_FUSION_TIMEOUT_MS = 20_000;
+/**
+ * How long a pushed call rings before it is written off as missed.
+ *
+ * For a call that fuses with an inbound SDK call this is a safety net. For a
+ * bridge topology it is the ring duration itself: no inbound call is ever
+ * coming, so this timer is the only thing ending an unanswered call.
+ *
+ * 20s was too short for both. A cold start has to launch the app, load
+ * JavaScript, connect and register before anything can be shown — and in a
+ * development build it also downloads the bundle — so a call could expire
+ * before the user ever saw it. Real phones ring for about 30 seconds, and the
+ * server parks its caller for 60. Override with `fusionTimeoutMs`.
+ */
+const DEFAULT_FUSION_TIMEOUT_MS = 45_000;
+
+/**
+ * How long an *answered* entry may wait for the app to produce its call.
+ *
+ * The fusion deadline measures something else — how long a ringing push waits
+ * for an inbound SDK call — and once the user answers, that question is
+ * settled. In a bridge topology no inbound call is ever coming: the app dials
+ * out instead, which takes a token round-trip, a dial and ICE. Letting the
+ * original deadline run tore the entry down mid-dial, and the call the user
+ * had already accepted was reported as missed.
+ */
+const ANSWERED_TIMEOUT_MS = 60_000;
 const UNKNOWN_HANDLE = 'Unknown';
 const UNKNOWN_NAME = 'Unknown caller';
 
@@ -280,7 +305,15 @@ export class CallRegistry {
 
     if (entry.state === 'pending-push' || !entry.call) {
       logger.debug(`Buffering "${intent}" for ${uuid} until the SDK call arrives`);
-      const buffered = { ...entry, intent };
+      // An answered entry is no longer waiting to fuse, it is waiting for the
+      // app. Restart the clock, generously: the alternative is expiring a call
+      // the user has already accepted.
+      const buffered = {
+        ...entry,
+        intent,
+        fuseDeadline:
+          intent === 'answer' ? this.host.now() + ANSWERED_TIMEOUT_MS : entry.fuseDeadline
+      };
       this.write(buffered);
       if (intent === 'answer') {
         this._answerRequested$.next(buffered);
@@ -339,7 +372,11 @@ export class CallRegistry {
         continue;
       }
       if (now > entry.fuseDeadline) {
-        logger.warn(`Push entry ${entry.uuid} never fused; reporting a missed call.`);
+        logger.warn(
+          entry.intent === 'answer'
+            ? `Answered entry ${entry.uuid} never got its call; giving up.`
+            : `Push entry ${entry.uuid} never fused; reporting a missed call.`
+        );
         this.write({ ...entry, state: 'ended', intent: null, fuseDeadline: null });
         this.host.reportCallEnded(entry.uuid, 'missed');
       }

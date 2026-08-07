@@ -96,6 +96,24 @@ export class BridgeTokenStore {
   }
 
   /**
+   * Redeems without checking who is calling.
+   *
+   * For requests where the caller cannot be identified. Still single-use and
+   * still expiring — the token remains the capability; only the extra
+   * subscriber check is skipped.
+   */
+  redeemAnySubscriber(
+    token: string
+  ): { callSid: string } | { error: 'unknown' | 'expired' | 'already-redeemed' } {
+    const found = this.byToken.get(token);
+    if (!found) {
+      return { error: 'unknown' };
+    }
+    const result = this.redeem(token, found.externalUserId);
+    return result as { callSid: string } | { error: 'unknown' | 'expired' | 'already-redeemed' };
+  }
+
+  /**
    * The call this token was minted for, whether or not it has been redeemed.
    *
    * Redemption is single-use so a replayed push cannot join a live call, but

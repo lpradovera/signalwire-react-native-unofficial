@@ -54,7 +54,8 @@ function reportCall(message: RemoteMessage): void {
   }
 
   logger.debug(`FCM call push received for ${callId}`);
-  getCallKit().reportIncomingPush({
+  const bridge = getCallKit();
+  bridge.reportIncomingPush({
     callId,
     from: data.from,
     fromName: data.from_name,
@@ -62,6 +63,10 @@ function reportCall(message: RemoteMessage): void {
     // token here, and there is no second chance to ask for it.
     data
   });
+
+  // The push may have woken a killed app into a headless task, where nothing
+  // is on screen. Without this the call sits in Telecom, invisible.
+  bridge.bringToForeground();
 }
 
 /**

@@ -195,11 +195,74 @@ describe('POST /swml/bridge', () => {
   });
 
   it('refuses a token belonging to another subscriber', async () => {
+    // Identified by `from` — who is calling — not `to`, which is the bridge
+    // resource and says nothing about the caller. Resolving from `to` sent
+    // every request to a configured default, so a token minted for one
+    // subscriber was rejected against another and the call was stranded.
     const { token } = tokens.mint('parked-sid', 'rn-example');
     const response = await post('/swml/bridge', {
-      params: { vars: { bridgeToken: token }, call: { to: '/private/someone-else' } }
+      params: {
+        vars: { userVariables: { bridgeToken: token } },
+        call: { to: '/public/rn-example-bridge', from: '/private/someone-else' }
+      }
     });
     const swml = await response.json();
+    assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
+  });
+
+  it('identifies a subscriber dialling out as a SIP URI', async () => {
+    // What a device actually sends:
+    //   sip:rn-android@<project>.call.signalwire.com;context=private
+    // Reading only the /private/<ref> form found nothing, so the caller
+    // looked unidentifiable and the subscriber check was skipped.
+    const { token } = tokens.mint('parked-sid-sip', 'rn-android');
+    const response = await post('/swml/bridge', {
+      params: {
+        vars: { userVariables: { bridgeToken: token } },
+        call: { from: 'sip:rn-android@proj.call.signalwire.com;context=private' }
+      }
+    });
+    const swml = await response.json();
+
+    assert.deepEqual(swml.sections.main[0].connect.to, 'call:parked-sid-sip');
+  });
+
+  it('refuses a SIP caller who is not the token holder', async () => {
+    const { token } = tokens.mint('parked-sid-sip2', 'rn-android');
+    const response = await post('/swml/bridge', {
+      params: {
+        vars: { userVariables: { bridgeToken: token } },
+        call: { from: 'sip:someone-else@proj.call.signalwire.com;context=private' }
+      }
+    });
+    const swml = await response.json();
+
+    assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
+  });
+
+  it('still bridges when the caller cannot be identified', async () => {
+    // The token is the capability: single-use, unguessable, short-lived.
+    // Binding it to a subscriber is defence-in-depth, and is applied whenever
+    // the request says who is calling — but refusing a valid token because
+    // the caller was not identifiable strands the call for no security gain.
+    const { token } = tokens.mint('parked-sid-anon', 'rn-example');
+    const response = await post('/swml/bridge', {
+      params: { vars: { userVariables: { bridgeToken: token } }, call: {} }
+    });
+    const swml = await response.json();
+
+    assert.deepEqual(swml.sections.main[0].connect.to, 'call:parked-sid-anon');
+  });
+
+  it('is still single-use when the caller is unidentified', async () => {
+    // Otherwise dropping the subscriber check would also drop replay
+    // protection, which is the property that actually matters.
+    const { token } = tokens.mint('parked-sid-replay', 'rn-example');
+    const body = { params: { vars: { userVariables: { bridgeToken: token } }, call: {} } };
+    await post('/swml/bridge', body);
+    const replay = await post('/swml/bridge', body);
+    const swml = await replay.json();
+
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
   });
 });

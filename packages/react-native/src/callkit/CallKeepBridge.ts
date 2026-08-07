@@ -293,6 +293,30 @@ export class CallKeepBridge {
     this.pendingBridgeUuid = null;
   }
 
+  /**
+   * Brings the app to the front, for a call the OS will not show.
+   *
+   * Android wakes a killed app into a headless task to handle the push, so
+   * JavaScript runs but no activity does — and with a self-managed
+   * ConnectionService the system draws nothing either. Telecom ends up
+   * holding a live connection that the user cannot see or answer.
+   *
+   * iOS never needs this: CallKit puts its own screen up, over the lock
+   * screen if it has to.
+   */
+  bringToForeground(): void {
+    if (Platform.OS !== 'android' || typeof RNCallKeep?.backToForeground !== 'function') {
+      return;
+    }
+    try {
+      RNCallKeep.backToForeground();
+    } catch (error) {
+      // Android restricts background activity starts, and this is
+      // best-effort: the call is still in Telecom either way.
+      logger.warn('Could not bring the app to the foreground:', error);
+    }
+  }
+
   /** Registers an outbound call with the native UI. Returns its UUID. */
   trackCall(call: Call, handle: string, displayName: string): string {
     const claimed = this.pendingBridgeUuid;

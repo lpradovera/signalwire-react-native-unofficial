@@ -507,4 +507,34 @@ describe('CallRegistry — ending', () => {
 
     expect(seen).toEqual([uuid]);
   });
+
+  it('does not expire an entry the user has already answered', () => {
+    // The fusion deadline asks "did an inbound SDK call arrive?". Once the
+    // user answers a bridge push, no inbound call is coming — the app dials
+    // out, which takes a token round-trip, a dial and ICE. Letting the
+    // original clock run tore the entry down mid-dial and reported the
+    // accepted call as missed.
+    const host = createHost();
+    const registry = new CallRegistry({ host, fusionTimeoutMs: 1000 });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+
+    registry.applyIntent(uuid, 'answer');
+    host.clock.value += 5000;
+    registry.tick();
+
+    expect(registry.entryForUuid(uuid)?.state).toBe('pending-push');
+  });
+
+  it('still gives up on an answered entry that never gets its call', () => {
+    // Otherwise a failed dial leaves a native entry ringing forever.
+    const host = createHost();
+    const registry = new CallRegistry({ host, fusionTimeoutMs: 1000 });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+
+    registry.applyIntent(uuid, 'answer');
+    host.clock.value += 120_000;
+    registry.tick();
+
+    expect(registry.entryForUuid(uuid)?.state).toBe('ended');
+  });
 });

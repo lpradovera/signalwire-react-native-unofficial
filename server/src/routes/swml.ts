@@ -108,7 +108,22 @@ function callerFrom(body: Record<string, unknown>): { from?: string; fromName?: 
  */
 function subscriberFromCaller(body: Record<string, unknown>): string | undefined {
   const { from } = callerFrom(body);
-  if (!from || !from.includes('/')) {
+  if (!from) {
+    return undefined;
+  }
+
+  // A subscriber dialling out appears as a SIP URI, not a Fabric address:
+  //   sip:rn-android@<project>.call.signalwire.com;context=private
+  // The reference is the user part. Reading only the `/private/<ref>` form
+  // found nothing here, so the caller looked unidentifiable and the bridge
+  // fell back to a configured default — which rejected a perfectly good token
+  // as wrong-subscriber.
+  if (from.startsWith('sip:')) {
+    const user = from.slice(4).split('@')[0];
+    return user && user.length > 0 ? user : undefined;
+  }
+
+  if (!from.includes('/')) {
     return undefined;
   }
   const segments = (from.split('?')[0] ?? from).split('/').filter(Boolean);
@@ -341,12 +356,15 @@ export function createSwmlRoutes({
     // else and is rejected as wrong-subscriber. A configured
     // DEV_SUBSCRIBER_REFERENCE hides this locally; nothing hides it in
     // production, where a single wrong name fails every bridge.
+    // Deliberately NOT resolveSubscriber(): its last resort is a single
+    // configured subscriber, and guessing here does active harm. A token
+    // minted for one subscriber was checked against that default and rejected
+    // as wrong-subscriber — which only stayed invisible while the default
+    // happened to match the only device being tested.
     const externalUserId =
-      (vars.subscriber as string | undefined) ??
-      subscriberFromCaller(body) ??
-      resolveSubscriber(req);
+      (vars.subscriber as string | undefined) ?? subscriberFromCaller(body);
 
-    if (!token || !externalUserId) {
+    if (!token) {
       // Logged with the request shape, not just the fact of failure. A device
       // dials `?bridgeToken=...`, so if the token is not in `vars` here then
       // SignalWire did not forward the query string the way we assumed — and
@@ -354,9 +372,7 @@ export function createSwmlRoutes({
       // at all. The device only sees the leg end, with cause USER_BUSY.
       console.warn(
         JSON.stringify({
-          message: 'Bridge request missing token or subscriber',
-          hasToken: Boolean(token),
-          externalUserId,
+          message: 'Bridge request missing its token',
           varKeys: Object.keys(vars),
           paramKeys: Object.keys(params),
           query: req.query
@@ -366,7 +382,24 @@ export function createSwmlRoutes({
       return;
     }
 
-    const redeemed = tokens.redeem(token, externalUserId);
+    // Redeemed against the caller when we can identify them, and on the token
+    // alone when we cannot. The token is the capability: single-use,
+    // unguessable and short-lived. Binding it to a subscriber is
+    // defence-in-depth, and worth keeping where the request says who is
+    // calling — but rejecting a valid token because the caller could not be
+    // identified strands the call for no security gain.
+    const redeemed = externalUserId
+      ? tokens.redeem(token, externalUserId)
+      : tokens.redeemAnySubscriber(token);
+
+    if (!externalUserId) {
+      console.warn(
+        JSON.stringify({
+          message: 'Bridge redeemed without verifying the caller',
+          from: callerFrom(body).from ?? null
+        })
+      );
+    }
     if ('error' in redeemed) {
       // Logged with the reason because these are indistinguishable from the
       // device: a caller who hung up, a slow answer, and a replayed token all
@@ -421,61 +454,6 @@ export function createSwmlRoutes({
         ]
       }
     });
-  });
-
-  /**
-   * Ends the caller's leg, when the device's leg has ended.
-   *
-   * Called by the app, not by SignalWire: nothing tells the server that the
-   * device hung up, and the caller does not end on its own. Takes the same
-   * single-use token the device already holds, so it names the call without
-   * ever being told the call SID.
-   */
-  router.post('/bridge/end', async (req, res) => {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const vars = variablesFrom(body);
-    const token = (vars.bridgeToken ?? vars.token ?? body.token) as string | undefined;
-    const externalUserId =
-      (vars.subscriber as string | undefined) ??
-      subscriberFromCaller(body) ??
-      resolveSubscriber(req);
-
-    if (!token || !externalUserId) {
-      res.status(400).json({ error: 'bridgeToken and subscriber are required' });
-      return;
-    }
-
-    const paired = tokens.pairedCallSid(token, externalUserId);
-    if ('error' in paired) {
-      console.warn(
-        JSON.stringify({ message: 'Bridge end rejected', reason: paired.error, externalUserId })
-      );
-      res.status(404).json({ error: paired.error });
-      return;
-    }
-
-    if (!callEnder) {
-      console.warn(
-        JSON.stringify({
-          message: 'No call ender configured; the caller leg will be left up',
-          callSid: paired.callSid
-        })
-      );
-      res.status(501).json({ error: 'call ender not configured' });
-      return;
-    }
-
-    const result = await callEnder.end(paired.callSid);
-    console.log(
-      JSON.stringify({
-        at: new Date().toISOString(),
-        message: result.ok ? 'Ended caller leg' : 'Failed to end caller leg',
-        callSid: paired.callSid,
-        externalUserId,
-        ...(result.ok ? {} : { error: result.error })
-      })
-    );
-    res.status(result.ok ? 200 : 502).json(result);
   });
 
   /**
