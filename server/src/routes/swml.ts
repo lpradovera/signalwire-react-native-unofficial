@@ -1,6 +1,7 @@
 import { Router } from 'express';
 
 import type { BridgeTokenStore } from '../core/BridgeTokenStore.js';
+import type { CallEnder } from '../signalwire/endCall.js';
 import type { NotificationService } from '../core/NotificationService.js';
 import type { Request } from 'express';
 
@@ -34,6 +35,14 @@ export interface SwmlRouteOptions {
   ringback?: string;
   /** How long a caller waits before being hung up. Default 60s. */
   parkSeconds?: number;
+  /**
+   * Ends the caller's leg when the device's leg ends.
+   *
+   * Hanging up on the device does not end the parked caller: that leg is not
+   * returned to its script and is not hung up, so it stays connected to
+   * nothing until something ends it. Without this the caller sits in silence.
+   */
+  callEnder?: CallEnder;
 }
 
 /**
@@ -192,6 +201,7 @@ export function createSwmlRoutes({
   routes = {},
   ringback,
   parkSeconds = DEFAULT_PARK_SECONDS,
+  callEnder,
   resolveSubscriber = makeDefaultResolveSubscriber(routes)
 }: SwmlRouteOptions): Router {
   const router = Router();
@@ -381,12 +391,146 @@ export function createSwmlRoutes({
       })
     );
 
+    // status_url, not an app-side callback: SignalWire knows when the bridge
+    // ends, and it tells us even if the app was backgrounded, killed or lost
+    // the network at the moment of hangup — all of which would otherwise
+    // strand the caller on a live, silent leg forever.
+    const statusUrl = publicUrl
+      ? `${publicUrl.replace(/\/$/, '')}/swml/bridge/status?token=${encodeURIComponent(token)}`
+      : undefined;
+
+    if (!statusUrl) {
+      console.warn(
+        JSON.stringify({
+          message: 'PUBLIC_URL unset; the caller leg will not be ended when the device hangs up',
+          callSid: redeemed.callSid
+        })
+      );
+    }
+
     res.json({
       version: '1.0.0',
       sections: {
-        main: [{ connect: { to: `call:${redeemed.callSid}` } }]
+        main: [
+          {
+            connect: {
+              to: `call:${redeemed.callSid}`,
+              ...(statusUrl ? { status_url: statusUrl } : {})
+            }
+          }
+        ]
       }
     });
+  });
+
+  /**
+   * Ends the caller's leg, when the device's leg has ended.
+   *
+   * Called by the app, not by SignalWire: nothing tells the server that the
+   * device hung up, and the caller does not end on its own. Takes the same
+   * single-use token the device already holds, so it names the call without
+   * ever being told the call SID.
+   */
+  router.post('/bridge/end', async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const vars = variablesFrom(body);
+    const token = (vars.bridgeToken ?? vars.token ?? body.token) as string | undefined;
+    const externalUserId =
+      (vars.subscriber as string | undefined) ??
+      subscriberFromCaller(body) ??
+      resolveSubscriber(req);
+
+    if (!token || !externalUserId) {
+      res.status(400).json({ error: 'bridgeToken and subscriber are required' });
+      return;
+    }
+
+    const paired = tokens.pairedCallSid(token, externalUserId);
+    if ('error' in paired) {
+      console.warn(
+        JSON.stringify({ message: 'Bridge end rejected', reason: paired.error, externalUserId })
+      );
+      res.status(404).json({ error: paired.error });
+      return;
+    }
+
+    if (!callEnder) {
+      console.warn(
+        JSON.stringify({
+          message: 'No call ender configured; the caller leg will be left up',
+          callSid: paired.callSid
+        })
+      );
+      res.status(501).json({ error: 'call ender not configured' });
+      return;
+    }
+
+    const result = await callEnder.end(paired.callSid);
+    console.log(
+      JSON.stringify({
+        at: new Date().toISOString(),
+        message: result.ok ? 'Ended caller leg' : 'Failed to end caller leg',
+        callSid: paired.callSid,
+        externalUserId,
+        ...(result.ok ? {} : { error: result.error })
+      })
+    );
+    res.status(result.ok ? 200 : 502).json(result);
+  });
+
+  /**
+   * Ends the caller's leg when the bridge disconnects.
+   *
+   * SignalWire posts `calling.call.connect` events here for the connect issued
+   * by /swml/bridge. `disconnected` means the device's leg is gone — and the
+   * caller's leg is not returned to its script and is not hung up, so without
+   * this it stays up, connected to nothing, in silence.
+   */
+  router.post('/bridge/status', async (req, res) => {
+    // Answer first. This is a status callback: SignalWire does not need our
+    // opinion, and a slow REST call here should not hold up its pipeline.
+    res.status(204).end();
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const params = (body.params ?? {}) as Record<string, unknown>;
+    const state = params.connect_state;
+    const token = req.query.token as string | undefined;
+
+
+    if (state !== 'disconnected' && state !== 'failed') {
+      return;
+    }
+    if (!token) {
+      console.warn(JSON.stringify({ message: 'Bridge status callback carried no token', state }));
+      return;
+    }
+
+    const paired = tokens.pairedCallSidByToken(token);
+    if (!paired) {
+      console.warn(JSON.stringify({ message: 'Bridge status: unknown token', state }));
+      return;
+    }
+
+    if (!callEnder) {
+      console.warn(
+        JSON.stringify({
+          message: 'No call ender configured; the caller leg will be left up',
+          callSid: paired.callSid
+        })
+      );
+      return;
+    }
+
+    const result = await callEnder.end(paired.callSid);
+    console.log(
+      JSON.stringify({
+        at: new Date().toISOString(),
+        message: result.ok ? 'Ended caller leg' : 'Failed to end caller leg',
+        callSid: paired.callSid,
+        connectState: state,
+        ...(result.ok ? {} : { error: result.error })
+      })
+    );
   });
 
   return router;

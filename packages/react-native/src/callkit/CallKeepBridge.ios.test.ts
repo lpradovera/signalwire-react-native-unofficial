@@ -227,4 +227,19 @@ describe('CallKeepBridge — the fusion tick timer', () => {
 
     expect(RNCallKeep.startCall).toHaveBeenCalled();
   });
+
+  it('ends the native entry when the SDK reports the call ended', () => {
+    // The SDK emits 'ended'; the old terminal set listed only 'disconnected',
+    // 'destroyed' and 'failed', so a remote hangup left the entry on screen
+    // and the user had to hang up manually.
+    const uuid = bridge.reportIncomingPush({ callId: 'c1' });
+    const call = createCall('c1');
+    bridge.beginBridgeDial(uuid);
+    bridge.trackCall(call as never, 'bridge', 'bridge');
+    (RNCallKeep.reportEndCallWithUUID as jest.Mock).mockClear();
+
+    (call.status$ as { next: (v: string) => void }).next('ended');
+
+    expect(RNCallKeep.reportEndCallWithUUID).toHaveBeenCalled();
+  });
 });

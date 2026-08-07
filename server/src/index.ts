@@ -4,6 +4,7 @@ import { JsonFileDeviceStore } from './core/DeviceStore.js';
 import { NotificationService } from './core/NotificationService.js';
 import { BridgeTokenStore } from './core/BridgeTokenStore.js';
 import { createDevAuthenticateCaller, createTokenRoutes } from './routes/token.js';
+import { createCallEnderFromEnv } from './signalwire/endCall.js';
 import { createSwmlRoutes } from './routes/swml.js';
 import { createMinterFromEnv } from './signalwire/subscriberTokens.js';
 
@@ -92,7 +93,8 @@ const app = createApp({
     service,
     publicUrl: process.env.PUBLIC_URL,
     routes: parseParkRoutes(process.env.PARK_ROUTES),
-    ringback: process.env.PARK_RINGBACK_URL
+    ringback: process.env.PARK_RINGBACK_URL,
+    callEnder: createCallEnderFromEnv()
   })
 });
 

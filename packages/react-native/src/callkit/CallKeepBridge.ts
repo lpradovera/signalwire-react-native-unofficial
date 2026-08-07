@@ -15,7 +15,17 @@ const AUDIO_SESSION_TIMEOUT_MS = 3000;
 const HANDLE_TYPE = 'generic';
 
 /** Call statuses after which the native entry must be torn down. */
-const TERMINAL_STATUSES = new Set<string>(['disconnected', 'destroyed', 'failed']);
+// 'ended' is what the SDK actually reports — the wire shows call_state
+// created -> answered -> ending -> ended, and none of the three names below
+// ever appear. Without it a remote hangup never reached reportRemoteEnded, so
+// the native entry outlived the call and the user had to end it by hand.
+// The original three are kept: they cost nothing and this list is observed.
+const TERMINAL_STATUSES = new Set<string>([
+  'ended',
+  'disconnected',
+  'destroyed',
+  'failed'
+]);
 
 export interface CallKitSetupOptions {
   appName: string;

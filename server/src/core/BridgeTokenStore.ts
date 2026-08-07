@@ -95,6 +95,42 @@ export class BridgeTokenStore {
     return this.byToken.size;
   }
 
+  /**
+   * The call this token was minted for, whether or not it has been redeemed.
+   *
+   * Redemption is single-use so a replayed push cannot join a live call, but
+   * the device still needs to name the caller's leg when its own leg ends —
+   * otherwise the caller is stranded. Subscriber-bound, like redeem: holding
+   * a token is not permission to hang up someone else's call.
+   */
+  pairedCallSid(
+    token: string,
+    externalUserId: string
+  ): { callSid: string } | { error: 'unknown' | 'expired' | 'wrong-subscriber' } {
+    this.sweep();
+    const found = this.byToken.get(token);
+    if (!found) {
+      return { error: 'unknown' };
+    }
+    if (found.externalUserId !== externalUserId) {
+      return { error: 'wrong-subscriber' };
+    }
+    return { callSid: found.callSid };
+  }
+
+  /**
+   * The call a token was minted for, without a subscriber check.
+   *
+   * Only for SignalWire's own status callback, which is authenticated by
+   * holding the unguessable token in a URL we generated — there is no
+   * subscriber in that request to check against.
+   */
+  pairedCallSidByToken(token: string): { callSid: string } | undefined {
+    this.sweep();
+    const found = this.byToken.get(token);
+    return found ? { callSid: found.callSid } : undefined;
+  }
+
   private sweep(): void {
     const cutoff = this.now();
     for (const [key, value] of this.byToken) {

@@ -234,6 +234,98 @@ describe('POST /swml/bridge — the shape SignalWire actually sends', () => {
   });
 });
 
+describe('POST /swml/bridge/status', () => {
+  it('ends the caller leg when the bridge disconnects', async () => {
+    // The device hanging up does not end the caller: that leg is not returned
+    // to its script and is not hung up, so it stays up in silence. This is
+    // driven by SignalWire rather than the app, which may be backgrounded or
+    // killed at the moment of hangup.
+    const ended: string[] = [];
+    const withEnder = createApp({
+      store,
+      service,
+      swmlRoutes: createSwmlRoutes({
+        tokens,
+        service,
+        publicUrl: 'https://example.test',
+        callEnder: { async end(id) { ended.push(id); return { ok: true }; } }
+      })
+    });
+    const srv = await new Promise<Server>((resolve) => {
+      const s2 = withEnder.listen(0, () => resolve(s2));
+    });
+    const addr = srv.address();
+    const base2 = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
+
+    const { token } = tokens.mint('caller-leg-sid', 'rn-example');
+    await fetch(`${base2}/swml/bridge/status?token=${token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ params: { connect_state: 'disconnected' } })
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    srv.close();
+
+    assert.deepEqual(ended, ['caller-leg-sid']);
+  });
+
+  it('leaves the call alone while the bridge is still connected', async () => {
+    const ended: string[] = [];
+    const withEnder = createApp({
+      store,
+      service,
+      swmlRoutes: createSwmlRoutes({
+        tokens,
+        service,
+        publicUrl: 'https://example.test',
+        callEnder: { async end(id) { ended.push(id); return { ok: true }; } }
+      })
+    });
+    const srv = await new Promise<Server>((resolve) => {
+      const s2 = withEnder.listen(0, () => resolve(s2));
+    });
+    const addr = srv.address();
+    const base2 = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
+
+    const { token } = tokens.mint('still-live-sid', 'rn-example');
+    await fetch(`${base2}/swml/bridge/status?token=${token}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ params: { connect_state: 'connected' } })
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    srv.close();
+
+    assert.deepEqual(ended, []);
+  });
+
+  it('puts a status_url on the connect, or the caller can never be ended', async () => {
+    const { token } = tokens.mint('parked-sid-3', 'rn-example');
+    const withUrl = createApp({
+      store,
+      service,
+      swmlRoutes: createSwmlRoutes({ tokens, service, publicUrl: 'https://example.test' })
+    });
+    const srv = await new Promise<Server>((resolve) => {
+      const s2 = withUrl.listen(0, () => resolve(s2));
+    });
+    const addr = srv.address();
+    const base2 = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
+
+    const response = await fetch(`${base2}/swml/bridge`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        params: { call: { from: '/private/rn-example' }, vars: { userVariables: { bridgeToken: token } } }
+      })
+    });
+    const swml = await response.json();
+    srv.close();
+
+    assert.match(swml.sections.main[0].connect.status_url, /\/swml\/bridge\/status\?token=/);
+  });
+});
+
 describe('GET /swml/ringback', () => {
   it('serves a playable WAV, since the park script points SignalWire at it', async () => {
     const response = await fetch(`${base}/swml/ringback`);
