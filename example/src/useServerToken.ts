@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 
+import { SUBSCRIBER_REFERENCE } from './subscriber';
+
 /**
  * Fetches a subscriber token from the support server on launch.
  *
@@ -36,7 +38,9 @@ export function useServerToken(): ServerTokenState {
         const response = await fetch(TOKEN_URL, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({})
+          // Named explicitly, so the token and the device registration
+          // agree on who this device is.
+          body: JSON.stringify({ reference: SUBSCRIBER_REFERENCE })
         });
 
         const body = (await response.json()) as { token?: string; error?: string };

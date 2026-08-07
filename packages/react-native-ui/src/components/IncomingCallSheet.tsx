@@ -1,6 +1,7 @@
 import { useIncomingCalls } from '@signalwire/react';
+import { useRingingPushes } from '@signalwire/react-native/ringing';
 import React from 'react';
-import { Modal, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { useSignalWireTheme } from '../theme/ThemeProvider';
 import { ControlButton } from './ControlButton';
@@ -16,6 +17,18 @@ export interface IncomingCallSheetProps {
   answerWith?: MediaOptions;
   onAnswered?: (call: Call) => void;
   onRejected?: (call: Call) => void;
+  /**
+   * Also draw calls that are ringing natively but have no SDK call yet.
+   *
+   * Defaults to true on Android and false on iOS, which is where the two
+   * platforms genuinely differ: CallKit draws its own screen — on the lock
+   * screen, over other apps — so a second sheet behind it is confusing.
+   * Android's ConnectionService is registered self-managed and draws nothing
+   * at all, so without this a pushed call is invisible until it times out.
+   *
+   * Set it explicitly if you run iOS without native call UI.
+   */
+  includeNativePushes?: boolean;
   testID?: string;
 }
 
@@ -30,15 +43,24 @@ export function IncomingCallSheet({
   answerWith = { audio: true, video: false },
   onAnswered,
   onRejected,
+  includeNativePushes = Platform.OS === 'android',
   testID
 }: IncomingCallSheetProps): React.JSX.Element | null {
   const theme = useSignalWireTheme();
   const { calls, answer, reject } = useIncomingCalls();
+  const { ringing, answer: answerPush, reject: rejectPush } = useRingingPushes();
   const call = calls[0];
+  // The SDK call wins when both exist: they are the same call once it has
+  // fused, and the SDK object is the one that can actually be answered.
+  const push = call ? undefined : includeNativePushes ? ringing[0] : undefined;
 
-  if (!call) {
+  if (!call && !push) {
     return null;
   }
+
+  const callerName = call
+    ? (call.fromName ?? call.from ?? 'Unknown caller')
+    : (push?.fromName ?? push?.from ?? 'Unknown caller');
 
   return (
     <Modal transparent animationType="slide" visible testID={testID}>
@@ -62,7 +84,7 @@ export function IncomingCallSheet({
             accessibilityRole="header"
             style={{ color: theme.colors.text, fontSize: theme.typography.title, fontWeight: '700' }}
           >
-            {call.fromName ?? call.from ?? 'Unknown caller'}
+            {callerName}
           </Text>
 
           <View style={[styles.actions, { gap: theme.spacing.md, marginTop: theme.spacing.lg }]}>
@@ -72,7 +94,11 @@ export function IncomingCallSheet({
               variant="danger"
               style={styles.action}
               onPress={() => {
-                void reject(call).then(() => onRejected?.(call));
+                if (call) {
+                  void reject(call).then(() => onRejected?.(call));
+                } else if (push) {
+                  rejectPush(push.uuid);
+                }
               }}
             />
             <ControlButton
@@ -81,7 +107,13 @@ export function IncomingCallSheet({
               variant="accent"
               style={styles.action}
               onPress={() => {
-                void answer(call, answerWith).then(() => onAnswered?.(call));
+                if (call) {
+                  void answer(call, answerWith).then(() => onAnswered?.(call));
+                } else if (push) {
+                  // The same intent a native answer applies, so both paths
+                  // converge and whatever places the call picks it up.
+                  answerPush(push.uuid);
+                }
               }}
             />
           </View>

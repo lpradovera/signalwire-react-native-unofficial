@@ -48,7 +48,17 @@
         "default": "./dist/polyfills.js"
       }
     },
-    "./app.plugin.js": "./app.plugin.js"
+    "./app.plugin.js": "./app.plugin.js",
+    "./ringing": {
+      "import": {
+        "types": "./dist/ringing.d.mts",
+        "default": "./dist/ringing.mjs"
+      },
+      "require": {
+        "types": "./dist/ringing.d.ts",
+        "default": "./dist/ringing.js"
+      }
+    }
   },
   "//typesVersions": "Lets subpath types resolve under TypeScript's classic \"node\" moduleResolution, which Expo's tsconfig.base still sets. Without this, consumers must override moduleResolution to see /callkit, /audio and /polyfills types.",
   "typesVersions": {
@@ -61,6 +71,9 @@
       ],
       "polyfills": [
         "./dist/polyfills.d.ts"
+      ],
+      "ringing": [
+        "./dist/ringing.d.ts"
       ]
     }
   },

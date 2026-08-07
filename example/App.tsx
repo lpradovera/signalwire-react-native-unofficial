@@ -4,11 +4,11 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { SafeAreaView, StyleSheet } from 'react-native';
 
 import { IncomingCallSheet } from './src/components/IncomingCallSheet';
-import { NativeRingingSheet } from './src/components/NativeRingingSheet';
 import { CallScreen } from './src/screens/CallScreen';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { useBridgeAnswer } from './src/useBridgeAnswer';
+import { SUBSCRIBER_REFERENCE } from './src/subscriber';
 import { useDeviceRegistration } from './src/useDeviceRegistration';
 import { useServerToken } from './src/useServerToken';
 
@@ -18,7 +18,7 @@ function Shell(): React.JSX.Element {
   const { isConnected } = useSignalWire();
   const [activeCall, setActiveCall] = useState<Call | null>(null);
   // Must match the subscriber reference the token was minted for.
-  useDeviceRegistration(process.env.EXPO_PUBLIC_SW_SUBSCRIBER_REF ?? 'rn-example');
+  useDeviceRegistration(SUBSCRIBER_REFERENCE);
   // Answering a parked-caller push means dialling, not answering — see the hook.
   useBridgeAnswer(setActiveCall);
 
@@ -42,7 +42,6 @@ function Shell(): React.JSX.Element {
     <>
       <HomeScreen onCallStarted={setActiveCall} />
       <IncomingCallSheet onAnswered={setActiveCall} />
-      <NativeRingingSheet />
     </>
   );
 }

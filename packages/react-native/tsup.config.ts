@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     callkit: 'src/callkit.ts',
+    ringing: 'src/ringing.ts',
     audio: 'src/audio.ts',
     polyfills: 'src/polyfills.ts',
     'plugin/withSignalWire': 'src/plugin/withSignalWire.ts'

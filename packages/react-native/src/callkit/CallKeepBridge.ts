@@ -108,9 +108,14 @@ export class CallKeepBridge {
     // added later receives nothing, and on a cold start that is every event
     // the call has had so far — the incoming-call display and the user's
     // answer both happen before React mounts.
-    RNCallKeep.addEventListener('didLoadWithEvents', (events) =>
-      this.handleLoadedEvents(events as LoadedEvent[])
-    );
+    // Guarded: callkeep is an optional peer, and this runs in the constructor
+    // — before setup() has had a chance to assert it is installed. An app that
+    // only wants the SDK, with no native call UI, must not crash on import.
+    if (typeof RNCallKeep?.addEventListener === 'function') {
+      RNCallKeep.addEventListener('didLoadWithEvents', (events) =>
+        this.handleLoadedEvents(events as LoadedEvent[])
+      );
+    }
   }
 
   /** Performs the native handshake. Call once, from the app entry file. */

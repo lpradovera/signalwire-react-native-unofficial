@@ -1,8 +1,23 @@
 import { useCallback, useRef, useSyncExternalStore } from 'react';
 
-import { getCallKit } from './CallKeepBridge';
-
+import type { CallKeepBridge } from './CallKeepBridge';
 import type { CallEntry } from './types';
+
+/**
+ * Where the bridge singleton lives; see `getCallKit`.
+ *
+ * Read off `globalThis` rather than imported, deliberately. Importing
+ * `CallKeepBridge` pulls in `react-native-callkeep`, which constructs a
+ * NativeEventEmitter at import time — so merely importing this hook would
+ * make an optional peer mandatory, and would crash any app that uses the UI
+ * kit without native call UI. If no bridge exists, nothing is ringing
+ * natively, which is exactly the answer to give.
+ */
+const CALLKIT_GLOBAL = '__signalwireRNCallKitBridge';
+
+function existingBridge(): CallKeepBridge | undefined {
+  return (globalThis as Record<string, unknown>)[CALLKIT_GLOBAL] as CallKeepBridge | undefined;
+}
 
 /** A call that is ringing natively but has no SDK call yet. */
 export interface RingingPush {
@@ -51,10 +66,13 @@ export function ringingFrom(entries: CallEntry[]): RingingPush[] {
  * (a bridge dial, or the SDK's own inbound call) picks it up from there.
  */
 export function useRingingPushes(): RingingPushes {
-  const registry = getCallKit().registry;
+  const registry = existingBridge()?.registry;
 
   const subscribe = useCallback(
     (onChange: () => void) => {
+      if (!registry) {
+        return () => undefined;
+      }
       const subscription = registry.entries$.subscribe(onChange);
       return () => subscription.unsubscribe();
     },
@@ -75,7 +93,7 @@ export function useRingingPushes(): RingingPushes {
   });
 
   const getSnapshot = useCallback(() => {
-    const entries = registry.entries;
+    const entries = registry?.entries ?? [];
     if (cache.current.entries !== entries) {
       cache.current = { entries, result: ringingFrom(entries) };
     }
@@ -85,11 +103,11 @@ export function useRingingPushes(): RingingPushes {
   const ringing = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   const answer = useCallback(
-    (uuid: string) => registry.applyIntent(uuid, 'answer'),
+    (uuid: string) => registry?.applyIntent(uuid, 'answer'),
     [registry]
   );
   const reject = useCallback(
-    (uuid: string) => registry.applyIntent(uuid, 'reject'),
+    (uuid: string) => registry?.applyIntent(uuid, 'reject'),
     [registry]
   );
 

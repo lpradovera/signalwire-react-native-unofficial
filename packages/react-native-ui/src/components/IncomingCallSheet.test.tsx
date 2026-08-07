@@ -6,6 +6,13 @@ import { SignalWireContext } from '@signalwire/react';
 
 import { IncomingCallSheet } from './IncomingCallSheet';
 
+const mockRingingPushes: Array<{ uuid: string; from?: string; fromName?: string }> = [];
+const mockAnswerPush = jest.fn();
+const mockRejectPush = jest.fn();
+jest.mock('@signalwire/react-native/ringing', () => ({
+  useRingingPushes: () => ({ ringing: mockRingingPushes, answer: mockAnswerPush, reject: mockRejectPush })
+}));
+
 const incomingCalls$ = new BehaviorSubject<unknown[]>([]);
 
 async function renderSheet(props: Record<string, unknown> = {}): Promise<void> {
@@ -75,5 +82,38 @@ describe('IncomingCallSheet', () => {
     await Promise.resolve();
 
     expect(call.reject).toHaveBeenCalled();
+  });
+
+  it('draws a call that is ringing natively with no SDK call yet', async () => {
+    // Android registers callkeep self-managed and the OS draws nothing, so
+    // without this a pushed call is invisible until it times out.
+    mockRingingPushes.length = 0;
+    mockRingingPushes.push({ uuid: 'u1', from: '+15551234567', fromName: 'Ada' });
+
+    await renderSheet({ includeNativePushes: true });
+
+    expect(screen.getByText('Ada')).toBeTruthy();
+  });
+
+  it('answers a native push through the registry, not the SDK', async () => {
+    mockRingingPushes.length = 0;
+    mockRingingPushes.push({ uuid: 'u2', fromName: 'Grace' });
+    mockAnswerPush.mockClear();
+
+    await renderSheet({ includeNativePushes: true });
+    fireEvent.press(screen.getByTestId('sw-answer'));
+
+    expect(mockAnswerPush).toHaveBeenCalledWith('u2');
+  });
+
+  it('ignores native pushes when not asked for them', async () => {
+    // iOS default: CallKit already drew the call, and a second sheet behind
+    // its screen is confusing.
+    mockRingingPushes.length = 0;
+    mockRingingPushes.push({ uuid: 'u3', fromName: 'Ada' });
+
+    await renderSheet({ includeNativePushes: false });
+
+    expect(screen.queryByText('Ada')).toBeNull();
   });
 });
