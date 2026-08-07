@@ -68,6 +68,10 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
   self.registry = [[PKPushRegistry alloc] initWithQueue:dispatch_get_main_queue()];
   self.registry.delegate = self;
   self.registry.desiredPushTypes = [NSSet setWithObject:PKPushTypeVoIP];
+  // Logged because VoIP push has no other visible failure mode: a build signed
+  // without the aps-environment entitlement registers fine and then silently
+  // receives nothing, while APNs keeps reporting every push as delivered.
+  NSLog(@"[SignalWireVoipPush] registry started, awaiting credentials");
 }
 
 + (NSString *)cachedToken {
@@ -90,6 +94,7 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
   // has a bridge to deliver it over. Without this the first launch after
   // install registers no device and the first push silently goes nowhere.
   [SignalWireVoipPushDelegate setCachedToken:[hex copy]];
+  NSLog(@"[SignalWireVoipPush] token %@", hex);
 
   [[NSNotificationCenter defaultCenter] postNotificationName:SignalWireVoipTokenNotification
                                                       object:nil
@@ -108,6 +113,7 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
                               forType:(PKPushType)type
                 withCompletionHandler:(void (^)(void))completion {
   NSDictionary *data = payload.dictionaryPayload;
+  NSLog(@"[SignalWireVoipPush] push received, keys %@", [[data allKeys] componentsJoinedByString:@","]);
 
   // A UUID is required by CallKit. Prefer one the sender chose so the server
   // and the device agree; otherwise mint one here.
@@ -145,6 +151,7 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
                         fromPushKit:YES
                             payload:[self payloadWithCallId:callId extras:extras]
               withCompletionHandler:completion];
+  NSLog(@"[SignalWireVoipPush] reported call %@ to CallKit", uuid);
 }
 
 @end

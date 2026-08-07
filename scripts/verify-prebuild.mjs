@@ -21,6 +21,7 @@ const example = join(root, 'example');
 const IOS_PLIST = 'ios/SignalWireRNExample/Info.plist';
 const IOS_VOIP_SOURCE = 'ios/SignalWireRNExample/SignalWireVoipPush.m';
 const IOS_PBXPROJ = 'ios/SignalWireRNExample.xcodeproj/project.pbxproj';
+const IOS_ENTITLEMENTS = 'ios/SignalWireRNExample/SignalWireRNExample.entitlements';
 const ANDROID_MANIFEST = 'android/app/src/main/AndroidManifest.xml';
 
 const EXPECTED_ANDROID_PERMISSIONS = [
@@ -85,6 +86,12 @@ check(IOS_VOIP_SOURCE, readFileSync(join(example, IOS_VOIP_SOURCE), 'utf8'), [
 ]);
 check(IOS_PBXPROJ, readFileSync(join(example, IOS_PBXPROJ), 'utf8'), [
   'SignalWireVoipPush.m in Sources'
+]);
+
+// Without this, iOS issues no PushKit token and the failure is silent from the
+// server: APNs keeps accepting pushes and reporting them delivered.
+check(IOS_ENTITLEMENTS, readFileSync(join(example, IOS_ENTITLEMENTS), 'utf8'), [
+  'aps-environment'
 ]);
 
 // Injecting twice would make Xcode compile the translation unit twice and fail

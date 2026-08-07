@@ -20,7 +20,15 @@ jest.mock('@expo/config-plugins', () => ({
   // config through untouched here. `verify:prebuild` asserts their real
   // behaviour against actual generated output.
   withDangerousMod: (config: Record<string, unknown>) => config,
-  withXcodeProject: (config: Record<string, unknown>) => config
+  withXcodeProject: (config: Record<string, unknown>) => config,
+  withEntitlementsPlist: (
+    config: Record<string, unknown>,
+    action: (c: { modResults: Record<string, unknown> }) => { modResults: Record<string, unknown> }
+  ) => {
+    const ios = (config.ios ?? {}) as { entitlements?: Record<string, unknown> };
+    const result = action({ modResults: ios.entitlements ?? {} });
+    return { ...config, ios: { ...ios, entitlements: result.modResults } };
+  }
 }));
 
 interface TestConfig {
@@ -104,5 +112,24 @@ describe('withSignalWire', () => {
     config.android = { permissions: ['android.permission.VIBRATE'] };
     const result = withSignalWire(config as never, undefined) as unknown as TestConfig;
     expect(result.android?.permissions).toContain('android.permission.VIBRATE');
+  });
+
+  it('adds the push entitlement, which prebuild would otherwise wipe', () => {
+    // A capability added by hand in Xcode disappears on the next prebuild.
+    // Without aps-environment iOS issues no PushKit token, and the failure is
+    // silent server-side: APNs keeps reporting pushes delivered.
+    const result = withSignalWire({ name: 'demo', slug: 'demo' } as never, {
+      enableVoipPush: true
+    }) as unknown as { ios?: { entitlements?: Record<string, unknown> } };
+
+    expect(result.ios?.entitlements?.['aps-environment']).toBe('development');
+  });
+
+  it('omits the push entitlement when VoIP push is off', () => {
+    const result = withSignalWire({ name: 'demo', slug: 'demo' } as never, {
+      enableVoipPush: false
+    }) as unknown as { ios?: { entitlements?: Record<string, unknown> } };
+
+    expect(result.ios?.entitlements?.['aps-environment']).toBeUndefined();
   });
 });
