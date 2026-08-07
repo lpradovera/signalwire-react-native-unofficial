@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { SafeAreaView, StyleSheet } from 'react-native';
 
 import { IncomingCallSheet } from './src/components/IncomingCallSheet';
+import { NativeRingingSheet } from './src/components/NativeRingingSheet';
 import { CallScreen } from './src/screens/CallScreen';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
@@ -41,6 +42,7 @@ function Shell(): React.JSX.Element {
     <>
       <HomeScreen onCallStarted={setActiveCall} />
       <IncomingCallSheet onAnswered={setActiveCall} />
+      <NativeRingingSheet />
     </>
   );
 }

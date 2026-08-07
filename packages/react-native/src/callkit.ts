@@ -30,4 +30,6 @@ export type {
 export { getVoipToken, onVoipTokenChange, watchVoipToken } from './push/voipToken';
 export { getFcmToken, watchFcmToken } from './push/fcmToken';
 export { registerAndroidCallPush, decodePushData } from './push/androidCallPush';
+export { useRingingPushes } from './callkit/useRingingPushes';
+export type { RingingPush, RingingPushes } from './callkit/useRingingPushes';
 export { watchPushToken } from './push/pushToken';
