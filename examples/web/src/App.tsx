@@ -8,7 +8,7 @@ import type { Call, CredentialProvider } from '@signalwire/js';
 function Dialer(): React.JSX.Element {
   const { isConnected, user, dial, error } = useSignalWire();
   const [dialError, setDialError] = useState<string | null>(null);
-  const [destination, setDestination] = useState('/private/rn-example');
+  const [destination, setDestination] = useState('/public/rn-example-park');
   const [call, setCall] = useState<Call | null>(null);
 
   if (call) {

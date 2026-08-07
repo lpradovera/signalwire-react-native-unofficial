@@ -66,8 +66,18 @@ describe('POST /swml/park', () => {
 
     const verbs = swml.sections.main.map((v: Record<string, unknown>) => Object.keys(v)[0]);
     assert.deepEqual(verbs, ['answer', 'play', 'hangup']);
-    // A declined or unanswered call must not hold the caller indefinitely.
-    assert.ok(swml.sections.main[1].play.loops > 0);
+
+    const play = swml.sections.main[1].play;
+    // `play` has no loop parameter. Passing one made the verb fail and drop
+    // through to the hangup, disconnecting the caller the instant they were
+    // answered. Repetition is repeated `urls` entries.
+    assert.equal(play.loops, undefined, 'play must not carry an invalid loops field');
+    assert.ok(Array.isArray(play.urls), 'repetition is expressed with a urls array');
+    assert.ok(play.urls.length > 1, 'the caller should hear more than one ring');
+    assert.match(play.urls[0], /^ring:[\d.]+:[a-z]{2}$/);
+
+    // And a bounded window: nobody may be held forever.
+    assert.deepEqual(Object.keys(swml.sections.main[2]), ['hangup']);
   });
 
   it('pushes a bridge token, never the call SID', async () => {

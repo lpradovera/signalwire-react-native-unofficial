@@ -91,7 +91,8 @@ const app = createApp({
     tokens: bridgeTokens,
     service,
     publicUrl: process.env.PUBLIC_URL,
-    routes: parseParkRoutes(process.env.PARK_ROUTES)
+    routes: parseParkRoutes(process.env.PARK_ROUTES),
+    ringback: process.env.PARK_RINGBACK_URL
   })
 });
 
