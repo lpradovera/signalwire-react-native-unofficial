@@ -21,6 +21,22 @@ jest.mock('@expo/config-plugins', () => ({
   // behaviour against actual generated output.
   withDangerousMod: (config: Record<string, unknown>) => config,
   withXcodeProject: (config: Record<string, unknown>) => config,
+  AndroidConfig: {
+    Manifest: {
+      getMainApplicationOrThrow: (manifest: { application?: unknown[] }) => {
+        manifest.application = manifest.application ?? [{}];
+        return manifest.application[0];
+      }
+    }
+  },
+  withAndroidManifest: (
+    config: Record<string, unknown>,
+    action: (c: { modResults: Record<string, unknown> }) => { modResults: Record<string, unknown> }
+  ) => {
+    const manifest = (config.__manifest as Record<string, unknown>) ?? { application: [{}] };
+    const result = action({ modResults: manifest });
+    return { ...config, __manifest: result.modResults };
+  },
   withEntitlementsPlist: (
     config: Record<string, unknown>,
     action: (c: { modResults: Record<string, unknown> }) => { modResults: Record<string, unknown> }
@@ -83,11 +99,20 @@ describe('withSignalWire', () => {
     );
   });
 
-  it('adds the ConnectionService permission only when CallKit is enabled', () => {
+  it('adds the call-management permissions only when CallKit is enabled', () => {
     expect(applyPlugin({ enableCallKit: false }).android?.permissions ?? []).not.toContain(
-      'android.permission.BIND_TELECOM_CONNECTION_SERVICE'
+      'android.permission.MANAGE_OWN_CALLS'
     );
     expect(applyPlugin({ enableCallKit: true }).android?.permissions ?? []).toContain(
+      'android.permission.MANAGE_OWN_CALLS'
+    );
+  });
+
+  it('never requests BIND_TELECOM_CONNECTION_SERVICE as a permission', () => {
+    // It is a signature permission held by Telecom; an app cannot be granted
+    // it and asking changes nothing. What Telecom actually checks is the
+    // `android:permission` guard on the service declaration — asserted above.
+    expect(applyPlugin({ enableCallKit: true }).android?.permissions ?? []).not.toContain(
       'android.permission.BIND_TELECOM_CONNECTION_SERVICE'
     );
   });
@@ -131,5 +156,32 @@ describe('withSignalWire', () => {
     }) as unknown as { ios?: { entitlements?: Record<string, unknown> } };
 
     expect(result.ios?.entitlements?.['aps-environment']).toBeUndefined();
+  });
+
+  it('declares callkeep\'s ConnectionService, which Telecom requires', () => {
+    // callkeep ships permissions only; without the service declaration Telecom
+    // throws SecurityException on registerPhoneAccount during setup and the
+    // app dies on every launch.
+    const result = withSignalWire({ name: 'demo', slug: 'demo' } as never, {
+      enableCallKit: true
+    }) as unknown as { __manifest?: { application?: Array<{ service?: Array<{ $: Record<string, string> }> }> } };
+
+    const service = result.__manifest?.application?.[0]?.service?.find(
+      (entry) => entry.$['android:name'] === 'io.wazo.callkeep.VoiceConnectionService'
+    );
+
+    expect(service).toBeDefined();
+    expect(service?.$['android:permission']).toBe(
+      'android.permission.BIND_TELECOM_CONNECTION_SERVICE'
+    );
+    expect(service?.$['android:exported']).toBe('true');
+  });
+
+  it('omits the ConnectionService when CallKit is off', () => {
+    const result = withSignalWire({ name: 'demo', slug: 'demo' } as never, {
+      enableCallKit: false
+    }) as unknown as { __manifest?: unknown };
+
+    expect(result.__manifest).toBeUndefined();
   });
 });

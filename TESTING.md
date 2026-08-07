@@ -195,8 +195,20 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb logcat -c && adb logcat | grep -iE "signalwire|ReactNative|AndroidRuntime"
 ```
 
-An emulator covers ConnectionService, permissions, and app boot. It gives you
-**no real audio or camera**, so checklist items 1, 2, 8, 9 still need hardware.
+An emulator covers more than the iOS simulator does. Alongside ConnectionService,
+permissions and app boot, it **does** do audio: the emulator passes the host
+microphone through as a virtual mic and plays call audio back, and self-managed
+ConnectionService works. So the audible checklist items can be exercised here,
+unlike on iOS where the simulator has no CallKit or PushKit worth trusting.
+
+(An earlier version of this file claimed "no real audio or camera". That was
+wrong, and it would send you to hardware for no reason.)
+
+What still wants a handset is the part an emulator cannot model faithfully:
+audio *routing* — earpiece versus speaker, audio focus against other apps,
+Bluetooth, and what happens on an incoming cellular call. Treat the emulator as
+sufficient for the control path and for "is there audio at all", and hardware as
+the judge of routing.
 
 ### 2e. Device clouds — what they can and cannot do
 
