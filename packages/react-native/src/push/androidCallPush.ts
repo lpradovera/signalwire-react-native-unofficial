@@ -1,8 +1,10 @@
-import * as firebaseMessaging from '@react-native-firebase/messaging';
 import { Platform } from 'react-native';
 
 import { logger } from '@signalwire/react';
 import { getCallKit } from '../callkit/CallKeepBridge';
+
+// Metro supplies `require` at runtime; this package's tsconfig has no Node types.
+declare const require: (moduleName: string) => unknown;
 
 /** The slice of Firebase messaging used here; see `fcmToken` for why. */
 interface MessagingModule {
@@ -18,8 +20,37 @@ interface RemoteMessage {
   data?: Record<string, string>;
 }
 
+/**
+ * Loads Firebase messaging, or returns undefined when it is unusable.
+ *
+ * Required lazily rather than imported at module scope. React Native Firebase
+ * evaluates its native binding when the module is *evaluated* and throws
+ * `Native module RNFBAppModule not found` on a build without Firebase — which
+ * an iOS prebuild now is, since the plugin became conditional. A static import
+ * ran that at entry-file load, so the throw escaped before the `Platform` guard
+ * in `registerAndroidCallPush` could return, and `registerRootComponent` on the
+ * following line never ran: the app died with `"main" has not been registered`.
+ *
+ * `peers.ts` explains why the other optional peers are imported statically —
+ * Metro resolves `require` at bundle time, so a try/catch cannot rescue a
+ * package that is genuinely absent. That still holds: the specifier here is a
+ * literal, so Metro bundles it exactly as before. Only the *evaluation* moves,
+ * which is what a module that throws on load requires.
+ */
 function messagingModule(): MessagingModule | undefined {
-  const mod = firebaseMessaging as unknown as Partial<MessagingModule> | undefined;
+  let loaded: unknown;
+  try {
+    loaded = require('@react-native-firebase/messaging');
+  } catch (error) {
+    logger.debug(`Firebase messaging failed to load; Android call push is off: ${String(error)}`);
+    return undefined;
+  }
+
+  // A CJS build exposes the members directly; an ESM interop layer nests them
+  // under `default`. Accept both rather than depending on which one Metro hands
+  // back for a given Firebase version.
+  const candidate = loaded as { default?: unknown } | undefined;
+  const mod = (candidate?.default ?? candidate) as Partial<MessagingModule> | undefined;
   if (typeof mod?.getMessaging !== 'function' || typeof mod.onMessage !== 'function') {
     return undefined;
   }

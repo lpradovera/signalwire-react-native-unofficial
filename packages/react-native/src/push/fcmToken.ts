@@ -1,7 +1,9 @@
-import * as firebaseMessaging from '@react-native-firebase/messaging';
 import { Platform } from 'react-native';
 
 import { logger } from '@signalwire/react';
+
+// Metro supplies `require` at runtime; this package's tsconfig has no Node types.
+declare const require: (moduleName: string) => unknown;
 
 /**
  * The slice of `@react-native-firebase/messaging` this package uses.
@@ -18,15 +20,27 @@ interface MessagingModule {
 }
 
 /**
- * Loads Firebase messaging, or returns undefined when it is absent.
+ * Loads Firebase messaging, or returns undefined when it is unusable.
  *
- * Imported statically, like the other optional native peers (see
- * `networkShim`), and guarded at use rather than at import: an app with no
- * Android push has no reason to pull in the Firebase SDK, and its absence has
- * to be a quiet no-op rather than a crash.
+ * Required lazily, not imported. Guarding at use is enough for a peer that is
+ * merely *absent*, but React Native Firebase throws `Native module
+ * RNFBAppModule not found` while the module is being evaluated on a build
+ * without Firebase — an iOS prebuild, since the plugin became conditional. A
+ * static import therefore crashed the app's entry file before any guard ran.
+ * See `androidCallPush.ts` for the full account; Metro still resolves the
+ * literal specifier at bundle time, so only the evaluation is deferred.
  */
 function messagingModule(): MessagingModule | undefined {
-  const mod = firebaseMessaging as unknown as Partial<MessagingModule> | undefined;
+  let loaded: unknown;
+  try {
+    loaded = require('@react-native-firebase/messaging');
+  } catch (error) {
+    logger.debug(`Firebase messaging failed to load; Android push is off: ${String(error)}`);
+    return undefined;
+  }
+
+  const candidate = loaded as { default?: unknown } | undefined;
+  const mod = (candidate?.default ?? candidate) as Partial<MessagingModule> | undefined;
   if (typeof mod?.getMessaging !== 'function' || typeof mod.getToken !== 'function') {
     logger.debug(
       'Firebase messaging not installed. Android push needs ' +
