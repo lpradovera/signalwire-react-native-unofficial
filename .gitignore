@@ -36,3 +36,6 @@ GoogleService-Info.plist
 *.swo
 *~
 *.p8
+
+# Dev environment logs from scripts/dev.sh
+.dev/

@@ -10,6 +10,51 @@ token. Record device, OS version, and result for each row.
 Items 5 to 7 are the highest risk: they exercise the push path, where the OS
 kills the app if the package misbehaves, and where unit tests can only simulate.
 
+## Bringing the environment up
+
+```bash
+scripts/dev.sh up       # start everything, then prove each link
+scripts/dev.sh status   # what is running
+scripts/dev.sh down     # stop everything, funnel first
+```
+
+Four services must be alive at once, and when any one is down the symptom on
+the device is identical every time — the call simply never arrives:
+
+| | | Down means |
+| --- | --- | --- |
+| support server | `:3000` | no tokens, no pushes, no parked callers |
+| Tailscale funnel | `:443` | SignalWire cannot fetch the park SWML, so a call dies before any push is sent |
+| Metro | `:8081` | the dev-client build shows "No development server found"; no JavaScript runs, so nothing can answer |
+| Vite web example | `:5173` | no second subscriber to call from |
+
+`up` verifies rather than reports: it checks the server from the public
+internet (the only view SignalWire has), asks Metro to actually *build* the
+bundle rather than merely answer on its port, and counts registered push
+devices. Each of those is a link that has silently broken here and cost a
+debugging session.
+
+**The iPad does not need a cable.** It reaches the Mac over the tailnet, which
+is why `example/.env` points at a `*.ts.net` hostname and why the script pins
+`REACT_NATIVE_PACKAGER_HOSTNAME` to the same name — a physical device is not on
+the Mac's loopback and may not share its WiFi. A cable is only for reinstalling
+the app or streaming the device console.
+
+**Turn the funnel off when you stop.** It publishes port 3000 to the public
+internet while `ALLOW_UNAUTHENTICATED_TOKENS=1` mints a subscriber token for
+anyone who asks. `scripts/dev.sh down` disables it first, before anything else.
+
+Two failure modes worth recognising rather than re-debugging:
+
+- **Two `tsx --watch` supervisors.** Starting the server twice leaves both
+  watching; every file save restarts both, they race for port 3000, and the
+  loser exiting mid-push cancels the in-flight APNs stream. That reads exactly
+  like a broken push (`The pending stream has been canceled`). `dev.sh` leaves
+  a running service alone and never starts a second.
+- **Docker holding `:8081`.** Docker Desktop binds Metro's port. Metro then
+  never binds, and the app keeps showing "No development server found" no
+  matter how many times you restart it.
+
 ## Core calling
 
 **1. Outbound audio call.**
