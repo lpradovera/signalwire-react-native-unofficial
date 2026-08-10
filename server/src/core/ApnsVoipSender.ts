@@ -56,6 +56,21 @@ export class ApnsVoipSender implements PushSender {
     const client = http2.connect(host);
     const body = JSON.stringify(payload);
 
+    // A session that never connects — APNs unreachable, IPv6 with no route,
+    // a captive network — emits `error` on the session, not on the request.
+    // Without a listener here Node rethrows it as an uncaught exception and
+    // takes the whole server down, which is how one flaky moment reaching
+    // Apple ended a device-test session. Capture it and let the request-level
+    // promise reject instead.
+    const sessionFailure = new Promise<never>((_resolve, reject) => {
+      client.on('error', reject);
+    });
+    // The race below is the only consumer, and it may already have settled by
+    // the time the session gives up. Mark the rejection handled so a late one
+    // is not an unhandled rejection — which is fatal in Node, i.e. the exact
+    // crash this whole block exists to prevent.
+    void sessionFailure.catch(() => {});
+
     try {
       const request = client.request({
         ':method': 'POST',
@@ -73,7 +88,7 @@ export class ApnsVoipSender implements PushSender {
       request.setTimeout(10_000, () => request.destroy(new Error('APNs request timed out')));
       request.end(body);
 
-      await new Promise<void>((resolve, reject) => {
+      const exchange = new Promise<void>((resolve, reject) => {
         let status = 0;
         let data = '';
 
@@ -98,6 +113,8 @@ export class ApnsVoipSender implements PushSender {
         });
         request.on('error', reject);
       });
+
+      await Promise.race([exchange, sessionFailure]);
     } finally {
       client.close();
     }

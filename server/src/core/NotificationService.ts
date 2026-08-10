@@ -70,11 +70,20 @@ export class NotificationService {
       results
     };
 
+    // Carry the failure reasons, not just the counts. `delivered: 0` on its own
+    // says a push did not arrive but not whether Apple rejected the token, the
+    // JWT was wrong, or the connection never opened — three very different
+    // fixes, and the difference is exactly what a device test needs to know.
+    const failures = results
+      .filter((result) => result.status === 'failed')
+      .map((result) => `${result.platform}: ${result.error ?? 'unknown'}`);
+
     this.log('Notified', {
       correlationId: outcome.correlationId,
       attempted: outcome.attempted,
       delivered: outcome.delivered,
-      pruned: outcome.pruned
+      pruned: outcome.pruned,
+      ...(failures.length > 0 ? { failures } : {})
     });
 
     return outcome;
