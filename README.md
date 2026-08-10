@@ -50,6 +50,46 @@ testing the dev client, not your app.
 The hooks are identical on both. React Native apps install one package and get
 everything; browser apps install the core and skip the native weight entirely.
 
+```mermaid
+graph TD
+    js["<b>@signalwire/js</b><br/>signalling · WebRTC · calls"]
+    core["<b>@signalwire/react</b><br/>provider + hooks<br/><i>no platform code</i>"]
+    wc["<b>@signalwire/web-components</b><br/>Lit elements"]
+
+    subgraph browser [" Browser "]
+        rui["<b>@signalwire/react-ui</b><br/>React wrappers for<br/>the Lit components"]
+    end
+
+    subgraph native [" React Native "]
+        rn["<b>@signalwire/react-native</b><br/>CallKit · push tokens · polyfills<br/>audio routing · video view · Expo plugin"]
+        rnui["<b>@signalwire/react-native-ui</b><br/>call controls · dialpad<br/>incoming-call sheet"]
+    end
+
+    js --> core
+    js --> rui
+    wc --> rui
+    core --> rn
+    core --> rnui
+    rn --> rnui
+
+    classDef published fill:#1f6feb18,stroke:#1f6feb,stroke-width:2px
+    classDef peer fill:#8b949e18,stroke:#8b949e,stroke-dasharray:4 3
+    class core,rui,rn,rnui published
+    class js,wc peer
+    style browser fill:none,stroke:#8b949e,stroke-dasharray:3 4
+    style native fill:none,stroke:#8b949e,stroke-dasharray:3 4
+```
+
+Arrows point from a package to what is built on top of it. Solid boxes are
+published from this repository; dashed ones are peer dependencies you install
+alongside.
+
+Two things the diagram is meant to make obvious. `@signalwire/react` holds
+every hook and knows nothing about a platform — that is what lets the same
+`useCall` drive a browser tab and an iPad. And `@signalwire/react-ui` does
+**not** sit on `@signalwire/react`: it wraps the SDK's Lit components directly,
+so the two UI packages are siblings by name only and share no code.
+
 ### Entry points
 
 | Import | For |
@@ -78,6 +118,75 @@ forced to install native call UI.
 | [`server/`](server) | Support server — device-token registry and APNs VoIP / FCM sender |
 | [`docs/`](docs) | Native setup, push setup, device-test checklist |
 | [`TESTING.md`](TESTING.md) | How to verify all of it, from a cold start |
+
+## How a call flows
+
+An **outbound** call is short, and involves no server at all once the app has a
+token: `dial()` goes to SignalWire over the already-open WebSocket, and media
+flows. Everything below is the **inbound** path, which is where the parts
+divide up — and where every hard bug in this repository has been.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Caller<br/>examples/web or PSTN
+    participant SW as SignalWire
+    participant S as Support server<br/>server/
+    participant P as APNs / FCM
+    participant N as Device, native side<br/>react-native/callkit
+    participant J as App JavaScript<br/>example/ + hooks
+
+    rect rgba(139,148,158,0.10)
+    Note over J,S: At launch, long before any call
+    J->>S: POST /token → subscriber token
+    J->>SW: open + authenticate the WebSocket
+    J->>S: POST /devices → PushKit / FCM token
+    end
+
+    C->>SW: dial /public/rn-example-park
+    SW->>S: POST /swml/park
+    S->>S: mint a single-use bridge token
+    S->>P: notify — correlationId is the token, never the call SID
+    S-->>SW: SWML: answer, then loop ringback
+    Note over C,SW: The caller is parked and hears ringback.<br/>This removes the race: a device woken by push<br/>needs seconds to launch and authenticate.
+    P->>N: VoIP push (iOS) / data message (Android)
+    N->>N: reportIncomingPush → native call UI rings
+    Note over N: iOS: PushKit wakes the app natively, before JS exists.<br/>Android: a headless task runs registerAndroidCallPush.
+    N->>J: answerRequested$ — the user tapped Answer
+    J->>J: wait for the SDK connection<br/>(a cold start may still be connecting)
+    J->>SW: dial(bridge address ?bridgeToken=…)
+    SW->>S: POST /swml/bridge
+    S->>S: redeem the token → the parked call SID
+    S-->>SW: SWML: connect to the parked leg
+    SW-->>C: legs joined — audio flows
+```
+
+Who owns what:
+
+| Role | Lives in | Notes |
+| --- | --- | --- |
+| Placing and receiving calls, media | `@signalwire/js` via `@signalwire/react` | Platform-agnostic; the hooks are the whole API |
+| Native call UI, push tokens, ringing | `@signalwire/react-native/callkit` | CallKit on iOS, ConnectionService on Android |
+| Waking a killed app | The OS, via PushKit / FCM | On iOS this happens **before any JavaScript exists** |
+| Deciding who to ring, sending the push | `server/` — a scaffold, reimplement it | SignalWire has no push infrastructure; this is the missing middle |
+| Parking the caller and bridging | `server/` SWML routes | `/swml/park` and `/swml/bridge` |
+| Answering into a bridge dial | The **app**, not the package — `example/src/useBridgeAnswer.ts` | Deliberately app-level: the bridge address and token policy are yours |
+
+Three consequences worth reading off the diagram:
+
+- **The device dials out to answer.** It never receives an invite. The caller
+  is parked and the woken device joins them, which is why an inbound call needs
+  a publicly reachable server and an outbound one does not.
+- **The push carries a token, not the call SID.** A payload containing the SID
+  would be a capability anyone replaying it could spend. The server resolves
+  the single-use token instead — which is also why answering twice fails
+  cleanly.
+- **Three processes must agree, and each fails silently.** The push can land
+  while the app has no bundler, the funnel can be down so SignalWire never
+  reaches `/swml/park`, or the SDK can still be connecting when the user hits
+  Answer. All three look identical on the device: the call never arrives. See
+  [`docs/device-testing.md`](docs/device-testing.md) for bringing the whole
+  chain up and proving each link.
 
 ## Install
 
