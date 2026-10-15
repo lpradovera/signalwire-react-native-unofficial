@@ -13,8 +13,8 @@ import type { CallObserver } from '@signalwire/react';
 export function createCallKitObserver(): CallObserver {
   return {
     bindClient: (client) => getCallKit().bindClient(client),
-    onOutgoingCall: (call, destination) =>
-      void getCallKit().trackCall(call, destination, destination),
+    onOutgoingCall: (call, destination, options) =>
+      void getCallKit().trackCall(call, destination, destination, { video: Boolean(options?.video) }),
     onIncomingAnswer: (call) => getCallKit().answerIncomingFromApp(call),
     onIncomingReject: (call) => getCallKit().rejectIncomingFromApp(call)
   };

@@ -34,9 +34,10 @@ testing the dev client, not your app.
 - **Android has no lock-screen call UI.** `backToForeground()` only works on an
   unlocked device; a locked phone needs a full-screen-intent notification,
   which this package does not yet implement.
-- **A voice call forces speakerphone.** The audio session mode is chosen from
-  the app's `supportsVideo` capability rather than the call's own media, so a
-  voice call in a video-capable app starts in video mode.
+- **An inbound call in a video-capable app starts on the loudspeaker.** An
+  outbound call's audio mode follows its own media, but an inbound call's media
+  is not known when CallKit answers it, so its mode still comes from the app's
+  `supportsVideo` capability.
 
 ## Packages
 
