@@ -1,8 +1,12 @@
-import { Platform } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
 
 import { logger } from '@signalwire/react';
 import { AudioRouteController } from './AudioRouteController';
+import { resetNativeAudioRoutesForTesting } from './nativeAudioRoutes';
+
+// jest/setup.ts installs it: this package's iOS route module.
+const SWAudioRoutes = NativeModules.SWAudioRoutes as { chooseAudioRoute: jest.Mock };
 
 describe('AudioRouteController', () => {
   let controller: AudioRouteController;
@@ -34,6 +38,7 @@ describe('AudioRouteController', () => {
 
   it('start leaves a connected Bluetooth device in charge (iOS)', () => {
     controller.start('audio');
+    expect(SWAudioRoutes.chooseAudioRoute).not.toHaveBeenCalled();
     expect(InCallManager.chooseAudioRoute).not.toHaveBeenCalled();
   });
 
@@ -43,11 +48,13 @@ describe('AudioRouteController', () => {
     controller.setRoute('earpiece');
     await Promise.resolve();
     expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(false);
-    expect(InCallManager.chooseAudioRoute).toHaveBeenCalledWith('EARPIECE');
+    expect(SWAudioRoutes.chooseAudioRoute).toHaveBeenCalledWith('EARPIECE');
+    // incall-manager has no iOS routes: it must not be asked.
+    expect(InCallManager.chooseAudioRoute).not.toHaveBeenCalled();
   });
 
   it('a route the platform refuses is logged, not an unhandled rejection', async () => {
-    (InCallManager.chooseAudioRoute as jest.Mock).mockRejectedValueOnce(new Error('No BLUETOOTH audio route'));
+    SWAudioRoutes.chooseAudioRoute.mockRejectedValueOnce(new Error('No BLUETOOTH audio route is available'));
     const warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
     controller.start('audio');
     controller.setRoute('bluetooth');
@@ -64,7 +71,24 @@ describe('AudioRouteController', () => {
     controller.setRoute('earpiece');
     expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(false);
     expect(InCallManager.chooseAudioRoute).not.toHaveBeenCalled();
+    expect(SWAudioRoutes.chooseAudioRoute).not.toHaveBeenCalled();
     os.restore();
+  });
+
+  it('without the native module (an app not rebuilt) iOS routes warn once and do nothing', async () => {
+    const linked = NativeModules.SWAudioRoutes;
+    delete NativeModules.SWAudioRoutes;
+    resetNativeAudioRoutesForTesting();
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    controller.start('audio');
+    controller.setRoute('bluetooth');
+    controller.setRoute('earpiece');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('Rebuild the app');
+    expect(controller.route).toBe('earpiece');
+    warn.mockRestore();
+    NativeModules.SWAudioRoutes = linked;
   });
 
   it('setRoute("speaker") forces speakerphone on', () => {
@@ -81,11 +105,20 @@ describe('AudioRouteController', () => {
     expect(controller.route).toBe('earpiece');
   });
 
-  it('setRoute("bluetooth") asks InCallManager to choose the Bluetooth route', () => {
+  it('setRoute("bluetooth") asks the native module for the Bluetooth route (iOS)', () => {
+    controller.start('audio');
+    controller.setRoute('bluetooth');
+    expect(SWAudioRoutes.chooseAudioRoute).toHaveBeenCalledWith('BLUETOOTH');
+    expect(controller.route).toBe('bluetooth');
+  });
+
+  it('setRoute("bluetooth") asks InCallManager for the Bluetooth route (Android)', () => {
+    const os = jest.replaceProperty(Platform, 'OS', 'android');
     controller.start('audio');
     controller.setRoute('bluetooth');
     expect(InCallManager.chooseAudioRoute).toHaveBeenCalledWith('BLUETOOTH');
     expect(controller.route).toBe('bluetooth');
+    os.restore();
   });
 
   it('emits every route change on route$', () => {
