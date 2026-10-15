@@ -2,6 +2,15 @@ import { getCallKit } from './CallKeepBridge';
 
 import type { CallObserver } from '@signalwire/react';
 
+export interface CallKitObserverOptions {
+  /**
+   * The name the native call UI and Recents show for an outbound call. Default:
+   * the destination itself, which for a Fabric address reads like
+   * `/private/support-agent`.
+   */
+  displayName?: (destination: string) => string;
+}
+
 /**
  * A {@link CallObserver} backed by CallKit / ConnectionService.
  *
@@ -10,11 +19,11 @@ import type { CallObserver } from '@signalwire/react';
  * bridge, callkeep itself — stays on this side of the boundary and never
  * reaches a browser bundle.
  */
-export function createCallKitObserver(): CallObserver {
+export function createCallKitObserver(options: CallKitObserverOptions = {}): CallObserver {
   return {
     bindClient: (client) => getCallKit().bindClient(client),
     onOutgoingCall: (call, destination) =>
-      void getCallKit().trackCall(call, destination, destination),
+      void getCallKit().trackCall(call, destination, options.displayName?.(destination) ?? destination),
     onIncomingAnswer: (call) => getCallKit().answerIncomingFromApp(call),
     onIncomingReject: (call) => getCallKit().rejectIncomingFromApp(call)
   };
