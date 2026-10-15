@@ -256,6 +256,13 @@ open SignalWireRNExample.xcworkspace
 **Xcode 26 or newer is required** — any iOS 26 device needs it, and Xcode 16.x
 cannot build SDK 54 anyway.
 
+**Xcode 27 / iOS 27** need two things the example applies itself, as config
+plugins in `example/plugins/`: `withPodDeploymentTarget` raises pods that still
+declare iOS 9 (Xcode 27 refuses anything below 15.0), and `withSceneLifecycle`
+adopts the UIScene lifecycle, without which iOS 27 ends the app at launch in
+`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`. An app of your
+own built with the iOS 27 SDK needs the same.
+
 ### The application identifier is not in the repo
 
 Bundle identifiers must be globally unique across Apple's ecosystem and
