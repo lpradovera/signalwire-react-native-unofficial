@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### CallKit voice and video
+
+- A call's CallKit type and audio session mode follow its own media
+  (`call.mediaDirections`, the SDK's answer once preferences, `?channel=`,
+  the dial options and a disabled camera are applied), for outbound and
+  inbound calls. A voice call starts on the receiver, or on a connected
+  headset or car, instead of the loudspeaker. This corrects the 0.1.0 known
+  gap "A voice call forces speakerphone".
+- A call is reported to CallKit as video only when the provider was set up
+  with `supportsVideo: true`.
+- `CallKeepBridge.trackCall(call, handle, displayName)` keeps its signature;
+  it reads the media from the call, falling back to `supportsVideo` for a call
+  without `mediaDirections`.
+- New `AudioRouteController.updateMedia(media)`. A push answered before its
+  SDK call exists starts in the app's mode; when its call arrives voice only,
+  audio moves off the speaker unless the user already picked a route.
+
 ## 0.1.0
 
 First release. React Native support for `@signalwire/js` v4 — platform

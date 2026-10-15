@@ -19,6 +19,10 @@ export class AudioRouteController {
   private readonly _route$ = new BehaviorSubject<AudioRoute>('earpiece');
   private started = false;
   private destroyed = false;
+  /** The media the running session was started for. */
+  private media: 'audio' | 'video' = 'audio';
+  /** Whether the user picked a route in this call, as opposed to the call's default. */
+  private userRouted = false;
 
   constructor() {
     assertPeerModule(
@@ -53,7 +57,26 @@ export class AudioRouteController {
     } catch (error) {
       logger.warn('Failed to start the audio session:', error);
     }
+    this.media = media;
+    this.userRouted = false;
     this.setRoute(media === 'video' ? 'speaker' : 'earpiece', true);
+  }
+
+  /**
+   * Tells a running session its call's media, when it was started before that
+   * was known: a pushed call answered before its SDK call existed starts in
+   * the app's mode, and its call (or the call placed to join it) can turn out
+   * to be voice only. Moves to that media's default route (video on the
+   * speaker, voice off it), unless the user already picked a route.
+   */
+  updateMedia(media: 'audio' | 'video'): void {
+    if (!this.started || media === this.media) {
+      return;
+    }
+    this.media = media;
+    if (!this.userRouted) {
+      this.setRoute(media === 'video' ? 'speaker' : 'earpiece', true);
+    }
   }
 
   /** Ends the native audio session and resets to the earpiece. */
@@ -81,6 +104,9 @@ export class AudioRouteController {
   setRoute(route: AudioRoute, force = false): void {
     if (!force && route === this._route$.value) {
       return;
+    }
+    if (!force) {
+      this.userRouted = true;
     }
     this.applyRoute(route);
     this._route$.next(route);
