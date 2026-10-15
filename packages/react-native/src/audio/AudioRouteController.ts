@@ -4,8 +4,10 @@ import { BehaviorSubject } from 'rxjs';
 
 import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
+import { audioDevices$, hasIosAudioRoutes, parseAudioDeviceStatus } from './nativeAudioRoutes';
 
-import type { Observable } from 'rxjs';
+import type { Observable, Subscription } from 'rxjs';
+import type { AudioDeviceName, AudioDeviceStatus } from './nativeAudioRoutes';
 
 export type AudioRoute = 'earpiece' | 'speaker' | 'bluetooth';
 
@@ -15,14 +17,65 @@ interface RouteState {
   readonly chosen: boolean;
 }
 
+/** Off the speaker, with nothing chosen: iOS uses a connected headset or car, else the receiver. */
 const DEFAULT_ROUTE: RouteState = { route: 'earpiece', chosen: false };
 
+/** The route a device stands for. A wired headset reads as `'earpiece'`: off the speaker. */
+const ROUTE_FOR_DEVICE: Record<AudioDeviceName, AudioRoute> = {
+  EARPIECE: 'earpiece',
+  SPEAKER_PHONE: 'speaker',
+  WIRED_HEADSET: 'earpiece',
+  BLUETOOTH: 'bluetooth'
+};
+
+/** incall-manager's name for each route the user can choose. */
+const DEVICE_FOR_ROUTE: Record<AudioRoute, AudioDeviceName> = {
+  earpiece: 'EARPIECE',
+  speaker: 'SPEAKER_PHONE',
+  bluetooth: 'BLUETOOTH'
+};
+
+/** One warning per process, not per bundle copy (see AUDIO_GLOBAL). */
+const WARNED_GLOBAL = '__signalwireRNAudioRoutesWarned';
+
+function warnNoIosRoutes(route: AudioRoute): void {
+  const holder = globalThis as { [WARNED_GLOBAL]?: boolean };
+  if (holder[WARNED_GLOBAL]) {
+    return;
+  }
+  holder[WARNED_GLOBAL] = true;
+  logger.warn(
+    `Audio route "${route}" needs react-native-incall-manager with iOS audio routes; ` +
+      'the installed one offers only speaker on/off on iOS. See "Audio routes on iOS" in the README.'
+  );
+}
+
+/** The route state a refused choice goes back to. */
+interface Snapshot {
+  readonly route: AudioRoute;
+  readonly chosen: boolean;
+  readonly beforeSpeaker: RouteState;
+}
+
 /**
- * Owns the native audio session and output routing.
+ * Owns the call's audio session and output routing, through
+ * react-native-incall-manager, which owns the native session on both
+ * platforms. This class never writes the session itself.
  *
- * `'bluetooth'` is a *request*: the OS makes the final routing decision and
- * InCallManager cannot reliably report the active device, so `route` reflects
- * what was asked for, not necessarily what the OS settled on.
+ * On iOS, what it can do depends on incall-manager:
+ *
+ * - **With iOS audio routes** (the upstream change, or the patch in
+ *   `docs/patches/`): every route can be chosen (`chooseAudioRoute`), and
+ *   `route` mirrors what iOS reports, including a choice in the system route
+ *   picker or CallKit, and a headset or car connecting or dropping.
+ *   incall-manager keeps its own speaker setting in step with those changes,
+ *   so nothing is written back from here.
+ * - **Without** (released incall-manager through 4.3.0): speaker on and off
+ *   only. `'bluetooth'` logs a warning once and is ignored, `'earpiece'` turns
+ *   the speaker off (iOS still prefers a connected headset or car), and
+ *   `route` is what was asked for.
+ *
+ * Android uses incall-manager's routes as before.
  */
 export class AudioRouteController {
   private readonly _route$ = new BehaviorSubject<AudioRoute>('earpiece');
@@ -32,6 +85,15 @@ export class AudioRouteController {
   private beforeSpeaker: RouteState = DEFAULT_ROUTE;
   private started = false;
   private destroyed = false;
+  /** The device subscription while a call runs (iOS routes only). */
+  private devices: Subscription | null = null;
+  /** The device iOS last reported, and what is connected. */
+  private device: AudioDeviceName | null = null;
+  private available: readonly AudioDeviceName[] = [];
+  /** Choices sent to incall-manager and not yet answered. */
+  private choosing = 0;
+  /** The latest report that arrived while a choice was in flight. */
+  private deferred: AudioDeviceStatus | null = null;
 
   constructor() {
     assertPeerModule(
@@ -66,12 +128,21 @@ export class AudioRouteController {
     } catch (error) {
       logger.warn('Failed to start the audio session:', error);
     }
+    this.chosen = false;
     this.beforeSpeaker = DEFAULT_ROUTE;
     this.select(media === 'video' ? 'speaker' : 'earpiece', false);
+    if (this.started && hasIosAudioRoutes()) {
+      this.devices = audioDevices$.subscribe((status) => this.mirror(status));
+    }
   }
 
   /** Ends the native audio session and resets to the earpiece. */
   stop(): void {
+    this.devices?.unsubscribe();
+    this.devices = null;
+    this.device = null;
+    this.available = [];
+    this.deferred = null;
     try {
       if (this.started) {
         InCallManager.stop();
@@ -79,8 +150,11 @@ export class AudioRouteController {
     } catch (error) {
       logger.warn('Failed to stop the audio session:', error);
     }
+    // Nothing native after stop(): incall-manager resets its own speaker
+    // setting there, and its setForceSpeakerphoneOn has no started guard, so a
+    // call now would reconfigure the torn-down session (for a video call:
+    // voice chat mode, and the proximity sensor back on in an idle app).
     this.started = false;
-    this.applyRoute('earpiece');
     this.chosen = false;
     this.beforeSpeaker = DEFAULT_ROUTE;
     if (!this.destroyed) {
@@ -89,15 +163,13 @@ export class AudioRouteController {
   }
 
   /**
-   * Requests an output route, as the user's choice: `'earpiece'` moves a call
-   * off a connected Bluetooth headset or car onto the phone itself. For a
-   * speaker on/off toggle use {@link setSpeakerOn}, whose "off" returns to the
-   * call's default instead.
-   *
-   * @param force - Re-applies even when the route is unchanged.
+   * Requests an output route, as the user's choice. `'earpiece'` means the
+   * phone's receiver, as on Android: with iOS routes it moves a call off a
+   * connected headset or car. For a speaker on/off toggle use
+   * {@link setSpeakerOn}, whose "off" returns to the call's own route instead.
    */
-  setRoute(route: AudioRoute, force = false): void {
-    if (!force && route === this._route$.value && this.chosen) {
+  setRoute(route: AudioRoute): void {
+    if (route === this._route$.value && this.chosen) {
       return;
     }
     this.select(route, true);
@@ -105,10 +177,10 @@ export class AudioRouteController {
 
   /**
    * Turns the loudspeaker on, or off again. Off returns to the route the call
-   * had before the speaker: the user's earlier choice, or else the default,
-   * where iOS plays a call through a connected headset or car and otherwise
-   * the receiver. It never pins the call to the receiver the way
-   * `setRoute('earpiece')` does.
+   * had before the speaker: the user's earlier choice, if that device is still
+   * there, or else the default, where iOS plays a call through a connected
+   * headset or car and otherwise the receiver. It never pins the call to the
+   * receiver the way `setRoute('earpiece')` does.
    */
   setSpeakerOn(on: boolean): void {
     if (on) {
@@ -118,58 +190,121 @@ export class AudioRouteController {
       return;
     }
     if (this._route$.value === 'speaker') {
-      const { route, chosen } = this.beforeSpeaker;
+      const back = this.beforeSpeaker;
+      const gone = back.route === 'bluetooth' && this.devices !== null && !this.available.includes('BLUETOOTH');
+      const { route, chosen } = gone ? DEFAULT_ROUTE : back;
       this.select(route, chosen);
     }
   }
 
   private select(route: AudioRoute, chosen: boolean): void {
-    if (route === 'speaker' && this._route$.value !== 'speaker') {
-      this.beforeSpeaker = { route: this._route$.value, chosen: this.chosen };
+    if (route === 'bluetooth' && Platform.OS === 'ios' && !hasIosAudioRoutes()) {
+      warnNoIosRoutes(route);
+      return;
     }
-    this.applyRoute(route, chosen);
+    const before: Snapshot = { route: this._route$.value, chosen: this.chosen, beforeSpeaker: this.beforeSpeaker };
+    if (route === 'speaker' && before.route !== 'speaker') {
+      this.beforeSpeaker = { route: before.route, chosen: this.chosen };
+    }
     this.chosen = chosen;
     this._route$.next(route);
+    this.applyRoute(route, chosen, before);
   }
 
   /**
-   * @param chosen - The user asked for this route, as opposed to `start()` and
-   *   `stop()` setting the default. Only a choice moves a call off a connected
-   *   Bluetooth headset or car onto the earpiece.
+   * Hands the route to incall-manager.
+   *
+   * @param chosen - The user asked for this route, as opposed to `start()` or
+   *   speaker-off returning to the default. With iOS routes a choice goes
+   *   through `chooseAudioRoute`; the default is just the speaker setting,
+   *   which leaves iOS to pick a connected headset or car.
    */
-  private applyRoute(route: AudioRoute, chosen = false): void {
-    // chooseAudioRoute returns a promise: a failure is a rejection, which the
-    // try/catch below never sees. On iOS the native method doesn't exist
-    // before react-native-incall-manager's iOS routes, so every call to it
-    // rejected, unhandled.
-    const choose = (name: 'BLUETOOTH' | 'EARPIECE'): void => {
-      Promise.resolve(InCallManager.chooseAudioRoute(name)).catch((error: unknown) =>
-        logger.warn(`Failed to apply audio route "${route}":`, error)
-      );
-    };
-    try {
-      if (route === 'bluetooth') {
-        if (Platform.OS === 'ios') {
-          // incall-manager keeps its own speaker flag and re-applies it on
-          // every audio category change: left at "on" from an earlier speaker
-          // choice, it would put the loudspeaker back under the headset. Its
-          // "default" (null) clears the override, and on its own already lets
-          // iOS route to a connected headset or car.
-          InCallManager.setForceSpeakerphoneOn(null as unknown as boolean);
-        }
-        choose('BLUETOOTH');
-        return;
+  private applyRoute(route: AudioRoute, chosen: boolean, before: Snapshot): void {
+    const choose = Platform.OS === 'ios' ? chosen && hasIosAudioRoutes() : route === 'bluetooth';
+    if (!choose) {
+      // Speaker on or off. Off (false) also takes a video call out of video
+      // chat mode, which would keep it on the speaker. On iOS without routes
+      // this is all there is, and "earpiece" can't leave a headset or car.
+      try {
+        InCallManager.setForceSpeakerphoneOn(route === 'speaker');
+      } catch (error) {
+        logger.warn(`Failed to apply audio route "${route}":`, error);
       }
-      InCallManager.setForceSpeakerphoneOn(route === 'speaker');
-      // On iOS, turning the speaker off leaves a connected Bluetooth device in
-      // charge (iOS routes calls to it): only the preferred input moves a call
-      // to the phone itself.
-      if (route === 'earpiece' && chosen && Platform.OS === 'ios') {
-        choose('EARPIECE');
-      }
-    } catch (error) {
-      logger.warn(`Failed to apply audio route "${route}":`, error);
+      return;
     }
+    // chooseAudioRoute returns a promise: a failure is a rejection, which a
+    // try/catch never sees. A refused route (no such device) leaves
+    // incall-manager's route as it was, so the controller goes back too.
+    // Reports that arrive meanwhile predate the choice; they wait for its
+    // answer, which carries the route iOS settled on.
+    this.choosing += 1;
+    Promise.resolve()
+      .then(() => InCallManager.chooseAudioRoute(DEVICE_FOR_ROUTE[route]))
+      .then(
+        (raw: unknown) => {
+          const answered = parseAudioDeviceStatus(raw);
+          this.settleChoice(answered.selected !== null ? answered : null);
+        },
+        (error: unknown) => {
+          logger.warn(`Failed to apply audio route "${route}":`, error);
+          if (this.started && this._route$.value === route) {
+            this.chosen = before.chosen;
+            this.beforeSpeaker = before.beforeSpeaker;
+            this._route$.next(before.route);
+          }
+          this.settleChoice(null);
+        }
+      );
+  }
+
+  /** A choice was answered: take on what iOS settled on, or what was reported meanwhile. */
+  private settleChoice(answered: AudioDeviceStatus | null): void {
+    this.choosing -= 1;
+    if (this.choosing > 0) {
+      return;
+    }
+    const latest = answered ?? this.deferred;
+    this.deferred = null;
+    if (latest && this.devices !== null) {
+      this.mirror(latest);
+    }
+  }
+
+  /**
+   * Takes on the route iOS reports (iOS routes only): the call's starting
+   * device, a choice in the system route picker or CallKit, a headset or car
+   * connecting or dropping. incall-manager has already brought its speaker
+   * setting in step, so nothing is written back.
+   */
+  private mirror(status: AudioDeviceStatus): void {
+    this.available = status.available;
+    if (this.choosing > 0) {
+      this.deferred = status;
+      return;
+    }
+    if (!this.started || status.selected === null) {
+      return;
+    }
+    const device = status.selected;
+    const wasChosen = this.chosen;
+    if (device !== this.device) {
+      // A different device than the one chosen has the call: nothing of ours
+      // pins it any more (a wired headset replacing a receiver choice, say).
+      if (this.device !== null && !(this.chosen && DEVICE_FOR_ROUTE[this._route$.value] === device)) {
+        this.chosen = false;
+      }
+      this.device = device;
+    }
+    const route = ROUTE_FOR_DEVICE[device];
+    const previous = this._route$.value;
+    if (route === previous) {
+      return;
+    }
+    if (route === 'speaker') {
+      // Speaker off goes back to where the call was, chosen or not.
+      this.beforeSpeaker = { route: previous, chosen: wasChosen };
+    }
+    this._route$.next(route);
   }
 
   /**
@@ -201,9 +336,10 @@ export function getAudioRouteController(): AudioRouteController {
   return holder[AUDIO_GLOBAL];
 }
 
-/** Test seam — drops the singleton. */
+/** Test seam — drops the singleton, and the once-per-process route warning. */
 export function resetAudioRouteControllerForTesting(): void {
-  const holder = globalThis as AudioHolder;
+  const holder = globalThis as AudioHolder & { [WARNED_GLOBAL]?: boolean };
   holder[AUDIO_GLOBAL]?.destroy();
   delete holder[AUDIO_GLOBAL];
+  delete holder[WARNED_GLOBAL];
 }

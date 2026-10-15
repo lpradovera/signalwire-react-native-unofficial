@@ -133,6 +133,16 @@ describe('CallControls', () => {
     expect(audio.__state.setRoute).not.toHaveBeenCalled();
   });
 
+  it('names the route the call is on, Bluetooth included, and turns the speaker on from it', async () => {
+    // With iOS routes the route follows a car or headset taking the call; it
+    // read "Earpiece" while audio played in the car.
+    audio.__state.route = 'bluetooth';
+    await render(<CallControls call={createCall() as never} />);
+    expect(screen.getByText('Bluetooth')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('sw-route'));
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
+  });
+
   it('hides the camera toggle when asked', async () => {
     await render(<CallControls call={createCall() as never} showVideo={false} />);
     expect(screen.queryByTestId('sw-video')).toBeNull();

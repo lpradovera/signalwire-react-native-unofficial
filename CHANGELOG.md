@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+### Audio routes
+
+- **`setRoute('earpiece')` now means the receiver** on iOS too, when
+  incall-manager has iOS routes (see below), as it already did on Android: it
+  moves a call off a connected headset or car. For a speaker toggle use the
+  new `setSpeakerOn(on)` on `useAudioRoute()` and `AudioRouteController`,
+  whose "off" returns to the call's earlier or default route. A toggle
+  written as `setRoute(route === 'speaker' ? 'earpiece' : 'speaker')` should
+  switch to `setSpeakerOn(route !== 'speaker')`. `CallControls` uses it.
+- iOS routes beyond speaker on/off need react-native-incall-manager with iOS
+  audio routes (the upstream change, or
+  `docs/patches/react-native-incall-manager+4.3.0.patch`). The package
+  detects them at run time. With them: every route can be chosen, and `route`
+  follows what iOS reports (the starting device, a headset or car connecting
+  or dropping, the system route menu, CallKit's speaker button). Without
+  them (released incall-manager): `'bluetooth'` is ignored with one warning
+  instead of an unhandled rejection on every choice, and `'earpiece'` turns
+  the speaker off.
+- `useAudioDevices()` and `getAudioDeviceStatus()`: the devices available and
+  the one iOS is playing through, by name. iOS with iOS routes only.
+- A refused route (no such device) leaves `route` where it was.
+- `AudioRouteController.setRoute` no longer takes a `force` argument.
+- `stop()` makes no native call after `InCallManager.stop()`. It used to turn
+  the speaker off afterwards, which after a video call switched the idle
+  session to voice chat mode and turned the proximity sensor back on.
+- `CallControls`' speaker button reads "Bluetooth" when the call is on a
+  Bluetooth device.
+
 ## 0.1.0
 
 First release. React Native support for `@signalwire/js` v4 — platform
