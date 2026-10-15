@@ -104,21 +104,17 @@ export class CallKeepBridge {
   private readonly audioSessionActive$ = new BehaviorSubject(false);
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
-  /**
-   * The media each outbound call was placed with. The audio session mode (and
-   * so the default route) follows the call, not the app: a voice call from an
-   * app that also makes video calls must start on the receiver, or on the
-   * Bluetooth headset or car, never on the loudspeaker. Calls not in here
-   * (inbound) fall back to `supportsVideo`.
-   */
-  private readonly callMedia = new WeakMap<Call, 'audio' | 'video'>();
+  /** The call whose audio session is running, so a call bound to it later can set its media. */
+  private audioUuid: string | null = null;
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     const host: CallRegistryHost = {
+      // The registry writes the entry before it calls the host, so the call (if
+      // there is one yet) is there to read its media from.
       displayIncomingCall: (uuid, handle, displayName) =>
-        RNCallKeep.displayIncomingCall(uuid, handle, displayName, HANDLE_TYPE, this.supportsVideo),
-      startOutgoingCall: (uuid, handle, displayName, hasVideo) =>
-        RNCallKeep.startCall(uuid, handle, displayName, HANDLE_TYPE, hasVideo),
+        RNCallKeep.displayIncomingCall(uuid, handle, displayName, HANDLE_TYPE, this.reportsVideo(uuid)),
+      startOutgoingCall: (uuid, handle, displayName) =>
+        RNCallKeep.startCall(uuid, handle, displayName, HANDLE_TYPE, this.reportsVideo(uuid)),
       reportOutgoingConnected: (uuid) => RNCallKeep.reportConnectedOutgoingCallWithUUID(uuid),
       reportCallEnded: (uuid, reason) =>
         RNCallKeep.reportEndCallWithUUID(uuid, this.endReasonFor(reason)),
@@ -238,6 +234,7 @@ export class CallKeepBridge {
           if (!this.registry.uuidForCall(call)) {
             this.registry.attachIncomingCall(call);
             this.watchCallStatus(call);
+            this.adoptCallMedia(call);
           }
         }
       });
@@ -293,6 +290,7 @@ export class CallKeepBridge {
     const bound = this.registry.bindCall(uuid, call);
     if (bound) {
       this.watchCallStatus(call);
+      this.adoptCallMedia(call);
     }
     return bound;
   }
@@ -346,13 +344,14 @@ export class CallKeepBridge {
   /**
    * Registers an outbound call with the native UI. Returns its UUID.
    *
-   * `options.video` says whether the call carries video, sent or received
-   * (default: a voice call). It decides the native call type and where audio
-   * starts: a voice call on the receiver (or a connected Bluetooth headset or
-   * car), a video call on the loudspeaker.
+   * Whether it is a video call comes from the call itself
+   * (`call.mediaDirections`, the SDK's own answer, after preferences,
+   * `?channel=`, the dial options and a disabled camera are all applied): a
+   * voice call starts on the receiver (or a connected headset or car), a video
+   * call on the loudspeaker. A call without `mediaDirections` falls back to
+   * the app's `supportsVideo`.
    */
-  trackCall(call: Call, handle: string, displayName: string, options: { video?: boolean } = {}): string {
-    this.callMedia.set(call, options.video ? 'video' : 'audio');
+  trackCall(call: Call, handle: string, displayName: string): string {
     const claimed = this.pendingBridgeUuid;
     if (claimed !== null) {
       this.pendingBridgeUuid = null;
@@ -366,7 +365,7 @@ export class CallKeepBridge {
       logger.debug(`Entry ${claimed} vanished during the bridge dial`);
     }
 
-    const uuid = this.registry.attachOutgoingCall(call, handle, displayName, options.video === true);
+    const uuid = this.registry.attachOutgoingCall(call, handle, displayName);
     this.watchCallStatus(call);
     // Deliberate breadcrumb: RNCallKeep's own logs are NSLog-only, invisible in
     // Metro when launched outside Xcode, so without this line the entire
@@ -598,15 +597,47 @@ export class CallKeepBridge {
       logger.debug(`Call ${uuid} ended before its audio session was ready; not starting audio`);
       return;
     }
-    this.startAudio(this.mediaFor(entry.call));
+    this.startAudio(uuid, this.mediaFor(entry.call));
   }
 
-  /** How a call's audio session starts: its own media when known, else the app's. */
+  /**
+   * A call's media, from the SDK: video when it sends or receives video. A
+   * pushed entry whose SDK call hasn't arrived yet, or a call without
+   * `mediaDirections`, uses the app's `supportsVideo`.
+   */
   private mediaFor(call: Call | null | undefined): 'audio' | 'video' {
-    return (call && this.callMedia.get(call)) ?? (this.supportsVideo ? 'video' : 'audio');
+    // Optional-chained: a Call from an older SDK, or a test double, may not have it.
+    const video: string | undefined = call?.mediaDirections?.video;
+    if (video === undefined) {
+      return this.supportsVideo ? 'video' : 'audio';
+    }
+    return video === 'inactive' ? 'audio' : 'video';
   }
 
-  private startAudio(media: 'audio' | 'video'): void {
+  /** Whether CallKit shows the entry as a video call: the call has video and the provider supports it. */
+  private reportsVideo(uuid: string): boolean {
+    return this.supportsVideo && this.mediaFor(this.registry.entryForUuid(uuid)?.call) === 'video';
+  }
+
+  /**
+   * A call bound to the entry whose audio already runs (a push answered before
+   * its SDK call existed, or the bridge call placed for it) brings the media
+   * that entry started without.
+   */
+  private adoptCallMedia(call: Call): void {
+    const uuid = this.registry.uuidForCall(call);
+    if (uuid === undefined || uuid !== this.audioUuid) {
+      return;
+    }
+    try {
+      getAudioRouteController().updateMedia(this.mediaFor(call));
+    } catch (error) {
+      logger.warn('Audio routing unavailable:', error);
+    }
+  }
+
+  private startAudio(uuid: string, media: 'audio' | 'video'): void {
+    this.audioUuid ??= uuid;
     try {
       getAudioRouteController().start(media);
     } catch (error) {
@@ -615,6 +646,7 @@ export class CallKeepBridge {
   }
 
   private stopAudio(): void {
+    this.audioUuid = null;
     try {
       getAudioRouteController().stop();
     } catch (error) {

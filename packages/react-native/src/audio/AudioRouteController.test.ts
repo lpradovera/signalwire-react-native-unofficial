@@ -350,6 +350,30 @@ describe('AudioRouteController', () => {
     expect(InCallManager.start).not.toHaveBeenCalled();
     expect(controller.route).toBe('speaker');
   });
+
+  it("updateMedia moves a session started for video to voice's default route", () => {
+    controller.start('video');
+    (InCallManager.setForceSpeakerphoneOn as jest.Mock).mockClear();
+
+    controller.updateMedia('audio');
+
+    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenCalledWith(false);
+    expect(controller.route).toBe('earpiece');
+    expect(InCallManager.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('updateMedia keeps a route the user picked, and does nothing before start', () => {
+    controller.updateMedia('video');
+    expect(InCallManager.setForceSpeakerphoneOn).not.toHaveBeenCalled();
+
+    controller.start('video');
+    controller.setRoute('bluetooth');
+    (InCallManager.setForceSpeakerphoneOn as jest.Mock).mockClear();
+    controller.updateMedia('audio');
+
+    expect(InCallManager.setForceSpeakerphoneOn).not.toHaveBeenCalled();
+    expect(controller.route).toBe('bluetooth');
+  });
 });
 
 describe('AudioRouteController teardown', () => {
