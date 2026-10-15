@@ -9,6 +9,14 @@ import type { Observable } from 'rxjs';
 
 export type AudioRoute = 'earpiece' | 'speaker' | 'bluetooth';
 
+/** A route, and whether the user picked it or it is the call's default. */
+interface RouteState {
+  readonly route: AudioRoute;
+  readonly chosen: boolean;
+}
+
+const DEFAULT_ROUTE: RouteState = { route: 'earpiece', chosen: false };
+
 /**
  * Owns the native audio session and output routing.
  *
@@ -18,6 +26,10 @@ export type AudioRoute = 'earpiece' | 'speaker' | 'bluetooth';
  */
 export class AudioRouteController {
   private readonly _route$ = new BehaviorSubject<AudioRoute>('earpiece');
+  /** Whether the current route is the user's choice, not the call's default. */
+  private chosen = false;
+  /** What turning the speaker off returns to. */
+  private beforeSpeaker: RouteState = DEFAULT_ROUTE;
   private started = false;
   private destroyed = false;
 
@@ -54,7 +66,8 @@ export class AudioRouteController {
     } catch (error) {
       logger.warn('Failed to start the audio session:', error);
     }
-    this.setRoute(media === 'video' ? 'speaker' : 'earpiece', true);
+    this.beforeSpeaker = DEFAULT_ROUTE;
+    this.select(media === 'video' ? 'speaker' : 'earpiece', false);
   }
 
   /** Ends the native audio session and resets to the earpiece. */
@@ -68,22 +81,54 @@ export class AudioRouteController {
     }
     this.started = false;
     this.applyRoute('earpiece');
+    this.chosen = false;
+    this.beforeSpeaker = DEFAULT_ROUTE;
     if (!this.destroyed) {
       this._route$.next('earpiece');
     }
   }
 
   /**
-   * Requests an output route.
+   * Requests an output route, as the user's choice: `'earpiece'` moves a call
+   * off a connected Bluetooth headset or car onto the phone itself. For a
+   * speaker on/off toggle use {@link setSpeakerOn}, whose "off" returns to the
+   * call's default instead.
    *
-   * @param force - Internal. Re-applies even when the route is unchanged, so
-   *   `start()` can push the initial route through to the native layer.
+   * @param force - Re-applies even when the route is unchanged.
    */
   setRoute(route: AudioRoute, force = false): void {
-    if (!force && route === this._route$.value) {
+    if (!force && route === this._route$.value && this.chosen) {
       return;
     }
-    this.applyRoute(route, !force);
+    this.select(route, true);
+  }
+
+  /**
+   * Turns the loudspeaker on, or off again. Off returns to the route the call
+   * had before the speaker: the user's earlier choice, or else the default,
+   * where iOS plays a call through a connected headset or car and otherwise
+   * the receiver. It never pins the call to the receiver the way
+   * `setRoute('earpiece')` does.
+   */
+  setSpeakerOn(on: boolean): void {
+    if (on) {
+      if (this._route$.value !== 'speaker') {
+        this.select('speaker', true);
+      }
+      return;
+    }
+    if (this._route$.value === 'speaker') {
+      const { route, chosen } = this.beforeSpeaker;
+      this.select(route, chosen);
+    }
+  }
+
+  private select(route: AudioRoute, chosen: boolean): void {
+    if (route === 'speaker' && this._route$.value !== 'speaker') {
+      this.beforeSpeaker = { route: this._route$.value, chosen: this.chosen };
+    }
+    this.applyRoute(route, chosen);
+    this.chosen = chosen;
     this._route$.next(route);
   }
 
@@ -104,6 +149,14 @@ export class AudioRouteController {
     };
     try {
       if (route === 'bluetooth') {
+        if (Platform.OS === 'ios') {
+          // incall-manager keeps its own speaker flag and re-applies it on
+          // every audio category change: left at "on" from an earlier speaker
+          // choice, it would put the loudspeaker back under the headset. Its
+          // "default" (null) clears the override, and on its own already lets
+          // iOS route to a connected headset or car.
+          InCallManager.setForceSpeakerphoneOn(null as unknown as boolean);
+        }
         choose('BLUETOOTH');
         return;
       }
