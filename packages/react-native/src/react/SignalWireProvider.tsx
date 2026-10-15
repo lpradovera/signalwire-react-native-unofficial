@@ -1,5 +1,5 @@
 import { SignalWireProvider as CoreProvider } from '@signalwire/react';
-import React, { useMemo } from 'react';
+import React, { useLayoutEffect, useMemo, useRef } from 'react';
 
 import { createCallKitObserver } from '../callkit/observer';
 import type { CallKitObserverOptions } from '../callkit/observer';
@@ -47,9 +47,20 @@ export function SignalWireProvider({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const rnPlatform = useMemo<SignalWirePlatform>(() => createReactNativePlatform(platform), []);
 
-  // Built once, like the platform: an inline options object must not rebuild it.
+  // Built once, like the platform: an inline options object must not rebuild
+  // it. The observer reads the options through this ref instead, so a changed
+  // `displayName` takes effect on the next call.
+  const callKitOptions = useRef<CallKitObserverOptions>(typeof callKit === 'object' ? callKit : {});
+  useLayoutEffect(() => {
+    callKitOptions.current = typeof callKit === 'object' ? callKit : {};
+  });
   const observer = useMemo<CallObserver | undefined>(
-    () => (callKit ? createCallKitObserver(callKit === true ? {} : callKit) : undefined),
+    () =>
+      callKit
+        ? createCallKitObserver({
+            displayName: (destination) => callKitOptions.current.displayName?.(destination) ?? destination
+          })
+        : undefined,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [Boolean(callKit)]
   );

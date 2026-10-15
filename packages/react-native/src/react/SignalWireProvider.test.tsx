@@ -68,7 +68,34 @@ describe('React Native SignalWireProvider', () => {
   it('hands CallKit options to the observer', async () => {
     const displayName = (): string => 'Support';
     await renderProvider({ callKit: { displayName } });
-    expect(createObserver).toHaveBeenCalledWith({ displayName });
+    expect(createObserver.mock.calls[0]?.[0]?.displayName?.('/private/agent')).toBe('Support');
+  });
+
+  it('names calls with the latest displayName prop, without rebuilding the observer', async () => {
+    const tree = (displayName: (destination: string) => string): React.JSX.Element => (
+      <SignalWireProvider credentialProvider={credentialProvider as never} callKit={{ displayName }}>
+        <Text>child</Text>
+      </SignalWireProvider>
+    );
+    const view = await render(tree(() => 'Support'));
+    await view.rerender(tree((destination) => `Agent ${destination}`));
+
+    expect(createObserver).toHaveBeenCalledTimes(1);
+    expect(createObserver.mock.calls[0]?.[0]?.displayName?.('7')).toBe('Agent 7');
+  });
+
+  it('falls back to the destination once displayName is dropped', async () => {
+    const view = await render(
+      <SignalWireProvider credentialProvider={credentialProvider as never} callKit={{ displayName: () => 'Support' }}>
+        <Text>child</Text>
+      </SignalWireProvider>
+    );
+    await view.rerender(
+      <SignalWireProvider credentialProvider={credentialProvider as never} callKit>
+        <Text>child</Text>
+      </SignalWireProvider>
+    );
+    expect(createObserver.mock.calls[0]?.[0]?.displayName?.('/private/agent')).toBe('/private/agent');
   });
 
   it('passes the credential provider and options through untouched', async () => {
