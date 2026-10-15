@@ -1,5 +1,5 @@
 import { SignalWire } from '@signalwire/js';
-import React, { createContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { logger } from './logger';
 
@@ -48,6 +48,8 @@ export function SignalWireProvider({
 }: SignalWireProviderProps): React.JSX.Element {
   const [client, setClient] = useState<SignalWire | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  /** The observer the current client was handed, so a later one is bound once. */
+  const boundObserver = useRef<CallObserver | undefined>(undefined);
 
   useEffect(() => {
     const instance = new SignalWire(credentialProvider, {
@@ -58,6 +60,7 @@ export function SignalWireProvider({
     setClient(instance);
     setError(null);
 
+    boundObserver.current = observer;
     observer?.bindClient?.(instance);
 
     const subscription = instance.errors$.subscribe((next) => {
@@ -81,6 +84,16 @@ export function SignalWireProvider({
     // be catastrophic. Change `credentialProvider` to force a rebuild.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [credentialProvider]);
+
+  // An observer that arrives after the client was built (React Native builds
+  // its CallKit observer only once callKit is turned on) still needs the
+  // client, or it never sees inbound calls.
+  useEffect(() => {
+    if (client && observer !== boundObserver.current) {
+      boundObserver.current = observer;
+      observer?.bindClient?.(client);
+    }
+  }, [client, observer]);
 
   const value = useMemo<SignalWireContextValue>(
     () => ({ client, error, observer }),
