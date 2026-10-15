@@ -144,38 +144,63 @@ RCT_EXPORT_MODULE(SWAudioRoutes)
   };
 }
 
+/**
+ * Prefers a device off the speaker: the receiver, a wired headset or a
+ * Bluetooth device.
+ *
+ * The speaker is not one of them. react-native-incall-manager owns the speaker
+ * override and the session mode through its force-speaker flag, which it
+ * re-applies on every category change, so a speaker override set here would
+ * be split state it undoes. The JavaScript side sets that flag to match each
+ * route (off for the receiver, which also takes a video call out of the
+ * video-chat mode, default for Bluetooth) before calling this. Clearing the
+ * override below goes the same way as that flag, and keeps an output-only
+ * device's check from racing it.
+ */
 RCT_EXPORT_METHOD(chooseAudioRoute:(NSString *)route
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 {
+  if ([route isEqualToString:SWSpeaker]) {
+    reject(@"E_AUDIO_ROUTE_UNSUPPORTED",
+           @"The speaker is react-native-incall-manager's: use setForceSpeakerphoneOn", nil);
+    return;
+  }
   AVAudioSession *session = [AVAudioSession sharedInstance];
   NSError *error = nil;
-  BOOL ok;
-  if ([route isEqualToString:SWSpeaker]) {
-    ok = [session overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error];
-  } else {
-    AVAudioSessionPortDescription *input = [self inputForRoute:route];
-    // Only a headset or Bluetooth device can be output-only; the receiver
-    // always comes with the built-in mic.
-    BOOL outputOnly = [route isEqualToString:SWBluetooth] || [route isEqualToString:SWWiredHeadset];
-    if (input == nil && !outputOnly) {
-      reject(@"E_AUDIO_ROUTE_UNAVAILABLE", [NSString stringWithFormat:@"No %@ audio route is available", route], nil);
-      return;
-    }
-    // Clear a speaker override, then prefer the route's input: iOS plays a call
-    // through the output that goes with its input (the receiver with the
-    // built-in mic, the headset with its own mic). An output-only device (A2DP,
-    // headphones without a mic) has no input to prefer; it is the route once
-    // the override is cleared, if it is connected at all.
-    ok = [session overrideOutputAudioPort:AVAudioSessionPortOverrideNone error:&error] &&
-         (input == nil || [session setPreferredInput:input error:&error]);
-    if (ok && input == nil && [self currentOutputForRoute:route] == nil) {
-      reject(@"E_AUDIO_ROUTE_UNAVAILABLE", [NSString stringWithFormat:@"No %@ audio route is available", route], nil);
-      return;
-    }
+  AVAudioSessionPortDescription *input = [self inputForRoute:route];
+  // Only a headset or Bluetooth device can be output-only; the receiver
+  // always comes with the built-in mic.
+  BOOL outputOnly = [route isEqualToString:SWBluetooth] || [route isEqualToString:SWWiredHeadset];
+  if (input == nil && !outputOnly) {
+    reject(@"E_AUDIO_ROUTE_UNAVAILABLE", [NSString stringWithFormat:@"No %@ audio route is available", route], nil);
+    return;
   }
+  // Clear a speaker override, then prefer the route's input: iOS plays a call
+  // through the output that goes with its input (the receiver with the
+  // built-in mic, the headset with its own mic). An output-only device (A2DP,
+  // headphones without a mic) has no input to prefer; it is the route once
+  // the override is cleared, if it is connected at all.
+  BOOL ok = [session overrideOutputAudioPort:AVAudioSessionPortOverrideNone error:&error] &&
+            (input == nil || [session setPreferredInput:input error:&error]);
   if (!ok) {
     reject(@"E_AUDIO_ROUTE", error.localizedDescription ?: @"Could not change the audio route", error);
+    return;
+  }
+  if (input == nil && [self currentOutputForRoute:route] == nil) {
+    reject(@"E_AUDIO_ROUTE_UNAVAILABLE", [NSString stringWithFormat:@"No %@ audio route is available", route], nil);
+    return;
+  }
+  resolve([self deviceStatus]);
+}
+
+/** Drops the preferred input, so iOS picks the call's device itself: a connected headset or car, else the receiver. */
+RCT_EXPORT_METHOD(clearPreferredInput:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSError *error = nil;
+  if (![[AVAudioSession sharedInstance] setPreferredInput:nil error:&error]) {
+    reject(@"E_AUDIO_ROUTE", error.localizedDescription ?: @"Could not reset the audio route", error);
     return;
   }
   resolve([self deviceStatus]);

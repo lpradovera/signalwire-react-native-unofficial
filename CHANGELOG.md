@@ -16,6 +16,16 @@
   playing through, by name, kept current as headsets and cars come and go.
 - `AudioRoutePickerButton`: the system audio output button
   (`AVRoutePickerView`). `CallControls` shows it on iOS (`showRoutePicker`).
+- On iOS `useAudioRoute().route` follows the route iOS settled on: a choice in
+  the system picker, or a headset or car connecting or dropping. The speaker
+  toggle stays in step with it.
+- `setSpeakerOn(on)` on `useAudioRoute()` and `AudioRouteController`: speaker
+  off returns to the call's earlier or default route (a connected headset or
+  car), where `setRoute('earpiece')` pins the receiver. `CallControls` uses it.
+- iOS ownership of the audio session is split cleanly: incall-manager keeps the
+  category, mode and speaker override (its force-speaker flag, which every
+  route now sets to match); the package's module only picks the device off the
+  speaker.
 
 ## 0.1.0
 
