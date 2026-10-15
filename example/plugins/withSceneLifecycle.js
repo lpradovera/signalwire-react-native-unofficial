@@ -1,6 +1,7 @@
 const { withAppDelegate, withInfoPlist } = require('@expo/config-plugins');
 
 const MARK = '// withSceneLifecycle: SceneDelegate';
+const LAUNCH_MARK = '// withSceneLifecycle: watch for the first screen';
 
 /**
  * Adopts the UIScene lifecycle, which iOS 27 requires at launch.
@@ -14,8 +15,12 @@ const MARK = '// withSceneLifecycle: SceneDelegate';
  * Under scenes iOS delivers URLs and user activities to the scene rather than
  * the app delegate, so the SceneDelegate hands them back to the AppDelegate's
  * own handlers (Expo's, then React Native's Linking): a link opened while the
- * app runs, and on a cold start the one it was launched with, once the first
- * screen is up and JavaScript is listening.
+ * app runs, and the one a scene connects with, once the first screen is up and
+ * JavaScript is listening. React Native posts RCTContentDidAppearNotification
+ * once per root view, which can be before the first scene connects (a VoIP
+ * push launches the app in the background, and the user opens it later) or
+ * long before a scene reconnects, so the AppDelegate starts watching for it at
+ * launch and a scene that connects afterwards forwards its URL at once.
  *
  * Remove once Expo's template adopts scenes itself.
  */
@@ -23,6 +28,33 @@ const SCENE_DELEGATE = `
 ${MARK}
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
   var window: UIWindow?
+
+  /** Whether React Native has put its first screen up, so JavaScript listens for links. */
+  private static var contentAppeared = false
+  private static var waiting: [() -> Void] = []
+
+  /** Called first thing at launch: the notification can come before any scene exists. */
+  static func watchForContent() {
+    var token: NSObjectProtocol?
+    token = NotificationCenter.default.addObserver(
+      forName: NSNotification.Name("RCTContentDidAppearNotification"), object: nil, queue: .main
+    ) { _ in
+      if let token = token { NotificationCenter.default.removeObserver(token) }
+      contentAppeared = true
+      let pending = waiting
+      waiting = []
+      pending.forEach { $0() }
+    }
+  }
+
+  /** Runs the work once JavaScript listens: now, or when the first screen appears. */
+  private static func whenContentAppears(_ work: @escaping () -> Void) {
+    if contentAppeared {
+      DispatchQueue.main.async(execute: work)
+    } else {
+      waiting.append(work)
+    }
+  }
 
   func scene(
     _ scene: UIScene,
@@ -36,16 +68,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     window = appWindow
     appWindow.makeKeyAndVisible()
 
-    // A cold start: the launch options carry no URL under scenes, and nothing
-    // listens yet, so pass the launch URL or activity on once the first screen is up.
+    // Under scenes the launch options carry no URL: the scene does. Pass it on
+    // once JavaScript listens, which on a cold start is after this.
     let urls = connectionOptions.urlContexts.map { $0.url }
     let activities = Array(connectionOptions.userActivities)
     if urls.isEmpty && activities.isEmpty { return }
-    var token: NSObjectProtocol?
-    token = NotificationCenter.default.addObserver(
-      forName: NSNotification.Name("RCTContentDidAppearNotification"), object: nil, queue: .main
-    ) { _ in
-      if let token = token { NotificationCenter.default.removeObserver(token) }
+    SceneDelegate.whenContentAppears {
       urls.forEach(SceneDelegate.open)
       activities.forEach(SceneDelegate.continueActivity)
     }
@@ -90,9 +118,18 @@ module.exports = function withSceneLifecycle(config) {
     if (delegateConfig.modResults.language !== 'swift') {
       throw new Error('withSceneLifecycle: expected a Swift AppDelegate');
     }
-    if (!delegateConfig.modResults.contents.includes(MARK)) {
-      delegateConfig.modResults.contents += SCENE_DELEGATE;
+    let contents = delegateConfig.modResults.contents;
+    if (!contents.includes(LAUNCH_MARK)) {
+      const launch = /didFinishLaunchingWithOptions launchOptions:[^{]*\{\n/;
+      if (!launch.test(contents)) {
+        throw new Error('withSceneLifecycle: no application(_:didFinishLaunchingWithOptions:) in the AppDelegate');
+      }
+      contents = contents.replace(launch, (head) => `${head}    ${LAUNCH_MARK}\n    SceneDelegate.watchForContent()\n`);
     }
+    if (!contents.includes(MARK)) {
+      contents += SCENE_DELEGATE;
+    }
+    delegateConfig.modResults.contents = contents;
     return delegateConfig;
   });
 };
