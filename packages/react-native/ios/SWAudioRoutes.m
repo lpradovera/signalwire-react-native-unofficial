@@ -28,6 +28,11 @@ RCT_EXPORT_MODULE(SWAudioRoutes)
 
 - (void)startObserving
 {
+  // A fresh subscriber hears the next change whatever it is: the status last
+  // sent to an earlier subscriber says nothing about what this one has seen.
+  @synchronized(self) {
+    _lastSent = nil;
+  }
   _observing = YES;
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(routeChanged:)
@@ -38,6 +43,12 @@ RCT_EXPORT_MODULE(SWAudioRoutes)
 - (void)stopObserving
 {
   _observing = NO;
+  // Changes go unobserved from here on, so the route can come back to the
+  // status last sent; kept, that status would swallow the first event after a
+  // resubscribe.
+  @synchronized(self) {
+    _lastSent = nil;
+  }
   [[NSNotificationCenter defaultCenter] removeObserver:self
                                                   name:AVAudioSessionRouteChangeNotification
                                                 object:nil];
