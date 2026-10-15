@@ -193,13 +193,37 @@ Three consequences worth reading off the diagram:
 
 ## Install
 
+**These packages are not on npm yet.** `npm install @signalwire/react-native`
+installs an unrelated, older package (signalwire-node 1.0.4) that happens to
+own the name, and `@signalwire/react`, which `@signalwire/react-native`
+depends on, isn't published at all. Until they are, build them from this
+repository and install the tarballs:
+
 ```bash
-npm install @signalwire/react-native @signalwire/js rxjs \
+git clone https://github.com/lpradovera/signalwire-react-native-unofficial.git
+cd signalwire-react-native-unofficial
+npm install
+npm run build
+mkdir -p ../signalwire-tarballs
+npm pack -w @signalwire/react -w @signalwire/react-native --pack-destination ../signalwire-tarballs
+# add -w @signalwire/react-native-ui for the call-screen components
+```
+
+Then, in your app:
+
+```bash
+npm install ../signalwire-tarballs/signalwire-react-0.1.0.tgz \
+  ../signalwire-tarballs/signalwire-react-native-0.1.0.tgz \
+  @signalwire/js rxjs \
   react-native-webrtc \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
   react-native-url-polyfill
 ```
+
+npm records a `file:` dependency for each tarball. Copying the tarballs (or
+the unpacked packages) into the app, under `vendor/` say, keeps the install
+reproducible on another machine and in CI.
 
 Optional, each unlocking one feature:
 
