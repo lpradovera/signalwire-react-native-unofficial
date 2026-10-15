@@ -4,6 +4,7 @@ import { BehaviorSubject } from 'rxjs';
 
 import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
+import { getNativeAudioRoutes } from './nativeAudioRoutes';
 
 import type { Observable } from 'rxjs';
 
@@ -12,9 +13,9 @@ export type AudioRoute = 'earpiece' | 'speaker' | 'bluetooth';
 /**
  * Owns the native audio session and output routing.
  *
- * `'bluetooth'` is a *request*: the OS makes the final routing decision and
- * InCallManager cannot reliably report the active device, so `route` reflects
- * what was asked for, not necessarily what the OS settled on.
+ * `'bluetooth'` is a *request*: the OS makes the final routing decision, so
+ * `route` reflects what was asked for, not necessarily what the OS settled on.
+ * On iOS, `useAudioDevices()` reports what it settled on.
  */
 export class AudioRouteController {
   private readonly _route$ = new BehaviorSubject<AudioRoute>('earpiece');
@@ -94,11 +95,14 @@ export class AudioRouteController {
    */
   private applyRoute(route: AudioRoute, chosen = false): void {
     // chooseAudioRoute returns a promise: a failure is a rejection, which the
-    // try/catch below never sees. On iOS the native method doesn't exist
-    // before react-native-incall-manager's iOS routes, so every call to it
-    // rejected, unhandled.
+    // try/catch below never sees. react-native-incall-manager implements it on
+    // Android only, so iOS uses this package's own module (SWAudioRoutes).
     const choose = (name: 'BLUETOOTH' | 'EARPIECE'): void => {
-      Promise.resolve(InCallManager.chooseAudioRoute(name)).catch((error: unknown) =>
+      const chosen =
+        Platform.OS === 'ios'
+          ? getNativeAudioRoutes()?.chooseAudioRoute(name)
+          : InCallManager.chooseAudioRoute(name);
+      Promise.resolve(chosen).catch((error: unknown) =>
         logger.warn(`Failed to apply audio route "${route}":`, error)
       );
     };

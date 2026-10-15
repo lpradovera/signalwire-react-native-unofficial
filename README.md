@@ -209,6 +209,14 @@ Optional, each unlocking one feature:
 Importing a subpath without its peer throws `MissingPeerDependencyError`, which
 names the package and the install command.
 
+**This package has native code on iOS** (`ios/`, pod `SignalWireReactNative`):
+the audio routes `react-native-incall-manager` implements only on Android, and
+the system audio output button. It autolinks, but only into a rebuilt app: run
+`pod install` (Expo: `expo prebuild` or `expo run:ios`) after installing or
+upgrading. A JavaScript-only update leaves the app without it; routes other
+than speaker on/off then log a "Rebuild the app" warning once and do nothing,
+and `AudioRoutePickerButton` renders nothing.
+
 ## The import-order rule
 
 **`@signalwire/react-native/polyfills` must be the first import in your entry
@@ -342,6 +350,14 @@ export default function App() {
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` | `@signalwire/react-native` |
 | `useObservable(obs$, initial)` | The latest value of any SDK observable | `@signalwire/react-native` |
 | `useAudioRoute()` | `route`, `setRoute` | `@signalwire/react-native/audio` |
+| `useAudioDevices()` | `available`, `selected`, `selectedName` (e.g. the car's name) — what iOS is actually playing through. iOS only. | `@signalwire/react-native/audio` |
+
+`useAudioRoute()` reports the route that was asked for; iOS has the last word
+(a headset or car connecting takes a call over), and `useAudioDevices()` reports
+what it settled on. For iOS's own output menu, render
+`<AudioRoutePickerButton />` from `@signalwire/react-native/audio` (an
+`AVRoutePickerView`); `CallControls` in `@signalwire/react-native-ui` shows it
+on iOS.
 
 `useObservable` is built on `useSyncExternalStore`, so it is tear-free under
 concurrent rendering, and it seeds from the SDK's synchronous getters rather
