@@ -61,6 +61,8 @@ export class AudioRouteController {
   private beforeSpeaker: RouteState = DEFAULT_ROUTE;
   private started = false;
   private destroyed = false;
+  /** The media the running session was started for. */
+  private media: 'audio' | 'video' = 'audio';
   private stopFollowing: (() => void) | null = null;
   /** Until when route changes are taken as our own request landing. */
   private settleUntil = 0;
@@ -99,8 +101,27 @@ export class AudioRouteController {
       logger.warn('Failed to start the audio session:', error);
     }
     this.stopFollowing ??= addAudioDeviceChangeListener((status) => this.followDevice(status));
+    this.media = media;
     this.beforeSpeaker = DEFAULT_ROUTE;
     this.select(media === 'video' ? 'speaker' : 'earpiece', false);
+  }
+
+  /**
+   * Tells a running session its call's media, when it was started before that
+   * was known: a pushed call answered before its SDK call existed starts in
+   * the app's mode, and its call (or the call placed to join it) can turn out
+   * to be voice only. Moves to that media's default route (video on the
+   * speaker, voice off it), unless the user already picked a route.
+   */
+  updateMedia(media: 'audio' | 'video'): void {
+    if (!this.started || media === this.media) {
+      return;
+    }
+    this.media = media;
+    if (!this.chosen) {
+      this.beforeSpeaker = DEFAULT_ROUTE;
+      this.select(media === 'video' ? 'speaker' : 'earpiece', false);
+    }
   }
 
   /** Ends the native audio session and resets to the earpiece. */
