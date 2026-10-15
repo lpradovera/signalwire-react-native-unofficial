@@ -32,14 +32,17 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
   /** Whether React Native has put its first screen up, so JavaScript listens for links. */
   private static var contentAppeared = false
   private static var waiting: [() -> Void] = []
+  private static var contentObserver: NSObjectProtocol?
 
   /** Called first thing at launch: the notification can come before any scene exists. */
   static func watchForContent() {
-    var token: NSObjectProtocol?
-    token = NotificationCenter.default.addObserver(
+    contentObserver = NotificationCenter.default.addObserver(
       forName: NSNotification.Name("RCTContentDidAppearNotification"), object: nil, queue: .main
     ) { _ in
-      if let token = token { NotificationCenter.default.removeObserver(token) }
+      if let observer = contentObserver {
+        NotificationCenter.default.removeObserver(observer)
+        contentObserver = nil
+      }
       contentAppeared = true
       let pending = waiting
       waiting = []
