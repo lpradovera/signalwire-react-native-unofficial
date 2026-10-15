@@ -65,6 +65,12 @@ describe('React Native SignalWireProvider', () => {
     expect(core.mock.calls[0]?.[0]).toMatchObject({ observer });
   });
 
+  it('hands CallKit options to the observer', async () => {
+    const displayName = (): string => 'Support';
+    await renderProvider({ callKit: { displayName } });
+    expect(createObserver).toHaveBeenCalledWith({ displayName });
+  });
+
   it('passes the credential provider and options through untouched', async () => {
     const options = { skipConnection: true };
     await renderProvider({ options });

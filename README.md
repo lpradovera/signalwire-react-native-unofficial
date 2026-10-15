@@ -364,6 +364,17 @@ void getCallKit().setup({ appName: 'My App', supportsVideo: true });
 <SignalWireProvider credentialProvider={credentials} callKit>
 ```
 
+The native call UI and Recents show an outbound call by its destination, which
+for a Fabric address reads like `/private/support-agent`. To show a name instead,
+pass options in place of `true`:
+
+```tsx
+<SignalWireProvider credentialProvider={credentials} callKit={{ displayName: (to) => contacts[to] ?? to }}>
+```
+
+The options are read once, on mount, like `platform`: a later change to
+`displayName` has no effect.
+
 Then, from your own push handler:
 
 ```ts
