@@ -17,7 +17,10 @@ export interface AudioDeviceStatus {
 }
 
 interface NativeAudioRoutes {
-  chooseAudioRoute(route: AudioDeviceName): Promise<unknown>;
+  /** Prefers a device off the speaker. The speaker itself is incall-manager's (setForceSpeakerphoneOn). */
+  chooseAudioRoute(route: Exclude<AudioDeviceName, 'SPEAKER_PHONE'>): Promise<unknown>;
+  /** Drops the preferred input, so iOS picks the call's device itself. */
+  clearPreferredInput(): Promise<unknown>;
   getAudioDeviceStatus(): Promise<unknown>;
   addListener(event: string): void;
   removeListeners(count: number): void;

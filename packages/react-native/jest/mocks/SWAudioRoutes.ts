@@ -11,6 +11,7 @@ export const status = {
 
 const SWAudioRoutes = {
   chooseAudioRoute: jest.fn(async () => status),
+  clearPreferredInput: jest.fn(async () => status),
   getAudioDeviceStatus: jest.fn(async () => status),
   addListener: jest.fn(),
   removeListeners: jest.fn()

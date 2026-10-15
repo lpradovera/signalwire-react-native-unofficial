@@ -1,4 +1,4 @@
-import { NativeModules, Platform } from 'react-native';
+import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
 
 import { logger } from '@signalwire/react';
@@ -6,7 +6,24 @@ import { AudioRouteController } from './AudioRouteController';
 import { resetNativeAudioRoutesForTesting } from './nativeAudioRoutes';
 
 // jest/setup.ts installs it: this package's iOS route module.
-const SWAudioRoutes = NativeModules.SWAudioRoutes as { chooseAudioRoute: jest.Mock };
+const SWAudioRoutes = NativeModules.SWAudioRoutes as {
+  chooseAudioRoute: jest.Mock;
+  clearPreferredInput: jest.Mock;
+};
+
+/** What iOS reports after a route change: the AVRoutePickerView, a car connecting, ... */
+function deviceChanged(selected: string, available = '["EARPIECE","SPEAKER_PHONE","BLUETOOTH"]'): void {
+  DeviceEventEmitter.emit('onAudioDeviceChanged', {
+    availableAudioDeviceList: available,
+    selectedAudioDevice: selected,
+    selectedAudioDeviceName: selected
+  });
+}
+
+/** Past the window in which the controller's own route change is still settling. */
+function settle(): void {
+  jest.advanceTimersByTime(1000);
+}
 
 describe('AudioRouteController', () => {
   let controller: AudioRouteController;
@@ -167,6 +184,86 @@ describe('AudioRouteController', () => {
     controller.setRoute('bluetooth');
     expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(null);
     expect(SWAudioRoutes.chooseAudioRoute).toHaveBeenCalledWith('BLUETOOTH');
+  });
+
+  describe('following the route iOS settled on', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it('the system route picker choosing the speaker turns the toggle on, and tells incall-manager', () => {
+      controller.start('audio');
+      settle();
+      deviceChanged('SPEAKER_PHONE');
+      expect(controller.route).toBe('speaker');
+      // Or incall-manager's next category-change re-apply would take the speaker away.
+      expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(true);
+    });
+
+    it('the picker choosing the car while on the speaker clears the speaker flag', () => {
+      controller.start('audio');
+      controller.setSpeakerOn(true);
+      settle();
+      deviceChanged('BLUETOOTH');
+      expect(controller.route).toBe('bluetooth');
+      expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(null);
+    });
+
+    it('speaker off after the picker chose the speaker returns to where the call was', () => {
+      controller.start('audio');
+      settle();
+      deviceChanged('BLUETOOTH');
+      deviceChanged('SPEAKER_PHONE');
+      controller.setSpeakerOn(false);
+      expect(controller.route).toBe('bluetooth');
+      expect(SWAudioRoutes.chooseAudioRoute).toHaveBeenLastCalledWith('BLUETOOTH');
+    });
+
+    it('speaker off falls back to the default when the earlier device is gone', () => {
+      controller.start('audio');
+      settle();
+      deviceChanged('BLUETOOTH');
+      // The car drops; a video-mode session falls back to the speaker.
+      deviceChanged('SPEAKER_PHONE', '["EARPIECE","SPEAKER_PHONE"]');
+      SWAudioRoutes.chooseAudioRoute.mockClear();
+      controller.setSpeakerOn(false);
+      expect(controller.route).toBe('earpiece');
+      expect(SWAudioRoutes.chooseAudioRoute).not.toHaveBeenCalled();
+    });
+
+    it('ignores the route changes its own request causes while they settle', () => {
+      controller.start('audio');
+      settle();
+      controller.setSpeakerOn(true);
+      // Posted for the state before the override landed.
+      deviceChanged('EARPIECE');
+      expect(controller.route).toBe('speaker');
+      expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(true);
+    });
+
+    it('reads a wired headset as off the speaker', () => {
+      controller.start('video');
+      settle();
+      deviceChanged('WIRED_HEADSET', '["WIRED_HEADSET","SPEAKER_PHONE"]');
+      expect(controller.route).toBe('earpiece');
+    });
+
+    it('stops following once the call ends', () => {
+      controller.start('audio');
+      controller.stop();
+      settle();
+      deviceChanged('SPEAKER_PHONE');
+      expect(controller.route).toBe('earpiece');
+    });
+  });
+
+  it('the default route clears a receiver pin from an earlier call (iOS)', () => {
+    controller.start('audio');
+    controller.setRoute('earpiece');
+    controller.stop();
+    SWAudioRoutes.clearPreferredInput.mockClear();
+    controller.start('audio');
+    expect(SWAudioRoutes.clearPreferredInput).toHaveBeenCalled();
+    expect(SWAudioRoutes.chooseAudioRoute).toHaveBeenCalledTimes(1);
   });
 
   it('setRoute("speaker") forces speakerphone on', () => {
