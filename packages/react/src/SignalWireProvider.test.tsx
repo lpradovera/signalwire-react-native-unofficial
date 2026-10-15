@@ -153,7 +153,7 @@ describe('SignalWireProvider observer wiring', () => {
       await dial?.('/public/room');
     });
 
-    expect(observer.onOutgoingCall).toHaveBeenCalledWith({ id: 'call-1' }, '/public/room', undefined);
+    expect(observer.onOutgoingCall).toHaveBeenCalledWith({ id: 'call-1' }, '/public/room');
   });
 
   it('dials fine with no observer, which is the web case', async () => {
