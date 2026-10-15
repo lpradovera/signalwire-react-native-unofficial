@@ -7,8 +7,14 @@ React Native support for [`@signalwire/js`](https://www.npmjs.com/package/@signa
 platform adapters, React hooks over the SDK's RxJS observables, and native call
 UI via CallKit and ConnectionService.
 
+Not on npm yet: the `@signalwire/react-native` name on npm belongs to an
+unrelated older package. Build this one and `@signalwire/react` from the
+repository and install the tarballs, as the
+[repository README](https://github.com/lpradovera/signalwire-react-native-unofficial#install)
+describes, together with its peers:
+
 ```bash
-npm install @signalwire/react-native @signalwire/js rxjs \
+npm install @signalwire/js rxjs \
   react-native-webrtc @react-native-async-storage/async-storage \
   react-native-get-random-values react-native-url-polyfill
 ```
