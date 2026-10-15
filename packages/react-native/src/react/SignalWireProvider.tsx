@@ -50,17 +50,12 @@ export function SignalWireProvider({
   // Built once, like the platform: an inline options object must not rebuild
   // it. The observer reads the options through this ref instead, so a changed
   // `displayName` takes effect on the next call.
-  const callKitOptions = useRef<CallKitObserverOptions>(typeof callKit === 'object' ? callKit : {});
+  const callKitOptions = useRef<CallKitObserverOptions>({});
   useLayoutEffect(() => {
     callKitOptions.current = typeof callKit === 'object' ? callKit : {};
   });
   const observer = useMemo<CallObserver | undefined>(
-    () =>
-      callKit
-        ? createCallKitObserver({
-            displayName: (destination) => callKitOptions.current.displayName?.(destination) ?? destination
-          })
-        : undefined,
+    () => (callKit ? createCallKitObserver(() => callKitOptions.current) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [Boolean(callKit)]
   );

@@ -134,6 +134,38 @@ describe('SignalWireProvider observer wiring', () => {
     expect(observer.bindClient).toHaveBeenCalledWith(harness);
   });
 
+  it('binds an observer that arrives after the client was built, once', () => {
+    // React Native's provider builds its CallKit observer only once callKit is
+    // turned on, which can be after mount. Unbound, the observer never mirrors
+    // inbound calls into the native UI.
+    const tree = (observer?: CallObserver): React.JSX.Element => (
+      <SignalWireProvider credentialProvider={credentialProvider as never} observer={observer}>
+        <Probe />
+      </SignalWireProvider>
+    );
+    const later: CallObserver = { bindClient: jest.fn() };
+    const view = render(tree(undefined));
+
+    view.rerender(tree(later));
+    view.rerender(tree(later));
+
+    expect(later.bindClient).toHaveBeenCalledTimes(1);
+    expect(later.bindClient).toHaveBeenCalledWith(harness);
+  });
+
+  it('does not bind an observer twice when it was there from the start', () => {
+    const observer: CallObserver = { bindClient: jest.fn() };
+    const tree = (): React.JSX.Element => (
+      <SignalWireProvider credentialProvider={credentialProvider as never} observer={observer}>
+        <Probe />
+      </SignalWireProvider>
+    );
+    const view = render(tree());
+    view.rerender(tree());
+
+    expect(observer.bindClient).toHaveBeenCalledTimes(1);
+  });
+
   it('notifies the observer of an outgoing call', async () => {
     const observer: CallObserver = { onOutgoingCall: jest.fn() };
     let dial: ((destination: string) => Promise<unknown>) | undefined;

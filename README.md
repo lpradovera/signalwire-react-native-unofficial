@@ -373,7 +373,9 @@ pass options in place of `true`:
 ```
 
 The observer itself is built once, on mount, like `platform`; each call reads
-the latest `displayName`, so it can close over data that loads later.
+the latest `displayName`, so it can close over data that loads later. If it
+throws or returns an empty string, the call is named by its destination: the
+call has already been placed by then, so it is still tracked.
 
 Then, from your own push handler:
 
