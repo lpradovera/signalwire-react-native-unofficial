@@ -372,8 +372,8 @@ pass options in place of `true`:
 <SignalWireProvider credentialProvider={credentials} callKit={{ displayName: (to) => contacts[to] ?? to }}>
 ```
 
-The options are read once, on mount, like `platform`: a later change to
-`displayName` has no effect.
+The observer itself is built once, on mount, like `platform`; each call reads
+the latest `displayName`, so it can close over data that loads later.
 
 Then, from your own push handler:
 
