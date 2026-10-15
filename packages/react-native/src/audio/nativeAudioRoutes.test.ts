@@ -1,68 +1,85 @@
-import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
+import { Platform } from 'react-native';
 
 import {
-  addAudioDeviceChangeListener,
-  getAudioDeviceStatus,
-  parseAudioDeviceStatus
-} from './nativeAudioRoutes';
+  deviceStatus,
+  incallIosRoutes,
+  installIncallIosRoutes,
+  reportDevice,
+  uninstallIncallIosRoutes
+} from '../../jest/mocks/incallIosRoutes';
+import { audioDevices$, getAudioDeviceStatus, hasIosAudioRoutes, parseAudioDeviceStatus } from './nativeAudioRoutes';
 
-// jest/setup.ts installs it: this package's iOS route module.
-const SWAudioRoutes = NativeModules.SWAudioRoutes as { addListener: jest.Mock };
+afterEach(() => {
+  uninstallIncallIosRoutes();
+  jest.clearAllMocks();
+});
 
-describe('nativeAudioRoutes', () => {
-  it('parses the status the native side sends, list as a JSON string', () => {
-    expect(
-      parseAudioDeviceStatus({
-        availableAudioDeviceList: '["EARPIECE","SPEAKER_PHONE","BLUETOOTH"]',
-        selectedAudioDevice: 'BLUETOOTH',
-        selectedAudioDeviceName: 'KENWOOD'
-      })
-    ).toEqual({ available: ['EARPIECE', 'SPEAKER_PHONE', 'BLUETOOTH'], selected: 'BLUETOOTH', selectedName: 'KENWOOD' });
-  });
-
-  it('drops what it does not recognise rather than passing it on', () => {
-    expect(
-      parseAudioDeviceStatus({ availableAudioDeviceList: '["EARPIECE","AIRPLAY"]', selectedAudioDevice: '' })
-    ).toEqual({ available: ['EARPIECE'], selected: null, selectedName: '' });
-    expect(parseAudioDeviceStatus({ availableAudioDeviceList: 'not json' }).available).toEqual([]);
-    expect(parseAudioDeviceStatus(null)).toEqual({ available: [], selected: null, selectedName: '' });
-  });
-
-  it('reads the current devices on iOS', async () => {
-    await expect(getAudioDeviceStatus()).resolves.toEqual({
+describe('parseAudioDeviceStatus', () => {
+  it('parses the status incall-manager sends, list as a JSON string', () => {
+    expect(parseAudioDeviceStatus(deviceStatus('BLUETOOTH', undefined, 'KENWOOD'))).toEqual({
       available: ['EARPIECE', 'SPEAKER_PHONE', 'BLUETOOTH'],
       selected: 'BLUETOOTH',
       selectedName: 'KENWOOD'
     });
   });
 
-  it('has nothing to report on Android', async () => {
-    const os = jest.replaceProperty(Platform, 'OS', 'android');
+  it("drops what it does not recognise, including Android's NONE", () => {
+    expect(parseAudioDeviceStatus(deviceStatus('NONE', '["EARPIECE","AIRPLAY"]', ''))).toEqual({
+      available: ['EARPIECE'],
+      selected: null,
+      selectedName: ''
+    });
+    expect(parseAudioDeviceStatus({ availableAudioDeviceList: 'not json' }).available).toEqual([]);
+    expect(parseAudioDeviceStatus(null)).toEqual({ available: [], selected: null, selectedName: '' });
+  });
+});
+
+describe('incall-manager iOS routes', () => {
+  it('are absent from released incall-manager, which has no iOS getAudioDeviceStatus', async () => {
+    expect(hasIosAudioRoutes()).toBe(false);
     await expect(getAudioDeviceStatus()).resolves.toBeNull();
-    const listener = jest.fn();
-    addAudioDeviceChangeListener(listener)();
-    expect(listener).not.toHaveBeenCalled();
-    os.restore();
   });
 
-  it('delivers route changes, parsed, until unsubscribed', () => {
-    const listener = jest.fn();
-    const unsubscribe = addAudioDeviceChangeListener(listener);
-    expect(SWAudioRoutes.addListener).toHaveBeenCalledWith('onAudioDeviceChanged');
+  it('are found from the native method, and read', async () => {
+    installIncallIosRoutes(deviceStatus('BLUETOOTH'));
+    expect(hasIosAudioRoutes()).toBe(true);
+    await expect(getAudioDeviceStatus()).resolves.toMatchObject({ selected: 'BLUETOOTH' });
+  });
 
-    DeviceEventEmitter.emit('onAudioDeviceChanged', {
-      availableAudioDeviceList: '["EARPIECE","SPEAKER_PHONE"]',
-      selectedAudioDevice: 'EARPIECE',
-      selectedAudioDeviceName: 'Receiver'
-    });
-    expect(listener).toHaveBeenCalledWith({
-      available: ['EARPIECE', 'SPEAKER_PHONE'],
-      selected: 'EARPIECE',
-      selectedName: 'Receiver'
-    });
+  it('are iOS only', async () => {
+    installIncallIosRoutes();
+    const os = jest.replaceProperty(Platform, 'OS', 'android');
+    expect(hasIosAudioRoutes()).toBe(false);
+    await expect(getAudioDeviceStatus()).resolves.toBeNull();
+    os.restore();
+  });
+});
 
-    unsubscribe();
-    DeviceEventEmitter.emit('onAudioDeviceChanged', {});
-    expect(listener).toHaveBeenCalledTimes(1);
+describe('audioDevices$', () => {
+  it('reads once and shares one native subscription between subscribers', async () => {
+    installIncallIosRoutes(deviceStatus('EARPIECE'));
+    const a: (string | null)[] = [];
+    const b: (string | null)[] = [];
+    const first = audioDevices$.subscribe((status) => a.push(status.selected));
+    const second = audioDevices$.subscribe((status) => b.push(status.selected));
+    await Promise.resolve();
+    await Promise.resolve();
+    reportDevice('BLUETOOTH');
+
+    expect(a).toEqual(['EARPIECE', 'BLUETOOTH']);
+    expect(b).toEqual(['EARPIECE', 'BLUETOOTH']);
+    expect(incallIosRoutes.getAudioDeviceStatus).toHaveBeenCalledTimes(1);
+    expect(incallIosRoutes.addListener).toHaveBeenCalledTimes(1);
+
+    first.unsubscribe();
+    expect(incallIosRoutes.removeListeners).not.toHaveBeenCalled();
+    second.unsubscribe();
+    expect(incallIosRoutes.removeListeners).toHaveBeenCalledWith(1);
+  });
+
+  it('never emits without iOS routes', () => {
+    const seen = jest.fn();
+    audioDevices$.subscribe(seen).unsubscribe();
+    expect(seen).not.toHaveBeenCalled();
   });
 });

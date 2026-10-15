@@ -140,6 +140,16 @@ describe('CallControls', () => {
     expect(audio.__state.setRoute).not.toHaveBeenCalled();
   });
 
+  it('names the route the call is on, Bluetooth included, and turns the speaker on from it', async () => {
+    // With iOS routes the route follows a car or headset taking the call; it
+    // read "Earpiece" while audio played in the car.
+    audio.__state.route = 'bluetooth';
+    await render(<CallControls call={createCall() as never} />);
+    expect(screen.getByText('Bluetooth')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('sw-route'));
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
+  });
+
   it('hides the camera toggle when asked', async () => {
     await render(<CallControls call={createCall() as never} showVideo={false} />);
     expect(screen.queryByTestId('sw-video')).toBeNull();
@@ -164,6 +174,17 @@ describe('CallControls', () => {
     audio.__state.pickerAvailable = true;
     await render(<CallControls call={createCall() as never} showRoutePicker={false} />);
     expect(screen.queryByTestId('sw-route-picker')).toBeNull();
+  });
+
+  it('leaves the output button out of an app that hid audio routing', async () => {
+    // An app that manages routing itself passes showAudioRoute={false}; an
+    // upgrade must not add an output switch behind its back.
+    audio.__state.pickerAvailable = true;
+    await render(<CallControls call={createCall() as never} showAudioRoute={false} />);
+    expect(screen.queryByTestId('sw-route-picker')).toBeNull();
+
+    await render(<CallControls call={createCall() as never} showAudioRoute={false} showRoutePicker />);
+    expect(screen.getByTestId('sw-route-picker')).toBeTruthy();
   });
 
   it('renders with a null call without throwing', async () => {

@@ -4,8 +4,9 @@
 /**
  * The system audio route button (AVRoutePickerView): tapping it opens iOS's own
  * output menu, listing the receiver, speaker, and each connected headset or car
- * by name. The OS performs the switch, so nothing needs reporting back; the
- * route-change event of SWAudioRoutes reflects it.
+ * by name. The OS performs the switch, and nothing here writes the audio
+ * session: react-native-incall-manager (with iOS routes) sees the route change,
+ * keeps its speaker setting in step and reports it, and useAudioRoute() follows.
  */
 @interface SWAudioRoutePickerManager : RCTViewManager
 @end
