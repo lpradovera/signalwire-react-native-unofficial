@@ -66,6 +66,7 @@ const NATIVE_EVENTS = [
   'didToggleHoldCallAction',
   'didPerformSetMutedCallAction',
   'didActivateAudioSession',
+  'didDeactivateAudioSession',
   // Replays what fired before JavaScript existed. See handleLoadedEvents.
   'didLoadWithEvents'
 ] as const;
@@ -83,7 +84,16 @@ export class CallKeepBridge {
   private supportsVideo = false;
   private isSetup = false;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
-  private releaseAudioGate: (() => void) | null = null;
+  /**
+   * Whether CallKit has the audio session active, from its activate and
+   * deactivate events. Kept as state, not as a one-shot gate: for an outbound
+   * call CallKit activates the session when the start-call action is
+   * fulfilled, before the call connects, so a gate created at `connected`
+   * would wait for an event that has already fired.
+   */
+  private audioSessionActive = false;
+  /** Shared by every wait until the next activation; see {@link waitForAudioSession}. */
+  private audioSessionReady: { promise: Promise<void>; resolve: () => void } | null = null;
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
 
@@ -432,6 +442,10 @@ export class CallKeepBridge {
         this.handleAnswerCall((event.data as { callUUID: string }).callUUID);
       } else if (event?.name === 'RNCallKeepPerformEndCallAction') {
         this.handleEndCall((event.data as { callUUID: string }).callUUID);
+      } else if (event?.name === 'RNCallKeepDidActivateAudioSession') {
+        this.setAudioSessionActive(true);
+      } else if (event?.name === 'RNCallKeepDidDeactivateAudioSession') {
+        this.setAudioSessionActive(false);
       }
     }
   }
@@ -511,9 +525,40 @@ export class CallKeepBridge {
     // iOS only. Starting media before this fires yields a silent call.
     RNCallKeep.addEventListener('didActivateAudioSession', () => {
       logger.debug('Audio session activated');
-      this.releaseAudioGate?.();
-      this.releaseAudioGate = null;
+      this.setAudioSessionActive(true);
     });
+
+    RNCallKeep.addEventListener('didDeactivateAudioSession', () => {
+      logger.debug('Audio session deactivated');
+      this.setAudioSessionActive(false);
+    });
+  }
+
+  private setAudioSessionActive(active: boolean): void {
+    this.audioSessionActive = active;
+    if (active) {
+      this.audioSessionReady?.resolve();
+      this.audioSessionReady = null;
+    }
+  }
+
+  /**
+   * Resolves once the audio session is active: at once if it already is. Every
+   * wait before the next activation shares one promise, so the answer-time and
+   * the connect-time start of one inbound call are both released by it.
+   */
+  private waitForAudioSession(): Promise<void> {
+    if (this.audioSessionActive) {
+      return Promise.resolve();
+    }
+    if (!this.audioSessionReady) {
+      let resolve: () => void = () => undefined;
+      const promise = new Promise<void>((done) => {
+        resolve = done;
+      });
+      this.audioSessionReady = { promise, resolve };
+    }
+    return this.audioSessionReady.promise;
   }
 
   /**
@@ -524,10 +569,8 @@ export class CallKeepBridge {
    * The timeout prevents a permanently silent call if the event never fires.
    */
   private async startAudioWhenSessionReady(): Promise<void> {
-    if (Platform.OS === 'ios') {
-      const gate = new Promise<void>((resolve) => {
-        this.releaseAudioGate = resolve;
-      });
+    if (Platform.OS === 'ios' && !this.audioSessionActive) {
+      const gate = this.waitForAudioSession();
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         gate,
