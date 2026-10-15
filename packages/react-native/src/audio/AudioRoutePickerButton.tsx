@@ -12,7 +12,16 @@ export interface AudioRoutePickerButtonProps extends ViewProps {
 
 const NAME = 'SWAudioRoutePicker';
 
-let nativeView: HostComponent<AudioRoutePickerButtonProps> | null | undefined;
+/**
+ * Kept on `globalThis`, not in module scope: the audio entry ships as both
+ * `dist/audio.mjs` and `dist/audio.js`, and an app can load both (its own
+ * `import`, a dependency's `require`). React Native throws when a view is
+ * registered twice under one name, so one process gets one registration (see
+ * the CallKit bridge's note on duplicated bundles).
+ */
+const PICKER_GLOBAL = '__signalwireRNAudioRoutePicker';
+
+type PickerHolder = { [PICKER_GLOBAL]?: HostComponent<AudioRoutePickerButtonProps> | null };
 
 /**
  * Whether {@link AudioRoutePickerButton} draws anything: iOS, with this
@@ -23,14 +32,15 @@ export function isAudioRoutePickerAvailable(): boolean {
 }
 
 function getNativeView(): HostComponent<AudioRoutePickerButtonProps> | null {
-  if (nativeView !== undefined) {
-    return nativeView;
+  if (Platform.OS !== 'ios') {
+    return null;
   }
-  const linked =
-    Platform.OS === 'ios' &&
-    (UIManager.hasViewManagerConfig?.(NAME) ?? Boolean(UIManager.getViewManagerConfig?.(NAME)));
-  nativeView = linked ? requireNativeComponent<AudioRoutePickerButtonProps>(NAME) : null;
-  return nativeView;
+  const holder = globalThis as PickerHolder;
+  if (holder[PICKER_GLOBAL] === undefined) {
+    const linked = UIManager.hasViewManagerConfig?.(NAME) ?? Boolean(UIManager.getViewManagerConfig?.(NAME));
+    holder[PICKER_GLOBAL] = linked ? requireNativeComponent<AudioRoutePickerButtonProps>(NAME) : null;
+  }
+  return holder[PICKER_GLOBAL];
 }
 
 /**
@@ -56,5 +66,5 @@ export function AudioRoutePickerButton({
 
 /** Test seam: look the native view up again. */
 export function resetAudioRoutePickerForTesting(): void {
-  nativeView = undefined;
+  delete (globalThis as PickerHolder)[PICKER_GLOBAL];
 }

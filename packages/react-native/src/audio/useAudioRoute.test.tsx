@@ -31,7 +31,7 @@ describe('useAudioRoute', () => {
 
   it('setRoute drives the controller', async () => {
     await render(<Probe />);
-    await act(async () => result?.setRoute('bluetooth'));
-    expect(getAudioRouteController().route).toBe('bluetooth');
+    await act(async () => result?.setRoute('speaker'));
+    expect(getAudioRouteController().route).toBe('speaker');
   });
 });

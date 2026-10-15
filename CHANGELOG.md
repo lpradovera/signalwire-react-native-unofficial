@@ -19,30 +19,43 @@
   SDK call exists starts in the app's mode; when its call arrives voice only,
   audio moves off the speaker unless the user already picked a route.
 
-### iOS audio routes, and native code in `@signalwire/react-native`
+### Audio routes
 
-- **The package now ships native iOS code** (`ios/`, pod
-  `SignalWireReactNative`). It autolinks, but an app has it only after a native
-  rebuild: `pod install`, or `expo prebuild` / `expo run:ios`.
-- Earpiece and Bluetooth routes work on iOS. `react-native-incall-manager` has
-  no iOS `chooseAudioRoute` (through 4.3.0), so every iOS Bluetooth choice
-  used to be an unhandled rejection; iOS now uses the package's own module.
-  Android still uses incall-manager.
-- `useAudioDevices()`, `getAudioDeviceStatus()` and
-  `addAudioDeviceChangeListener()`: the routes available and the one iOS is
-  playing through, by name, kept current as headsets and cars come and go.
-- `AudioRoutePickerButton`: the system audio output button
-  (`AVRoutePickerView`). `CallControls` shows it on iOS (`showRoutePicker`).
-- On iOS `useAudioRoute().route` follows the route iOS settled on: a choice in
-  the system picker, or a headset or car connecting or dropping. The speaker
-  toggle stays in step with it.
-- `setSpeakerOn(on)` on `useAudioRoute()` and `AudioRouteController`: speaker
-  off returns to the call's earlier or default route (a connected headset or
-  car), where `setRoute('earpiece')` pins the receiver. `CallControls` uses it.
-- iOS ownership of the audio session is split cleanly: incall-manager keeps the
-  category, mode and speaker override (its force-speaker flag, which every
-  route now sets to match); the package's module only picks the device off the
-  speaker.
+- **`setRoute('earpiece')` now means the receiver** on iOS too, when
+  incall-manager has iOS routes (see below), as it already did on Android: it
+  moves a call off a connected headset or car. For a speaker toggle use the
+  new `setSpeakerOn(on)` on `useAudioRoute()` and `AudioRouteController`,
+  whose "off" returns to the call's earlier or default route. A toggle
+  written as `setRoute(route === 'speaker' ? 'earpiece' : 'speaker')` should
+  switch to `setSpeakerOn(route !== 'speaker')`. `CallControls` uses it.
+- iOS routes beyond speaker on/off need react-native-incall-manager with iOS
+  audio routes (the upstream change, or
+  `docs/patches/react-native-incall-manager+4.3.0.patch`). The package
+  detects them at run time. With them: every route can be chosen, and `route`
+  follows what iOS reports (the starting device, a headset or car connecting
+  or dropping, the system route menu, CallKit's speaker button). Without
+  them (released incall-manager): `'bluetooth'` is ignored with one warning
+  instead of an unhandled rejection on every choice, and `'earpiece'` turns
+  the speaker off.
+- `useAudioDevices()` and `getAudioDeviceStatus()`: the devices available and
+  the one iOS is playing through, by name. iOS with iOS routes only.
+- A refused route (no such device) leaves `route` where it was.
+- `AudioRouteController.setRoute` no longer takes a `force` argument.
+- `stop()` makes no native call after `InCallManager.stop()`. It used to turn
+  the speaker off afterwards, which after a video call switched the idle
+  session to voice chat mode and turned the proximity sensor back on.
+- `CallControls`' speaker button reads "Bluetooth" when the call is on a
+  Bluetooth device.
+
+### The system audio output button, natively
+
+- **The package now ships a little native iOS code** (`ios/`, pod
+  `SignalWireReactNative`): `AudioRoutePickerButton`, the system audio output
+  button (`AVRoutePickerView`). It autolinks, but an app has it only after a
+  native rebuild (`pod install`, or `expo prebuild` / `expo run:ios`); until
+  then it renders nothing. It writes nothing to the audio session.
+- `CallControls` shows it on iOS. `showRoutePicker` defaults to
+  `showAudioRoute`, so an app that hid audio routing doesn't get it.
 
 ### CallKit outbound call names
 
