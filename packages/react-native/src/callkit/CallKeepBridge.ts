@@ -328,10 +328,10 @@ export class CallKeepBridge {
   /**
    * Registers an outbound call with the native UI. Returns its UUID.
    *
-   * `options.video` says whether the call sends video (default: a voice call),
-   * which decides the native call type and where audio starts: a voice call on
-   * the receiver (or a connected Bluetooth headset or car), a video call on the
-   * loudspeaker.
+   * `options.video` says whether the call carries video, sent or received
+   * (default: a voice call). It decides the native call type and where audio
+   * starts: a voice call on the receiver (or a connected Bluetooth headset or
+   * car), a video call on the loudspeaker.
    */
   trackCall(call: Call, handle: string, displayName: string, options: { video?: boolean } = {}): string {
     this.callMedia.set(call, options.video ? 'video' : 'audio');

@@ -1,5 +1,7 @@
 import { getCallKit } from './CallKeepBridge';
+import { dialsVideo } from './dialMedia';
 
+import type { SignalWire } from '@signalwire/js';
 import type { CallObserver } from '@signalwire/react';
 
 /**
@@ -11,10 +13,18 @@ import type { CallObserver } from '@signalwire/react';
  * reaches a browser bundle.
  */
 export function createCallKitObserver(): CallObserver {
+  // Kept for its preferences, which decide (with the dial options) whether a
+  // call carries video.
+  let client: SignalWire | undefined;
   return {
-    bindClient: (client) => getCallKit().bindClient(client),
+    bindClient: (bound) => {
+      client = bound;
+      getCallKit().bindClient(bound);
+    },
     onOutgoingCall: (call, destination, options) =>
-      void getCallKit().trackCall(call, destination, destination, { video: Boolean(options?.video) }),
+      void getCallKit().trackCall(call, destination, destination, {
+        video: dialsVideo(destination, options, client?.preferences)
+      }),
     onIncomingAnswer: (call) => getCallKit().answerIncomingFromApp(call),
     onIncomingReject: (call) => getCallKit().rejectIncomingFromApp(call)
   };
