@@ -5,13 +5,19 @@ import { BehaviorSubject, Subject } from 'rxjs';
 jest.mock('@signalwire/react-native/audio', () => {
   // State lives inside the factory: a factory that closes over an outer const
   // reads it before the initialiser has run.
-  const state = { route: 'earpiece', setRoute: jest.fn() };
-  return { useAudioRoute: () => state, __state: state };
+  const state = { route: 'earpiece', setRoute: jest.fn(), setSpeakerOn: jest.fn(), pickerAvailable: false };
+  const { View } = jest.requireActual('react-native');
+  return {
+    useAudioRoute: () => state,
+    isAudioRoutePickerAvailable: () => state.pickerAvailable,
+    AudioRoutePickerButton: (props: object) => <View {...props} />,
+    __state: state
+  };
 });
 
  
 const audio = require('@signalwire/react-native/audio') as {
-  __state: { route: string; setRoute: jest.Mock };
+  __state: { route: string; setRoute: jest.Mock; setSpeakerOn: jest.Mock; pickerAvailable: boolean };
 };
 
 import { CallControls } from './CallControls';
@@ -65,6 +71,7 @@ function createCall() {
 beforeEach(() => {
   jest.clearAllMocks();
   audio.__state.route = 'earpiece';
+  audio.__state.pickerAvailable = false;
 });
 
 describe('CallControls', () => {
@@ -117,10 +124,20 @@ describe('CallControls', () => {
     expect(call.hangup).toHaveBeenCalled();
   });
 
-  it('toggles the audio route', async () => {
+  it('toggles the speaker on', async () => {
     await render(<CallControls call={createCall() as never} />);
     fireEvent.press(screen.getByTestId('sw-route'));
-    expect(audio.__state.setRoute).toHaveBeenCalledWith('speaker');
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
+  });
+
+  it('toggles the speaker off without choosing the earpiece', async () => {
+    // setRoute('earpiece') pins the call to the receiver, pulling it off a car
+    // or headset; off returns to the call's own route instead.
+    audio.__state.route = 'speaker';
+    await render(<CallControls call={createCall() as never} />);
+    fireEvent.press(screen.getByTestId('sw-route'));
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(false);
+    expect(audio.__state.setRoute).not.toHaveBeenCalled();
   });
 
   it('hides the camera toggle when asked', async () => {
@@ -131,6 +148,22 @@ describe('CallControls', () => {
   it('hides the route toggle when asked', async () => {
     await render(<CallControls call={createCall() as never} showAudioRoute={false} />);
     expect(screen.queryByTestId('sw-route')).toBeNull();
+  });
+
+  it('shows the system audio output button where it is available (iOS)', async () => {
+    audio.__state.pickerAvailable = true;
+    await render(<CallControls call={createCall() as never} />);
+    expect(screen.getByTestId('sw-route-picker')).toBeTruthy();
+    expect(screen.getByTestId('sw-route')).toBeTruthy();
+  });
+
+  it('leaves the output button out where it is not, or when asked', async () => {
+    await render(<CallControls call={createCall() as never} />);
+    expect(screen.queryByTestId('sw-route-picker')).toBeNull();
+
+    audio.__state.pickerAvailable = true;
+    await render(<CallControls call={createCall() as never} showRoutePicker={false} />);
+    expect(screen.queryByTestId('sw-route-picker')).toBeNull();
   });
 
   it('renders with a null call without throwing', async () => {

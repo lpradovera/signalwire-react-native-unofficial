@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+### iOS audio routes, and native code in `@signalwire/react-native`
+
+- **The package now ships native iOS code** (`ios/`, pod
+  `SignalWireReactNative`). It autolinks, but an app has it only after a native
+  rebuild: `pod install`, or `expo prebuild` / `expo run:ios`.
+- Earpiece and Bluetooth routes work on iOS. `react-native-incall-manager` has
+  no iOS `chooseAudioRoute` (through 4.3.0), so every iOS Bluetooth choice
+  used to be an unhandled rejection; iOS now uses the package's own module.
+  Android still uses incall-manager.
+- `useAudioDevices()`, `getAudioDeviceStatus()` and
+  `addAudioDeviceChangeListener()`: the routes available and the one iOS is
+  playing through, by name, kept current as headsets and cars come and go.
+- `AudioRoutePickerButton`: the system audio output button
+  (`AVRoutePickerView`). `CallControls` shows it on iOS (`showRoutePicker`).
+- On iOS `useAudioRoute().route` follows the route iOS settled on: a choice in
+  the system picker, or a headset or car connecting or dropping. The speaker
+  toggle stays in step with it.
+- `setSpeakerOn(on)` on `useAudioRoute()` and `AudioRouteController`: speaker
+  off returns to the call's earlier or default route (a connected headset or
+  car), where `setRoute('earpiece')` pins the receiver. `CallControls` uses it.
+- iOS ownership of the audio session is split cleanly: incall-manager keeps the
+  category, mode and speaker override (its force-speaker flag, which every
+  route now sets to match); the package's module only picks the device off the
+  speaker.
+
 ## 0.1.0
 
 First release. React Native support for `@signalwire/js` v4 — platform
