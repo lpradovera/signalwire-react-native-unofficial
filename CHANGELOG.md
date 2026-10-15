@@ -44,6 +44,18 @@
   route now sets to match); the package's module only picks the device off the
   speaker.
 
+### CallKit outbound call names
+
+- New `callKit={{ displayName: (destination) => string }}` on
+  `SignalWireProvider` (React Native): the name CallKit and Recents show for an
+  outbound call. The default is still the destination. Each call reads the
+  latest prop. A `displayName` that throws or returns an empty string falls
+  back to the destination, so the call placed by `dial()` is still tracked.
+- `CallKitObserverOptions` is exported from `@signalwire/react-native/callkit`.
+- `@signalwire/react`'s `SignalWireProvider` now binds an observer that
+  arrives after the client was built (turning `callKit` on after mount), so it
+  mirrors inbound calls too.
+
 ## 0.1.0
 
 First release. React Native support for `@signalwire/js` v4 — platform
