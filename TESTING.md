@@ -257,9 +257,11 @@ open SignalWireRNExample.xcworkspace
 cannot build SDK 54 anyway.
 
 **Xcode 27 / iOS 27** need two things the example applies itself, as config
-plugins in `example/plugins/`: `withPodDeploymentTarget` raises pods that still
-declare iOS 9 (Xcode 27 refuses anything below 15.0), and `withSceneLifecycle`
-adopts the UIScene lifecycle, without which iOS 27 ends the app at launch in
+plugins in `example/plugins/`: `withPodDeploymentTarget` raises pod resource
+bundles that still declare iOS 9 to the app's deployment target (Xcode 27
+refuses anything below 15.0; React Native already raises the pods' own
+targets), and `withSceneLifecycle` adopts the UIScene lifecycle, without which
+iOS 27 ends the app at launch in
 `_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`. An app of your
 own built with the iOS 27 SDK needs the same.
 
