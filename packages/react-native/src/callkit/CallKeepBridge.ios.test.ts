@@ -42,6 +42,13 @@ function createCall(id: string) {
   };
 }
 
+/** Lets the bridge's promise chain settle under fake timers. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await Promise.resolve();
+  }
+}
+
 describe('CallKeepBridge on iOS — the audio-session gate', () => {
   let bridge: CallKeepBridge;
 
@@ -129,6 +136,128 @@ describe('CallKeepBridge on iOS — the audio-session gate', () => {
     await Promise.resolve();
 
     expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
+  });
+
+  it('starts audio when CallKit activates the session, and leaves no fallback timer behind', async () => {
+    const call = createCall('out-1');
+    bridge.trackCall(call as never, '/public/room', 'Support');
+    call.status$.next('connected');
+    await flush();
+    expect(InCallManager.start).not.toHaveBeenCalled();
+
+    callkeep.__emit('didActivateAudioSession', {});
+    await flush();
+
+    expect(InCallManager.start).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('still starts audio after the fallback timeout when the session never activates', async () => {
+    const call = createCall('out-2');
+    bridge.trackCall(call as never, '/public/room', 'Support');
+    call.status$.next('connected');
+    await flush();
+    expect(InCallManager.start).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(3000);
+    await flush();
+
+    expect(InCallManager.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts an outbound call at once when CallKit activated the session before it connected', async () => {
+    // CallKit activates the session for an outbound call when the start-call
+    // action is fulfilled, before the far end answers. A gate created at
+    // `connected` used to wait for an activation that had already happened.
+    const call = createCall('out-3');
+    bridge.trackCall(call as never, '/public/room', 'Support');
+    callkeep.__emit('didActivateAudioSession', {});
+    call.status$.next('connected');
+    await flush();
+
+    expect(InCallManager.start).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('releases the answer-time and the connect-time wait with one activation', async () => {
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient({ session: { incomingCalls$: incoming$ } } as never);
+    const call = createCall('in-1');
+    incoming$.next([call]);
+    const uuid = (RNCallKeep.displayIncomingCall as jest.Mock).mock.calls[0]?.[0] as string;
+
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    call.status$.next('connected');
+    await flush();
+    expect(call.answer).toHaveBeenCalled();
+    expect(InCallManager.start).not.toHaveBeenCalled();
+
+    callkeep.__emit('didActivateAudioSession', {});
+    await flush();
+
+    expect(InCallManager.start).toHaveBeenCalledTimes(1);
+    // Neither wait is left holding a fallback timer.
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('waits again once CallKit has deactivated the session', async () => {
+    callkeep.__emit('didActivateAudioSession', {});
+    callkeep.__emit('didDeactivateAudioSession', {});
+    const call = createCall('out-4');
+    bridge.trackCall(call as never, '/public/room', 'Support');
+    call.status$.next('connected');
+    await flush();
+    expect(InCallManager.start).not.toHaveBeenCalled();
+
+    callkeep.__emit('didActivateAudioSession', {});
+    await flush();
+    expect(InCallManager.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts an activation callkeep replayed from before JavaScript started', async () => {
+    callkeep.__emit('didLoadWithEvents', [{ name: 'RNCallKeepDidActivateAudioSession', data: null }]);
+    const call = createCall('out-5');
+    bridge.trackCall(call as never, '/public/room', 'Support');
+    call.status$.next('connected');
+    await flush();
+
+    expect(InCallManager.start).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('does not start audio for a call that ended while it waited for the session', async () => {
+    // Started anyway, the session would stay up with nothing to stop it, and
+    // because start() is first-wins the next call would inherit its mode.
+    const call = createCall('out-6');
+    bridge.trackCall(call as never, '/public/room', 'Support');
+    call.status$.next('connected');
+    await flush();
+    call.status$.next('ended');
+    await flush();
+
+    callkeep.__emit('didActivateAudioSession', {});
+    await flush();
+    expect(InCallManager.start).not.toHaveBeenCalled();
+
+    // Nor when the fallback fires instead.
+    const late = createCall('out-7');
+    bridge.trackCall(late as never, '/public/room', 'Support');
+    callkeep.__emit('didDeactivateAudioSession', {});
+    late.status$.next('connected');
+    await flush();
+    late.status$.next('ended');
+    await jest.advanceTimersByTimeAsync(3100);
+    expect(InCallManager.start).not.toHaveBeenCalled();
+  });
+
+  it('starts audio for an answered push once its session is up, before its SDK call exists', async () => {
+    // A pending push entry is live: the liveness check must not drop it.
+    const uuid = bridge.reportIncomingPush({ callId: 'c-later' });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    callkeep.__emit('didActivateAudioSession', {});
+    await flush();
+
+    expect(InCallManager.start).toHaveBeenCalledTimes(1);
   });
 
   it('stops the audio session when the call ends', () => {
@@ -302,6 +431,19 @@ describe('CallKeepBridge — the fusion tick timer', () => {
 
   it('ignores an empty replay, which is the warm-start case', () => {
     expect(() => callkeep.__emit('didLoadWithEvents', [])).not.toThrow();
+  });
+
+  it("clears callkeep's launch buffer once it is replayed", () => {
+    // callkeep keeps the buffer for the life of the process and sends it again
+    // on every startObserving (a JS reload, say): replayed again, an old
+    // answer would start audio for a dead call, and an old activation would
+    // claim a session that is gone.
+    callkeep.__emit('didLoadWithEvents', [
+      { name: 'RNCallKeepPerformAnswerCallAction', data: { callUUID: 'old-uuid' } },
+      { name: 'RNCallKeepDidActivateAudioSession', data: null }
+    ]);
+
+    expect(RNCallKeep.clearInitialEvents).toHaveBeenCalledTimes(1);
   });
 
   it('adopts the launch push, which is the only record of a cold-start call', async () => {
