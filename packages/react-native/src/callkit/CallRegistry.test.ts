@@ -245,7 +245,7 @@ describe('CallRegistry — in-app inbound and outbound', () => {
 
     const uuid = registry.attachOutgoingCall(createCall('c1') as never, '/public/room', 'Support');
 
-    expect(host.startOutgoingCall).toHaveBeenCalledWith(uuid, '/public/room', 'Support');
+    expect(host.startOutgoingCall).toHaveBeenCalledWith(uuid, '/public/room', 'Support', false);
     expect(registry.entryForUuid(uuid)?.state).toBe('fused');
   });
 
