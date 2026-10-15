@@ -129,9 +129,10 @@ module.exports = function withSceneLifecycle(config) {
       }
       contents = contents.replace(launch, (head) => `${head}    ${LAUNCH_MARK}\n    SceneDelegate.watchForContent()\n`);
     }
-    if (!contents.includes(MARK)) {
-      contents += SCENE_DELEGATE;
-    }
+    // The SceneDelegate is the last thing in the file: rewritten on every
+    // prebuild, so a change here reaches an existing ios/ without --clean.
+    const existing = contents.indexOf(`\n${MARK}`);
+    contents = (existing === -1 ? contents : contents.slice(0, existing)) + SCENE_DELEGATE;
     delegateConfig.modResults.contents = contents;
     return delegateConfig;
   });
