@@ -1,5 +1,7 @@
+import { Platform } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
 
+import { logger } from '@signalwire/react';
 import { AudioRouteController } from './AudioRouteController';
 
 describe('AudioRouteController', () => {
@@ -28,6 +30,41 @@ describe('AudioRouteController', () => {
     expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
     expect(controller.route).toBe('speaker');
     expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenCalledWith(true);
+  });
+
+  it('start leaves a connected Bluetooth device in charge (iOS)', () => {
+    controller.start('audio');
+    expect(InCallManager.chooseAudioRoute).not.toHaveBeenCalled();
+  });
+
+  it('choosing the earpiece moves the call off Bluetooth (iOS)', async () => {
+    controller.start('audio');
+    controller.setRoute('speaker');
+    controller.setRoute('earpiece');
+    await Promise.resolve();
+    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(false);
+    expect(InCallManager.chooseAudioRoute).toHaveBeenCalledWith('EARPIECE');
+  });
+
+  it('a route the platform refuses is logged, not an unhandled rejection', async () => {
+    (InCallManager.chooseAudioRoute as jest.Mock).mockRejectedValueOnce(new Error('No BLUETOOTH audio route'));
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    controller.start('audio');
+    controller.setRoute('bluetooth');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(controller.route).toBe('bluetooth');
+    expect(warn).toHaveBeenCalledWith('Failed to apply audio route "bluetooth":', expect.any(Error));
+    warn.mockRestore();
+  });
+
+  it('choosing the earpiece on Android only turns the speaker off', () => {
+    const os = jest.replaceProperty(Platform, 'OS', 'android');
+    controller.start('audio');
+    controller.setRoute('speaker');
+    controller.setRoute('earpiece');
+    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(false);
+    expect(InCallManager.chooseAudioRoute).not.toHaveBeenCalled();
+    os.restore();
   });
 
   it('setRoute("speaker") forces speakerphone on', () => {
