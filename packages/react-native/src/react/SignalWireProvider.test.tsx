@@ -68,7 +68,7 @@ describe('React Native SignalWireProvider', () => {
   it('hands CallKit options to the observer', async () => {
     const displayName = (): string => 'Support';
     await renderProvider({ callKit: { displayName } });
-    expect(createObserver.mock.calls[0]?.[0]?.displayName?.('/private/agent')).toBe('Support');
+    expect(createObserver.mock.calls[0]?.[0]?.().displayName?.('/private/agent')).toBe('Support');
   });
 
   it('names calls with the latest displayName prop, without rebuilding the observer', async () => {
@@ -81,7 +81,7 @@ describe('React Native SignalWireProvider', () => {
     await view.rerender(tree((destination) => `Agent ${destination}`));
 
     expect(createObserver).toHaveBeenCalledTimes(1);
-    expect(createObserver.mock.calls[0]?.[0]?.displayName?.('7')).toBe('Agent 7');
+    expect(createObserver.mock.calls[0]?.[0]?.().displayName?.('7')).toBe('Agent 7');
   });
 
   it('falls back to the destination once displayName is dropped', async () => {
@@ -95,7 +95,7 @@ describe('React Native SignalWireProvider', () => {
         <Text>child</Text>
       </SignalWireProvider>
     );
-    expect(createObserver.mock.calls[0]?.[0]?.displayName?.('/private/agent')).toBe('/private/agent');
+    expect(createObserver.mock.calls[0]?.[0]?.().displayName).toBeUndefined();
   });
 
   it('passes the credential provider and options through untouched', async () => {
