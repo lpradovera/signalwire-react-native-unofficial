@@ -1,6 +1,16 @@
 import { Platform } from 'react-native';
 import RNCallKeep, { CONSTANTS } from 'react-native-callkeep';
-import { EMPTY, of, Subject, switchMap, takeUntil } from 'rxjs';
+import {
+  BehaviorSubject,
+  EMPTY,
+  filter,
+  firstValueFrom,
+  of,
+  Subject,
+  switchMap,
+  takeUntil,
+  timeout
+} from 'rxjs';
 
 import { getAudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
@@ -91,9 +101,7 @@ export class CallKeepBridge {
    * fulfilled, before the call connects, so a gate created at `connected`
    * would wait for an event that has already fired.
    */
-  private audioSessionActive = false;
-  /** Shared by every wait until the next activation; see {@link waitForAudioSession}. */
-  private audioSessionReady: { promise: Promise<void>; resolve: () => void } | null = null;
+  private readonly audioSessionActive$ = new BehaviorSubject(false);
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
   /**
@@ -464,6 +472,13 @@ export class CallKeepBridge {
         this.setAudioSessionActive(false);
       }
     }
+    // callkeep keeps this buffer for the life of the process and sends it
+    // again on every startObserving (an in-process JS reload, say). Replayed a
+    // second time, an old answer would start audio for a call that is over,
+    // and an old activation would claim a session that is gone.
+    if (typeof RNCallKeep.clearInitialEvents === 'function') {
+      RNCallKeep.clearInitialEvents();
+    }
   }
 
   private handleAnswerCall(callUUID: string): void {
@@ -471,7 +486,7 @@ export class CallKeepBridge {
     // Applied synchronously — the registry buffers it when the SDK call has
     // not arrived yet. Only the audio start waits for the audio session.
     this.registry.applyIntent(callUUID, 'answer');
-    void this.startAudioWhenSessionReady(this.mediaFor(this.registry.entryForUuid(callUUID)?.call));
+    void this.startAudioWhenSessionReady(callUUID);
   }
 
   private handleEndCall(callUUID: string): void {
@@ -551,54 +566,39 @@ export class CallKeepBridge {
   }
 
   private setAudioSessionActive(active: boolean): void {
-    this.audioSessionActive = active;
-    if (active) {
-      this.audioSessionReady?.resolve();
-      this.audioSessionReady = null;
-    }
+    this.audioSessionActive$.next(active);
   }
 
   /**
-   * Resolves once the audio session is active: at once if it already is. Every
-   * wait before the next activation shares one promise, so the answer-time and
-   * the connect-time start of one inbound call are both released by it.
-   */
-  private waitForAudioSession(): Promise<void> {
-    if (this.audioSessionActive) {
-      return Promise.resolve();
-    }
-    if (!this.audioSessionReady) {
-      let resolve: () => void = () => undefined;
-      const promise = new Promise<void>((done) => {
-        resolve = done;
-      });
-      this.audioSessionReady = { promise, resolve };
-    }
-    return this.audioSessionReady.promise;
-  }
-
-  /**
-   * Starts the audio route once CallKit activates the audio session.
+   * Starts the audio route once CallKit activates the audio session, for a
+   * call that is still live by then.
    *
    * Starting media before `didActivateAudioSession` yields a connected but
    * silent call on iOS. Android has no such event, so this runs immediately.
    * The timeout prevents a permanently silent call if the event never fires.
+   * One activation releases every wait, so the answer-time and the
+   * connect-time start of one inbound call go together.
    */
-  private async startAudioWhenSessionReady(media: 'audio' | 'video'): Promise<void> {
-    if (Platform.OS === 'ios' && !this.audioSessionActive) {
-      const gate = this.waitForAudioSession();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
-        gate,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, AUDIO_SESSION_TIMEOUT_MS);
-        })
-      ]);
-      // Once the session is up the fallback has nothing left to do; left running,
-      // it holds the JS runtime (and a test runner) open for the rest of its 3 s.
-      clearTimeout(timer);
+  private async startAudioWhenSessionReady(uuid: string): Promise<void> {
+    if (Platform.OS === 'ios') {
+      await firstValueFrom(
+        this.audioSessionActive$.pipe(
+          filter(Boolean),
+          timeout({ first: AUDIO_SESSION_TIMEOUT_MS, with: () => of(true) }),
+          takeUntil(this.destroyed$)
+        ),
+        { defaultValue: false }
+      );
     }
-    this.startAudio(media);
+    // The call can end during the wait. Started anyway, the session would stay
+    // up with nothing left to stop it, and the next call, whose own start is
+    // ignored because start() is first-wins, would inherit this call's mode.
+    const entry = this.registry.entryForUuid(uuid);
+    if (!entry || entry.state === 'ended') {
+      logger.debug(`Call ${uuid} ended before its audio session was ready; not starting audio`);
+      return;
+    }
+    this.startAudio(this.mediaFor(entry.call));
   }
 
   /** How a call's audio session starts: its own media when known, else the app's. */
@@ -637,7 +637,7 @@ export class CallKeepBridge {
         // the session in its default category — a connected but silent call.
         // `AudioRouteController.start` is idempotent, so an inbound call that
         // already started audio on answer is unaffected.
-        void this.startAudioWhenSessionReady(this.mediaFor(call));
+        void this.startAudioWhenSessionReady(uuid);
         return;
       }
       if (TERMINAL_STATUSES.has(status)) {
