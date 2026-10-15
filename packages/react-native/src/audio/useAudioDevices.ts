@@ -1,41 +1,19 @@
-import { useEffect, useState } from 'react';
-
-import { logger } from '@signalwire/react';
-import { addAudioDeviceChangeListener, getAudioDeviceStatus } from './nativeAudioRoutes';
+import { useObservable } from '@signalwire/react';
+import { NO_AUDIO_DEVICES, audioDevices$ } from './nativeAudioRoutes';
 
 import type { AudioDeviceStatus } from './nativeAudioRoutes';
 
-const NONE: AudioDeviceStatus = { available: [], selected: null, selectedName: '' };
-
 /**
  * What the phone can play a call through and what it is playing through now,
- * kept current as headsets and cars connect and drop. Unlike `useAudioRoute`,
- * which reports the route that was asked for, this is what iOS settled on.
+ * by device (`WIRED_HEADSET`, or the car's own name), kept current as
+ * headsets and cars come and go. `useAudioRoute().route` is the coarser
+ * three-way route (`'earpiece' | 'speaker' | 'bluetooth'`) the speaker toggle
+ * works with; with iOS routes it follows the same reports.
  *
- * iOS only: on Android it stays empty (`available: []`, `selected: null`).
+ * iOS only, and only with a react-native-incall-manager that has iOS audio
+ * routes (see "Audio routes on iOS" in the README). Otherwise it stays empty:
+ * `available: []`, `selected: null`.
  */
 export function useAudioDevices(): AudioDeviceStatus {
-  const [status, setStatus] = useState<AudioDeviceStatus>(NONE);
-
-  useEffect(() => {
-    let live = true;
-    const unsubscribe = addAudioDeviceChangeListener((next) => {
-      if (live) {
-        setStatus(next);
-      }
-    });
-    getAudioDeviceStatus()
-      .then((current) => {
-        if (live && current) {
-          setStatus(current);
-        }
-      })
-      .catch((error: unknown) => logger.warn('Failed to read the audio devices:', error));
-    return () => {
-      live = false;
-      unsubscribe();
-    };
-  }, []);
-
-  return status;
+  return useObservable(audioDevices$, NO_AUDIO_DEVICES);
 }

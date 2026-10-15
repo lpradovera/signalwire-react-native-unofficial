@@ -2,7 +2,7 @@ require 'json'
 
 package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
 
-# iOS audio routes and the system route picker. Autolinked: an app picks this up
+# The system audio route button (AVRoutePickerView). Autolinked: an app picks this up
 # on its next `pod install` (Expo: `expo prebuild` / `expo run:ios`).
 Pod::Spec.new do |s|
   s.name         = 'SignalWireReactNative'
@@ -14,7 +14,7 @@ Pod::Spec.new do |s|
   s.platforms    = { :ios => '15.1' }
   s.source       = { :git => package['repository']['url'], :tag => "v#{s.version}" }
   s.source_files = 'ios/**/*.{h,m}'
-  s.frameworks   = 'AVFoundation', 'AVKit'
+  s.frameworks   = 'AVKit'
 
   if respond_to?(:install_modules_dependencies, true)
     install_modules_dependencies(s)
