@@ -349,7 +349,7 @@ export default function App() {
 | `useIncomingCalls()` | `calls`, `answer`, `reject` | `@signalwire/react-native` |
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` | `@signalwire/react-native` |
 | `useObservable(obs$, initial)` | The latest value of any SDK observable | `@signalwire/react-native` |
-| `useAudioRoute()` | `route`, `setRoute` | `@signalwire/react-native/audio` |
+| `useAudioRoute()` | `route`, `setRoute`, `setSpeakerOn` | `@signalwire/react-native/audio` |
 | `useAudioDevices()` | `available`, `selected`, `selectedName` (e.g. the car's name) — what iOS is actually playing through. iOS only. | `@signalwire/react-native/audio` |
 
 `useAudioRoute()` reports the route that was asked for; iOS has the last word

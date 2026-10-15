@@ -50,7 +50,7 @@ export function CallControls({
 }: CallControlsProps): React.JSX.Element {
   const theme = useSignalWireTheme();
   const { isAudioMuted, isVideoMuted, setAudioMuted, setVideoMuted, hangup } = useCall(call);
-  const { route, setRoute } = useAudioRoute();
+  const { route, setSpeakerOn } = useAudioRoute();
 
   return (
     <View
@@ -79,7 +79,9 @@ export function CallControls({
           testID="sw-route"
           label={route === 'speaker' ? 'Speaker' : 'Earpiece'}
           active={route === 'speaker'}
-          onPress={() => setRoute(route === 'speaker' ? 'earpiece' : 'speaker')}
+          // Off returns to the call's own route (a headset or car, if one is
+          // connected), not the receiver.
+          onPress={() => setSpeakerOn(route !== 'speaker')}
         />
       ) : null}
 

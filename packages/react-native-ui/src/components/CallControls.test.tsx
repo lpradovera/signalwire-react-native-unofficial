@@ -5,7 +5,7 @@ import { BehaviorSubject, Subject } from 'rxjs';
 jest.mock('@signalwire/react-native/audio', () => {
   // State lives inside the factory: a factory that closes over an outer const
   // reads it before the initialiser has run.
-  const state = { route: 'earpiece', setRoute: jest.fn(), pickerAvailable: false };
+  const state = { route: 'earpiece', setRoute: jest.fn(), setSpeakerOn: jest.fn(), pickerAvailable: false };
   const { View } = jest.requireActual('react-native');
   return {
     useAudioRoute: () => state,
@@ -17,7 +17,7 @@ jest.mock('@signalwire/react-native/audio', () => {
 
  
 const audio = require('@signalwire/react-native/audio') as {
-  __state: { route: string; setRoute: jest.Mock; pickerAvailable: boolean };
+  __state: { route: string; setRoute: jest.Mock; setSpeakerOn: jest.Mock; pickerAvailable: boolean };
 };
 
 import { CallControls } from './CallControls';
@@ -124,10 +124,20 @@ describe('CallControls', () => {
     expect(call.hangup).toHaveBeenCalled();
   });
 
-  it('toggles the audio route', async () => {
+  it('toggles the speaker on', async () => {
     await render(<CallControls call={createCall() as never} />);
     fireEvent.press(screen.getByTestId('sw-route'));
-    expect(audio.__state.setRoute).toHaveBeenCalledWith('speaker');
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
+  });
+
+  it('toggles the speaker off without choosing the earpiece', async () => {
+    // setRoute('earpiece') pins the call to the receiver, pulling it off a car
+    // or headset; off returns to the call's own route instead.
+    audio.__state.route = 'speaker';
+    await render(<CallControls call={createCall() as never} />);
+    fireEvent.press(screen.getByTestId('sw-route'));
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(false);
+    expect(audio.__state.setRoute).not.toHaveBeenCalled();
   });
 
   it('hides the camera toggle when asked', async () => {
