@@ -1,5 +1,9 @@
 import { logger, useCall } from '@signalwire/react';
-import { useAudioRoute } from '@signalwire/react-native/audio';
+import {
+  AudioRoutePickerButton,
+  isAudioRoutePickerAvailable,
+  useAudioRoute
+} from '@signalwire/react-native/audio';
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 
@@ -15,6 +19,12 @@ export interface CallControlsProps {
   showVideo?: boolean;
   /** Hide the speaker toggle. Default `true`. */
   showAudioRoute?: boolean;
+  /**
+   * Hide the system audio output button, iOS's own menu of the phone, the
+   * speaker and each connected headset or car. Default `true`; it appears only
+   * on iOS, in an app built with this package's native code.
+   */
+  showRoutePicker?: boolean;
   /** Called once the user has hung up, for navigating away. Always fires,
    * even when the SDK teardown fails — see the handler below. */
   onHangup?: () => void;
@@ -23,7 +33,7 @@ export interface CallControlsProps {
 }
 
 /**
- * Mute, camera, speaker and hang up.
+ * Mute, camera, speaker, audio output (iOS) and hang up.
  *
  * Owns no state: everything comes from `useCall` and `useAudioRoute`, so the
  * bar always agrees with the SDK even when the change came from elsewhere —
@@ -33,13 +43,14 @@ export function CallControls({
   call,
   showVideo = true,
   showAudioRoute = true,
+  showRoutePicker = true,
   onHangup,
   style,
   testID
 }: CallControlsProps): React.JSX.Element {
   const theme = useSignalWireTheme();
   const { isAudioMuted, isVideoMuted, setAudioMuted, setVideoMuted, hangup } = useCall(call);
-  const { route, setRoute } = useAudioRoute();
+  const { route, setSpeakerOn } = useAudioRoute();
 
   return (
     <View
@@ -68,8 +79,25 @@ export function CallControls({
           testID="sw-route"
           label={route === 'speaker' ? 'Speaker' : 'Earpiece'}
           active={route === 'speaker'}
-          onPress={() => setRoute(route === 'speaker' ? 'earpiece' : 'speaker')}
+          // Off returns to the call's own route (a headset or car, if one is
+          // connected), not the receiver.
+          onPress={() => setSpeakerOn(route !== 'speaker')}
         />
+      ) : null}
+
+      {showRoutePicker && isAudioRoutePickerAvailable() ? (
+        <View
+          style={[
+            styles.picker,
+            { backgroundColor: theme.colors.surface, borderRadius: theme.radii.pill, padding: theme.spacing.xs }
+          ]}
+        >
+          <AudioRoutePickerButton
+            testID="sw-route-picker"
+            tintColor={theme.colors.text}
+            activeTintColor={theme.colors.accent}
+          />
+        </View>
       ) : null}
 
       <ControlButton
@@ -94,5 +122,6 @@ export function CallControls({
 }
 
 const styles = StyleSheet.create({
-  bar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }
+  bar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center' },
+  picker: { alignItems: 'center', justifyContent: 'center' }
 });

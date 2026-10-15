@@ -88,6 +88,8 @@
   "files": [
     "dist",
     "app.plugin.js",
+    "ios",
+    "SignalWireReactNative.podspec",
     "README.md"
   ],
   "scripts": {
