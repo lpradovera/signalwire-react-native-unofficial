@@ -40,5 +40,16 @@
   "devDependencies": {
     "@types/react": "~19.1.10",
     "typescript": "^5.9.3"
+  },
+  "//expo": "iOS autolinking skips Firebase. iOS push here is PushKit, not FCM, and app.config.js applies the Firebase plugin only when GOOGLE_SERVICES_JSON is set -- but autolinking still added the @react-native-firebase pods, and `pod install` failed: \"The Swift pod `FirebaseCoreInternal` depends upon `GoogleUtilities`, which does not define modules\". Android still links both.",
+  "expo": {
+    "autolinking": {
+      "ios": {
+        "exclude": [
+          "@react-native-firebase/app",
+          "@react-native-firebase/messaging"
+        ]
+      }
+    }
   }
 }
