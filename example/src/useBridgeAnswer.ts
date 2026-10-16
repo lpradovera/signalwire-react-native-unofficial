@@ -2,18 +2,12 @@ import { useSignalWire } from '@signalwire/react-native';
 import { getCallKit } from '@signalwire/react-native/callkit';
 import { useEffect, useRef } from 'react';
 
+import { ConnectionGate } from './connectionGate';
+
 import type { Call } from '@signalwire/js';
 
 /** How long a cold-started app may take to come online before giving up. */
 const BRIDGE_CONNECT_TIMEOUT_MS = 15000;
-
-/** Resolves when `ready` returns true, or after `timeoutMs`. */
-async function waitFor(ready: () => boolean, timeoutMs: number): Promise<void> {
-  const started = Date.now();
-  while (!ready() && Date.now() - started < timeoutMs) {
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
-}
 
 /**
  * Places the call that joins a parked caller, when the user answers a push.
@@ -31,10 +25,17 @@ async function waitFor(ready: () => boolean, timeoutMs: number): Promise<void> {
 export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
   const { dial, isConnected } = useSignalWire();
 
-  // Read through a ref so the effect does not re-subscribe when the
-  // connection flips, which would drop a replayed answer on the floor.
-  const connectedRef = useRef(isConnected);
-  connectedRef.current = isConnected;
+  // Read through a gate so the effect does not re-subscribe when the
+  // connection flips, which would drop a replayed answer on the floor, and so
+  // a waiting answer resumes on the connection rather than on a poll.
+  const gateRef = useRef<ConnectionGate | null>(null);
+  if (!gateRef.current) {
+    gateRef.current = new ConnectionGate();
+  }
+  const gate = gateRef.current;
+  useEffect(() => {
+    gate.set(isConnected);
+  }, [gate, isConnected]);
 
   useEffect(() => {
     const bridge = getCallKit();
@@ -60,11 +61,10 @@ export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
           // On a cold start the push wakes the app and the answer can arrive
           // while the WebSocket is still being established; dialling then
           // fails, and the caller is left parked with nothing coming.
-          if (!connectedRef.current) {
+          if (!gate.isConnected) {
             console.log('Bridge answer waiting for the SDK connection');
-            await waitFor(() => connectedRef.current, BRIDGE_CONNECT_TIMEOUT_MS);
           }
-          if (!connectedRef.current) {
+          if (!(await gate.wait(BRIDGE_CONNECT_TIMEOUT_MS))) {
             console.warn('SDK never connected; cannot bridge');
             bridge.registry.endCall(entry.uuid);
             return;
@@ -108,5 +108,5 @@ export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
     });
 
     return () => subscription.unsubscribe();
-  }, [dial, onCallStarted]);
+  }, [dial, gate, onCallStarted]);
 }
