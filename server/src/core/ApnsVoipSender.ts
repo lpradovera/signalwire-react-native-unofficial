@@ -63,6 +63,13 @@ export class ApnsVoipSender implements PushSender {
   private cachedAt = 0;
   private readonly sessions = new Map<string, http2.ClientHttp2Session>();
   private readonly inFlight = new Map<http2.ClientHttp2Session, number>();
+  /**
+   * Requests waiting on each session, failed together if it errors. One
+   * session-level listener for all of them, not one per request: a
+   * connection carries many concurrent pushes, and a listener each would
+   * trip EventEmitter's leak warning past ten.
+   */
+  private readonly waiters = new Map<http2.ClientHttp2Session, Set<(error: Error) => void>>();
 
   constructor(
     private readonly config: ApnsConfig,
@@ -98,6 +105,8 @@ export class ApnsVoipSender implements PushSender {
     }
 
     const session = this.connect(host);
+    const waiting = new Set<(error: Error) => void>();
+    this.waiters.set(session, waiting);
     const forget = (): void => {
       if (this.sessions.get(host) === session) {
         this.sessions.delete(host);
@@ -107,9 +116,13 @@ export class ApnsVoipSender implements PushSender {
     // network — emits `error` on the session, not on a request. Without a
     // listener Node rethrows it as an uncaught exception and takes the whole
     // server down, which is how one flaky moment reaching Apple ended a
-    // device-test session. This one is permanent and only forgets the
-    // session; each request listens for its own failure below.
-    session.on('error', forget);
+    // device-test session. Forget the session and fail whatever was waiting.
+    session.on('error', (error: Error) => {
+      forget();
+      for (const fail of waiting) {
+        fail(error);
+      }
+    });
     session.on('close', forget);
     session.on('goaway', () => {
       forget();
@@ -140,10 +153,11 @@ export class ApnsVoipSender implements PushSender {
     const session = this.session(host);
     this.hold(session, 1);
 
+    const waiting = this.waiters.get(session);
     let onSessionError: ((error: Error) => void) | undefined;
     const sessionFailure = new Promise<never>((_resolve, reject) => {
       onSessionError = reject;
-      session.once('error', reject);
+      waiting?.add(reject);
     });
     // The race below is the only consumer, and it may already have settled by
     // the time the session gives up. Mark the rejection handled so a late one
@@ -184,7 +198,7 @@ export class ApnsVoipSender implements PushSender {
       return await Promise.race([exchange, sessionFailure]);
     } finally {
       if (onSessionError) {
-        session.off('error', onSessionError);
+        waiting?.delete(onSessionError);
       }
       this.hold(session, -1);
     }
