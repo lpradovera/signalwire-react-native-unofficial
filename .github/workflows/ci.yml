@@ -11,9 +11,13 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      # Node 24: Node 20 reached end of life on 2026-04-30 and is outside the
+      # engines of @testing-library/react-native (^22.13.0 || >=24) and of
+      # @napi-rs/lzma-linux-x64-gnu (^22.20 || ^24.12 || >=25), which only this
+      # Linux runner installs. 24 satisfies every engines range in the lockfile.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
