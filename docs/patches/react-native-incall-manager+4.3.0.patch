@@ -115,7 +115,7 @@ index c488a06..f85dcc1 100644
          let result = await _InCallManager.chooseAudioRoute(route);
          return result;
 diff --git a/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m b/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m
-index 7c54f6e..58cb11c 100644
+index 7c54f6e..f29865b 100644
 --- a/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m
 +++ b/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m
 @@ -41,6 +41,7 @@ @implementation RNInCallManager
@@ -126,7 +126,7 @@ index 7c54f6e..58cb11c 100644
  
      // -- notification observers
      id _proximityObserver;
-@@ -49,6 +50,7 @@ @implementation RNInCallManager
+@@ -49,16 +50,37 @@ @implementation RNInCallManager
      id _audioSessionMediaServicesWereLostObserver;
      id _audioSessionMediaServicesWereResetObserver;
      id _audioSessionSilenceSecondaryAudioHintObserver;
@@ -134,8 +134,14 @@ index 7c54f6e..58cb11c 100644
  
      NSString *_incallAudioMode;
      NSString *_incallAudioCategory;
-@@ -57,8 +59,23 @@ @implementation RNInCallManager
+     NSString *_origAudioCategory;
+     NSString *_origAudioMode;
      BOOL _audioSessionInitialized;
++    // --- one per call's session: start() and stop() each move it on. The observers registered
++    // --- by start() capture it, so work they queue for an ended session is dropped, even when
++    // --- the next session has started (and set the registered flags again) by the time it runs.
++    // --- Read and written only on the route queue.
++    NSUInteger _sessionGeneration;
      int _forceSpeakerOn;
      NSString *_media;
 +    BOOL _hasListeners;
@@ -158,7 +164,7 @@ index 7c54f6e..58cb11c 100644
  + (BOOL)requiresMainQueueSetup
  {
      return NO;
-@@ -66,6 +83,21 @@ + (BOOL)requiresMainQueueSetup
+@@ -66,6 +88,21 @@ + (BOOL)requiresMainQueueSetup
  
  RCT_EXPORT_MODULE(InCallManager)
  
@@ -180,7 +186,7 @@ index 7c54f6e..58cb11c 100644
  - (instancetype)init
  {
      if (self = [super init]) {
-@@ -90,6 +122,7 @@ - (instancetype)init
+@@ -90,6 +127,7 @@ - (instancetype)init
          _isAudioSessionMediaServicesWereLostRegistered = NO;
          _isAudioSessionMediaServicesWereResetRegistered = NO;
          _isAudioSessionSilenceSecondaryAudioHintRegistered = NO;
@@ -188,7 +194,7 @@ index 7c54f6e..58cb11c 100644
  
          _proximityObserver = nil;
          _audioSessionInterruptionObserver = nil;
-@@ -97,6 +130,7 @@ - (instancetype)init
+@@ -97,14 +135,18 @@ - (instancetype)init
          _audioSessionMediaServicesWereLostObserver = nil;
          _audioSessionMediaServicesWereResetObserver = nil;
          _audioSessionSilenceSecondaryAudioHintObserver = nil;
@@ -196,8 +202,10 @@ index 7c54f6e..58cb11c 100644
  
          _incallAudioMode = AVAudioSessionModeVoiceChat;
          _incallAudioCategory = AVAudioSessionCategoryPlayAndRecord;
-@@ -105,6 +139,8 @@ - (instancetype)init
+         _origAudioCategory = nil;
+         _origAudioMode = nil;
          _audioSessionInitialized = NO;
++        _sessionGeneration = 0;
          _forceSpeakerOn = 0;
          _media = @"audio";
 +        _routeQueue = dispatch_queue_create("com.zxcpoiu.incallmanager.route", DISPATCH_QUEUE_SERIAL);
@@ -205,7 +213,7 @@ index 7c54f6e..58cb11c 100644
  
          NSLog(@"RNInCallManager.init(): initialized");
      }
-@@ -113,14 +149,414 @@ - (instancetype)init
+@@ -113,14 +155,414 @@ - (instancetype)init
  
  - (void)dealloc
  {
@@ -623,15 +631,16 @@ index 7c54f6e..58cb11c 100644
  }
  
  RCT_EXPORT_METHOD(start:(NSString *)mediaType
-@@ -141,6 +577,7 @@ - (void)dealloc
+@@ -141,6 +583,8 @@ - (void)dealloc
      NSLog(@"RNInCallManager.start() start InCallManager. media=%@, type=%@, mode=%@", _media, _media, _incallAudioMode);
      [self storeOriginalAudioSetup];
      _forceSpeakerOn = 0;
 +    _lastAudioDeviceStatus = nil;
++    _sessionGeneration += 1;
      [self startAudioSessionNotification];
      [self audioSessionSetCategory:_incallAudioCategory
                            options:0
-@@ -150,6 +587,10 @@ - (void)dealloc
+@@ -150,6 +594,10 @@ - (void)dealloc
      [self audioSessionSetActive:YES
                          options:0
                       callerMemo:NSStringFromSelector(_cmd)];
@@ -642,7 +651,7 @@ index 7c54f6e..58cb11c 100644
  
      if (ringbackUriType.length > 0) {
          NSLog(@"RNInCallManager.start() play ringback first. type=%@", ringbackUriType);
-@@ -178,6 +619,9 @@ - (void)dealloc
+@@ -178,6 +626,9 @@ - (void)dealloc
          return;
      } else {
          NSLog(@"RNInCallManager.stop(): stop InCallManager");
@@ -652,7 +661,7 @@ index 7c54f6e..58cb11c 100644
          [self restoreOriginalAudioSetup];
          [self stopBusytone];
          [self stopProximitySensor];
-@@ -185,9 +629,10 @@ - (void)dealloc
+@@ -185,9 +636,11 @@ - (void)dealloc
                              options:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
                           callerMemo:NSStringFromSelector(_cmd)];
          [self setKeepScreenOn:NO];
@@ -661,10 +670,11 @@ index 7c54f6e..58cb11c 100644
          [self stopAudioSessionNotification];
          [[NSNotificationCenter defaultCenter] removeObserver:self];
 -        _forceSpeakerOn = 0;
++        _sessionGeneration += 1;
          _audioSessionInitialized = NO;
      }
  }
-@@ -278,9 +723,9 @@ - (void)dealloc
+@@ -278,9 +731,9 @@ - (void)dealloc
  
  RCT_EXPORT_METHOD(setForceSpeakerphoneOn:(int)flag)
  {
@@ -676,7 +686,7 @@ index 7c54f6e..58cb11c 100644
  }
  
  RCT_EXPORT_METHOD(setMicrophoneMute:(BOOL)enable)
-@@ -442,19 +887,19 @@ - (void)updateAudioRoute
+@@ -442,19 +895,19 @@ - (void)updateAudioRoute
      NSLog(@"RNInCallManager.updateAudioRoute(): [Enter] forceSpeakerOn flag=%d media=%@ category=%@ mode=%@", _forceSpeakerOn, _media, _audioSession.category, _audioSession.mode);
      //self.debugAudioSession()
  
@@ -700,7 +710,7 @@ index 7c54f6e..58cb11c 100644
          if ([_media isEqualToString:@"video"]) {
              audioMode = AVAudioSessionModeVideoChat;
              [self stopProximitySensor];
-@@ -462,35 +907,23 @@ - (void)updateAudioRoute
+@@ -462,35 +915,23 @@ - (void)updateAudioRoute
      } else if (_forceSpeakerOn == -1) {
          // --- force off
          overrideAudioPort = AVAudioSessionPortOverrideNone;
@@ -740,7 +750,7 @@ index 7c54f6e..58cb11c 100644
      if (![_audioSession.category isEqualToString:_incallAudioCategory]) {
          [self audioSessionSetCategory:_incallAudioCategory
                                options:0
-@@ -507,9 +940,34 @@ - (void)updateAudioRoute
+@@ -507,9 +948,34 @@ - (void)updateAudioRoute
      } else {
          NSLog(@"RNInCallManager.updateAudioRoute() did NOT change audio mode");
      }
@@ -775,7 +785,7 @@ index 7c54f6e..58cb11c 100644
  - (BOOL)checkAudioRoute:(NSArray<NSString *> *)targetPortTypeArray
                routeType:(NSString *)routeType
  {
-@@ -580,13 +1038,20 @@ - (void)stopBusytone
+@@ -580,13 +1046,20 @@ - (void)stopBusytone
      }
  }
  
@@ -801,7 +811,7 @@ index 7c54f6e..58cb11c 100644
  }
  
  - (void)audioSessionSetCategory:(NSString *)audioCategory
-@@ -662,8 +1127,9 @@ - (void)restoreOriginalAudioSetup
+@@ -662,8 +1135,9 @@ - (void)restoreOriginalAudioSetup
      }
  
      NSLog(@"RNInCallManager.startProximitySensor()");
@@ -812,7 +822,7 @@ index 7c54f6e..58cb11c 100644
      });
  
      // --- in case it didn't deallocate when ViewDidUnload
-@@ -671,15 +1137,20 @@ - (void)restoreOriginalAudioSetup
+@@ -671,15 +1145,20 @@ - (void)restoreOriginalAudioSetup
                   name:UIDeviceProximityStateDidChangeNotification
                 object:nil];
  
@@ -837,7 +847,7 @@ index 7c54f6e..58cb11c 100644
          }
      }];
  
-@@ -693,8 +1164,9 @@ - (void)restoreOriginalAudioSetup
+@@ -693,8 +1172,9 @@ - (void)restoreOriginalAudioSetup
      }
  
      NSLog(@"RNInCallManager.stopProximitySensor()");
@@ -848,7 +858,7 @@ index 7c54f6e..58cb11c 100644
      });
  
      // --- remove all no matter what object
-@@ -710,6 +1182,7 @@ - (void)startAudioSessionNotification
+@@ -710,6 +1190,7 @@ - (void)startAudioSessionNotification
      NSLog(@"RNInCallManager.startAudioSessionNotification() starting...");
      [self startAudioSessionInterruptionNotification];
      [self startAudioSessionRouteChangeNotification];
@@ -856,7 +866,7 @@ index 7c54f6e..58cb11c 100644
      [self startAudioSessionMediaServicesWereLostNotification];
      [self startAudioSessionMediaServicesWereResetNotification];
      [self startAudioSessionSilenceSecondaryAudioHintNotification];
-@@ -720,6 +1193,7 @@ - (void)stopAudioSessionNotification
+@@ -720,6 +1201,7 @@ - (void)stopAudioSessionNotification
      NSLog(@"RNInCallManager.startAudioSessionNotification() stopping...");
      [self stopAudioSessionInterruptionNotification];
      [self stopAudioSessionRouteChangeNotification];
@@ -864,11 +874,12 @@ index 7c54f6e..58cb11c 100644
      [self stopAudioSessionMediaServicesWereLostNotification];
      [self stopAudioSessionMediaServicesWereResetNotification];
      [self stopAudioSessionSilenceSecondaryAudioHintNotification];
-@@ -787,89 +1261,101 @@ - (void)startAudioSessionRouteChangeNotification
+@@ -787,89 +1269,106 @@ - (void)startAudioSessionRouteChangeNotification
                       name: AVAudioSessionRouteChangeNotification
                     object: nil];
  
 +        __weak RNInCallManager *weakSelf = self;
++        const NSUInteger generation = _sessionGeneration;
          _audioSessionRouteChangeObserver = [self startObserve:AVAudioSessionRouteChangeNotification
                                                         object: nil
                                                          queue: nil
@@ -955,7 +966,8 @@ index 7c54f6e..58cb11c 100644
 +            // --- or stop is doing, so this samples the route they settled on.
 +            dispatch_async(strongSelf->_routeQueue, ^{
 +                [strongSelf handleRouteChange:reason
-+                                previousRoute:[previousRoute isKindOfClass:[AVAudioSessionRouteDescription class]] ? previousRoute : nil];
++                                previousRoute:[previousRoute isKindOfClass:[AVAudioSessionRouteDescription class]] ? previousRoute : nil
++                                   generation:generation];
 +            });
          }];
  
@@ -977,10 +989,13 @@ index 7c54f6e..58cb11c 100644
 +    }
 +}
 +
-+- (void)handleRouteChange:(NSUInteger)reason previousRoute:(AVAudioSessionRouteDescription *)previousRoute
++- (void)handleRouteChange:(NSUInteger)reason
++             previousRoute:(AVAudioSessionRouteDescription *)previousRoute
++                generation:(NSUInteger)generation
 +{
-+    // --- queued before stop() removed the observer: the call is over.
-+    if (!_isAudioSessionRouteChangeRegistered) {
++    // --- queued by an ended call's observer (stop()'s own teardown posts route changes): that
++    // --- call is over, whether or not the next one has started since.
++    if (!_isAudioSessionRouteChangeRegistered || generation != _sessionGeneration) {
 +        return;
 +    }
 +    NSLog(@"RNInCallManager.AudioRouteChange.Reason: %@. category=%@ mode=%@ previous output=%@ output=%@",
@@ -1037,7 +1052,7 @@ index 7c54f6e..58cb11c 100644
  - (void)stopAudioSessionRouteChangeNotification
  {
      if (!_isAudioSessionRouteChangeRegistered) {
-@@ -884,6 +1370,53 @@ - (void)stopAudioSessionRouteChangeNotification
+@@ -884,6 +1383,55 @@ - (void)stopAudioSessionRouteChangeNotification
      _isAudioSessionRouteChangeRegistered = NO;
  }
  
@@ -1055,6 +1070,7 @@ index 7c54f6e..58cb11c 100644
 +                     name:AVAudioSessionAvailableInputsChangeNotification
 +                   object:nil];
 +        __weak RNInCallManager *weakSelf = self;
++        const NSUInteger generation = _sessionGeneration;
 +        _audioSessionAvailableInputsChangeObserver = [self startObserve:AVAudioSessionAvailableInputsChangeNotification
 +                                                                 object:nil
 +                                                                  queue:nil
@@ -1064,8 +1080,9 @@ index 7c54f6e..58cb11c 100644
 +                return;
 +            }
 +            dispatch_async(strongSelf->_routeQueue, ^{
-+                // --- queued before stop() removed the observer: the call is over.
-+                if (strongSelf->_isAudioSessionAvailableInputsChangeRegistered) {
++                // --- queued by an ended call's observer: that call is over.
++                if (strongSelf->_isAudioSessionAvailableInputsChangeRegistered
++                        && generation == strongSelf->_sessionGeneration) {
 +                    [strongSelf sendAudioDeviceChanged];
 +                }
 +            });
@@ -1091,11 +1108,12 @@ index 7c54f6e..58cb11c 100644
  - (void)startAudioSessionMediaServicesWereLostNotification
  {
      if (_isAudioSessionMediaServicesWereLostRegistered) {
-@@ -937,17 +1470,55 @@ - (void)startAudioSessionMediaServicesWereResetNotification
+@@ -937,17 +1485,58 @@ - (void)startAudioSessionMediaServicesWereResetNotification
                   name:AVAudioSessionMediaServicesWereResetNotification
                 object:nil];
  
 +    __weak RNInCallManager *weakSelf = self;
++    const NSUInteger generation = _sessionGeneration;
      _audioSessionMediaServicesWereResetObserver = [self startObserve:AVAudioSessionMediaServicesWereResetNotification
                                                                object:nil
                                                                 queue:nil
@@ -1107,7 +1125,7 @@ index 7c54f6e..58cb11c 100644
 +            return;
 +        }
 +        dispatch_async(strongSelf->_routeQueue, ^{
-+            [strongSelf mediaServicesWereReset];
++            [strongSelf mediaServicesWereReset:generation];
 +        });
      }];
  
@@ -1118,10 +1136,12 @@ index 7c54f6e..58cb11c 100644
 + * The media server restarted, and the session is back to its defaults (Technical Q&A QA1749):
 + * set up the call's category, mode and activation again, then its route and chosen device.
 + */
-+- (void)mediaServicesWereReset
++- (void)mediaServicesWereReset:(NSUInteger)generation
 +{
-+    // --- queued before stop(): the call is over.
-+    if (!_audioSessionInitialized || !_isAudioSessionMediaServicesWereResetRegistered) {
++    // --- queued by an ended call's observer: that call is over, and the next one (if it has
++    // --- started) set its session up after the reset.
++    if (!_audioSessionInitialized || !_isAudioSessionMediaServicesWereResetRegistered
++            || generation != _sessionGeneration) {
 +        return;
 +    }
 +    [self audioSessionSetCategory:_incallAudioCategory
@@ -1147,7 +1167,7 @@ index 7c54f6e..58cb11c 100644
  - (void)stopAudioSessionMediaServicesWereResetNotification
  {
      if (!_isAudioSessionMediaServicesWereResetRegistered) {
-@@ -1188,7 +1759,10 @@ - (void)audioPlayerDidFinishPlaying:(AVAudioPlayer *)player
+@@ -1188,7 +1777,10 @@ - (void)audioPlayerDidFinishPlaying:(AVAudioPlayer *)player
              || [filename isEqualToString:_defaultBusytoneUri.URLByDeletingPathExtension.lastPathComponent]) {
          //[self stopBusytone];
          NSLog(@"RNInCallManager.audioPlayerDidFinishPlaying(): busytone finished, invoke stop()");
