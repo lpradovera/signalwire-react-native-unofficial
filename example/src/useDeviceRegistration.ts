@@ -3,7 +3,7 @@ import * as Application from 'expo-application';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 
-import { apnsEnvironmentFor, registerDevice, registerWithRetry } from './deviceRegistration';
+import { apnsEnvironmentFor, registerDevice, registerWithRetry, registrationPlan } from './deviceRegistration';
 import { DEVICES_URL } from './endpoints';
 
 import type { ApnsEnvironment } from './deviceRegistration';
@@ -27,21 +27,27 @@ async function apnsEnvironment(): Promise<ApnsEnvironment> {
  * Set `EXPO_PUBLIC_SW_DEVICES_URL` to the server's `/devices` endpoint.
  * `externalUserId` must be the subscriber reference the signed-in token was
  * minted for, or pushes are sent to the wrong device — the server looks
- * devices up by exactly that key. `null` means it is not known (a pasted token
- * with no reference given), and the device is not registered at all.
+ * devices up by exactly that key. `undefined` means it is not known yet (the
+ * token server has not answered), and registration waits for it; `null` means
+ * there is none (a pasted token with no reference given), and the device is
+ * not registered at all.
  *
  * Registration is re-run whenever the platform reissues the token, and a
  * failed one is retried: a token is handed over once per launch, and a stale
  * or missing registration fails silently — at APNs, and at FCM — so the push
  * simply never arrives and nothing points at the cause.
  */
-export function useDeviceRegistration(externalUserId: string | null): void {
+export function useDeviceRegistration(externalUserId: string | null | undefined): void {
   useEffect(() => {
     const url = DEVICES_URL;
     if (!url) {
       return;
     }
-    if (!externalUserId) {
+    const plan = registrationPlan(externalUserId);
+    if (plan === 'wait') {
+      return;
+    }
+    if (plan === 'skip' || !externalUserId) {
       console.warn(
         'Push registration skipped: no subscriber reference for this token. ' +
           'Enter the reference the token was minted for to receive calls.'

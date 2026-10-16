@@ -26,6 +26,19 @@ type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
  * A token sent to the other host fails with BadDeviceToken, and the server
  * then prunes the device as expired.
  */
+/**
+ * What to do about push registration for the signed-in token's subscriber
+ * reference: `undefined` is not known yet (the token server has not answered
+ * the first fetch), so wait quietly; `null` or empty is no reference at all
+ * (a pasted token without one), so skip, and say so; anything else registers.
+ */
+export function registrationPlan(reference: string | null | undefined): 'wait' | 'skip' | 'register' {
+  if (reference === undefined) {
+    return 'wait';
+  }
+  return reference ? 'register' : 'skip';
+}
+
 export function apnsEnvironmentFor(entitlement: ApsEntitlement): ApnsEnvironment {
   return entitlement === 'development' ? 'sandbox' : 'production';
 }

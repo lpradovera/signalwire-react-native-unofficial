@@ -27,7 +27,11 @@ interface Credentials {
   reference: string | null;
 }
 
-function Shell({ reference }: { reference: string | null }): React.JSX.Element {
+/**
+ * `reference`: the subscriber the token was minted for; `undefined` while the
+ * token server has not said yet, `null` for a pasted token without one.
+ */
+function Shell({ reference }: { reference: string | null | undefined }): React.JSX.Element {
   const { isConnected, connect, disconnect } = useSignalWire();
   const [activeCall, setActiveCall] = useState<Call | null>(null);
   // Set by the Disconnect button: the SDK does not reconnect after an explicit

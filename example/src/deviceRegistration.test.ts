@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { apnsEnvironmentFor, registerDevice, registerWithRetry, RegistrationError } from './deviceRegistration';
+import {
+  apnsEnvironmentFor,
+  registrationPlan,
+  registerDevice,
+  registerWithRetry,
+  RegistrationError
+} from './deviceRegistration';
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -165,4 +171,21 @@ test('a cancel during an attempt schedules nothing after it', async () => {
   fail(new TypeError('Network request failed'));
   await flush();
   assert.equal(clock.pendingCount, 0);
+});
+
+// With fetchToken the reference is the token server's answer, unknown until
+// the first token arrives. "Push registration skipped: no subscriber
+// reference for this token" was logged at every launch for that wait (Len,
+// step 10), although the server answered 'lentest-android' a moment later.
+test('waits, without a warning, while the reference is not known yet', () => {
+  assert.equal(registrationPlan(undefined), 'wait');
+});
+
+test('skips, with the warning, when there is no reference (a pasted token without one)', () => {
+  assert.equal(registrationPlan(null), 'skip');
+  assert.equal(registrationPlan(''), 'skip');
+});
+
+test('registers under a known reference', () => {
+  assert.equal(registrationPlan('lentest-android'), 'register');
 });
