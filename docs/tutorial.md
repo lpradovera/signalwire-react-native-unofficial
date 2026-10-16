@@ -26,15 +26,22 @@ dev client. That is what `expo-dev-client` is for.
 
 ```bash
 npm install @signalwire/react-native @signalwire/js rxjs \
-  react-native-webrtc \
+  react-native-webrtc @config-plugins/react-native-webrtc \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
   react-native-url-polyfill \
-  react-native-callkeep react-native-incall-manager
+  react-native-callkeep react-native-incall-manager \
+  @signalwire/react-native-ui
 ```
 
-The last two are optional peers, but you want native call UI and audio routing,
-so install them now.
+`react-native-callkeep` and `react-native-incall-manager` are optional peers,
+but you want native call UI and audio routing, so install them now.
+`@signalwire/react-native-ui` supplies the incoming-call sheet in step 6.
+`@config-plugins/react-native-webrtc` is the webrtc config plugin that the
+`app.json` below lists; without it prebuild stops with `PLUGIN_NOT_FOUND`. Its
+major version follows the Expo SDK (13.x is the one for SDK 54; its `expo` peer
+names the SDK), so if npm picks one for a different SDK, install the matching
+major.
 
 Add the config plugin to `app.json`:
 
