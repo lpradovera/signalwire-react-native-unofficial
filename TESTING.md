@@ -111,10 +111,11 @@ ships no declarations; `@signalwire/react-ui`'s `./theme.css` is a stylesheet.
 dependency cannot be `require()`d), so its attw run ignores the
 `cjs-resolves-to-esm` rule, which reports exactly that.
 
-`verify:prebuild` expects:
-`✓ 10 Android permissions, 4 iOS Info.plist entries, the VoIP push hook (generated and compiled), and Firebase on Android only.`
-followed by a passing `node --test` run that checks it left `example/ios` and
-`example/android` alone. It needs no Xcode, Android SDK, or CocoaPods —
+`verify:prebuild` ends with one `✓` line naming what the plugin applied
+(the Android permissions, the iOS Info.plist entries, the VoIP push hook,
+Firebase on Android only) and exits 0; a failed assertion prints a `✗` line
+for each and exits 1. A `node --test` run then checks it left `example/ios`
+and `example/android` alone. It needs no Xcode, Android SDK, or CocoaPods —
 prebuild only generates sources — and it prebuilds a scratch copy of
 `example/` under `.tmp/verify-prebuild/`, so your own native projects, Pods
 and signing edits are never touched. It ignores `example/.env` and checks the
