@@ -118,6 +118,24 @@ describe('ApnsVoipSender: connection', () => {
     assert.equal(connects.length, 1);
   });
 
+  it('carries many concurrent pushes on one connection without leaking listeners', async () => {
+    const warnings: string[] = [];
+    const onWarning = (warning: Error): void => {
+      warnings.push(warning.name);
+    };
+    process.on('warning', onWarning);
+    try {
+      const apns = sender();
+      const tokens = Array.from({ length: 25 }, (_, index) => `t${index}`);
+      await Promise.all(tokens.map((token) => apns.send(device(token), payload)));
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('warning', onWarning);
+    }
+    assert.equal(connects.length, 1);
+    assert.deepEqual(warnings, []);
+  });
+
   it('reconnects once APNs closes the connection', async () => {
     const apns = sender();
     await apns.send(device(), payload);
