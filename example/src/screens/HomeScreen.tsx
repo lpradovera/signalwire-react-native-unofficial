@@ -1,7 +1,9 @@
 import { useObservable, useSignalWire } from '@signalwire/react-native';
 import { CallOverlayHost } from '@signalwire/react-native-ui';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+
+import { createDialGuard } from '../dialGuard';
 
 import type { Address, Call } from '@signalwire/js';
 
@@ -26,6 +28,10 @@ export function HomeScreen({
   const addresses = useObservable<Address[]>(directory?.addresses$, directory?.addresses ?? []);
   const [destination, setDestination] = useState('');
   const [aboutOpen, setAboutOpen] = useState(false);
+  const [dialing, setDialing] = useState(false);
+  // One dial at a time: a double tap otherwise placed two calls, and the first
+  // stayed live with nothing in the app to end it. See dialGuard.
+  const guard = useRef(createDialGuard(setDialing)).current;
 
   // The directory starts empty and does not fetch on its own — `addresses$` is
   // a BehaviorSubject seeded with []. Without this the list is permanently
@@ -55,14 +61,19 @@ export function HomeScreen({
     if (!target.trim()) {
       return;
     }
+    if (guard.pending) {
+      return;
+    }
     setDialError(null);
     try {
       // Video is opt-in: offering a sendonly video m-line to an audio-only
       // destination makes the far end accept the invite and never answer.
       // EXPO_PUBLIC_SW_DIAL_VIDEO=1 restores it.
       const wantVideo = process.env.EXPO_PUBLIC_SW_DIAL_VIDEO === '1';
-      const call = await dial(target.trim(), { audio: true, video: wantVideo });
-      onCallStarted(call);
+      const call = await guard.run(() => dial(target.trim(), { audio: true, video: wantVideo }));
+      if (call) {
+        onCallStarted(call);
+      }
     } catch (dialFailure) {
       setDialError((dialFailure as Error).message);
     }
@@ -109,8 +120,12 @@ export function HomeScreen({
         onSubmitEditing={() => void start(destination)}
       />
 
-      <Pressable style={styles.button} onPress={() => void start(destination)}>
-        <Text style={styles.buttonLabel}>Call</Text>
+      <Pressable
+        style={[styles.button, dialing && styles.disabled]}
+        disabled={dialing}
+        onPress={() => void start(destination)}
+      >
+        <Text style={styles.buttonLabel}>{dialing ? 'Calling…' : 'Call'}</Text>
       </Pressable>
 
       <Text style={styles.section}>Directory</Text>
@@ -119,7 +134,11 @@ export function HomeScreen({
         keyExtractor={(item) => item.id}
         ListEmptyComponent={<Text style={styles.empty}>No addresses yet.</Text>}
         renderItem={({ item }) => (
-          <Pressable style={styles.row} onPress={() => void start(item.id)}>
+          <Pressable
+            style={[styles.row, dialing && styles.disabled]}
+            disabled={dialing}
+            onPress={() => void start(item.id)}
+          >
             <Text style={styles.rowTitle}>{item.displayName ?? item.name ?? item.id}</Text>
           </Pressable>
         )}
@@ -139,6 +158,7 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#1e293b', borderRadius: 12, color: '#f8fafc', padding: 14 },
   button: { backgroundColor: '#2563eb', borderRadius: 12, padding: 14 },
   buttonLabel: { color: '#fff', fontWeight: '700', textAlign: 'center' },
+  disabled: { opacity: 0.5 },
   section: { color: '#94a3b8', fontSize: 13, marginTop: 8, textTransform: 'uppercase' },
   empty: { color: '#64748b', fontSize: 14 },
   row: { borderBottomColor: '#1e293b', borderBottomWidth: 1, paddingVertical: 14 },

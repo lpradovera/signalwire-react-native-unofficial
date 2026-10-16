@@ -8,8 +8,8 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "bundle-check": "expo export --platform ios --platform android --output-dir ./.expo-export-check",
-    "type-check": "tsc --noEmit",
-    "test": "node --test plugins/withPodDeploymentTarget.test.js plugins/withSceneLifecycle.test.js plugins/withSceneLifecycle.swift.test.js"
+    "test": "node --import tsx --test $(find src plugins -name '*.test.*')",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^13.0.0",
@@ -40,6 +40,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.10",
+    "tsx": "^4.19.2",
     "typescript": "^5.9.3"
   },
   "//expo": "iOS autolinking skips Firebase. iOS push here is PushKit, not FCM, and app.config.js applies the Firebase plugin only when GOOGLE_SERVICES_JSON is set -- but autolinking still added the @react-native-firebase pods, and `pod install` failed: \"The Swift pod `FirebaseCoreInternal` depends upon `GoogleUtilities`, which does not define modules\". Android still links both. So the Firebase plugin must not reach iOS either: given an ios.googleServicesFile it adds `import FirebaseCore` to AppDelegate.swift, which then has no pod to compile against (docs/push-setup.md 2b).",
