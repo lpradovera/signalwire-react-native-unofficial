@@ -233,10 +233,44 @@ describe('CallKeepBridge', () => {
     expect(() => callkeep.__emit('answerCall', { callUUID: 'nope' })).not.toThrow();
   });
 
-  it('destroy removes every native listener', async () => {
+  it('destroy removes its own native listeners', async () => {
     await bridge.setup({ appName: 'Demo' });
+    const uuid = bridge.reportIncomingPush({ callId: 'c1' });
+    const applyIntent = jest.spyOn(bridge.registry, 'applyIntent');
     bridge.destroy();
-    expect(RNCallKeep.removeEventListener).toHaveBeenCalled();
+
+    callkeep.__emit('answerCall', { callUUID: uuid });
+
+    expect(applyIntent).not.toHaveBeenCalled();
+  });
+
+  it("destroy leaves the app's own callkeep handlers in place", async () => {
+    // callkeep's removeEventListener(type) with no handler drops every
+    // handler of that type in the process, the app's included.
+    const appEndCall = jest.fn();
+    RNCallKeep.addEventListener('endCall', appEndCall);
+    await bridge.setup({ appName: 'Demo' });
+
+    bridge.destroy();
+    callkeep.__emit('endCall', { callUUID: 'x' });
+
+    expect(appEndCall).toHaveBeenCalledTimes(1);
+  });
+
+  it("destroying a second bridge leaves the first one's handlers in place", async () => {
+    await bridge.setup({ appName: 'Demo' });
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient(createClient(incoming$) as never);
+    const call = createCall('c1');
+    incoming$.next([call]);
+    const uuid = (RNCallKeep.displayIncomingCall as jest.Mock).mock.calls[0]?.[0] as string;
+
+    const other = new CallKeepBridge();
+    await other.setup({ appName: 'Other' });
+    other.destroy();
+    callkeep.__emit('answerCall', { callUUID: uuid });
+
+    expect(call.answer).toHaveBeenCalled();
   });
 
   it('setup twice does not double-register listeners', async () => {

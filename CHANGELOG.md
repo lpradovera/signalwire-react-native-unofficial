@@ -69,6 +69,27 @@
   arrives after the client was built (turning `callKit` on after mount), so it
   mirrors inbound calls too.
 
+### CallKit audio timing
+
+- CallKit audio starts as soon as the audio session is up: the bridge keeps
+  CallKit's activation as state, so an outbound call (whose session CallKit
+  activates before it connects) no longer waits out the 3 s fallback, and the
+  answer-time and connect-time starts of one inbound call go together. A
+  deactivation, a CallKit provider reset, or the bridge stopping a call's
+  audio makes the next call wait for its own activation.
+- No audio starts for a call that ended while it waited for the session,
+  including a push the user answered and then ended before its SDK call
+  existed.
+- callkeep's launch buffer is replayed once and then cleared
+  (`RNCallKeep.clearInitialEvents()`), so a JS reload doesn't replay an old
+  answer or activation. `RNCallKeep.getInitialEvents()` resolves `[]` after
+  that; an app's own `didLoadWithEvents` listener still receives the
+  dispatch. A replayed answer or end for a launch push whose display event
+  isn't in the buffer is held until `setup()` adopts that push, instead of
+  being dropped.
+- `CallKeepBridge.destroy()` removes only the bridge's own callkeep handlers,
+  not every handler of each event type in the app.
+
 ## 0.1.0
 
 First release. React Native support for `@signalwire/js` v4 — platform
