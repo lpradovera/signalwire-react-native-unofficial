@@ -8,6 +8,11 @@
  */
 import { VOIP_PUSH_SOURCE } from './voipPushSource';
 
+/** The source with every `#if DEBUG … #endif` block removed. */
+function releaseOnly(source: string): string {
+  return source.replace(/#if DEBUG[\s\S]*?#endif/g, '');
+}
+
 /** The body of the Objective-C method whose signature contains `selector`. */
 function methodBody(source: string, selector: string): string {
   const start = source.indexOf(selector);
@@ -47,6 +52,21 @@ describe('generated SignalWireVoipPush.m', () => {
       expect(helper).toContain('initWithUUIDString:');
       expect(helper).toContain('[NSUUID UUID]');
       expect(helper).toContain('lowercaseString');
+    });
+  });
+
+  describe('logging (sweep-native-3)', () => {
+    it('does not log the push token or call UUIDs outside DEBUG builds', () => {
+      const release = releaseOnly(VOIP_PUSH_SOURCE);
+      const logs = release.match(/NSLog\(@"[^"]*"[^;]*;/g) ?? [];
+      expect(logs.length).toBeGreaterThan(0);
+      for (const log of logs) {
+        expect(log).not.toMatch(/\b(hex|token|uuid)\b\s*\)/);
+      }
+    });
+
+    it('still logs the token in DEBUG builds', () => {
+      expect(VOIP_PUSH_SOURCE).toMatch(/#if DEBUG\s+NSLog\(@"\[SignalWireVoipPush\] token %@", hex\);/);
     });
   });
 });

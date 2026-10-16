@@ -129,7 +129,12 @@ static NSString *SWCallUUID(id value) {
   // has a bridge to deliver it over. Without this the first launch after
   // install registers no device and the first push silently goes nowhere.
   [SignalWireVoipPushDelegate setCachedToken:[hex copy]];
+  // Debug builds only: in a release build NSLog writes to the unified log
+  // (unredacted before iOS 26) and to stderr, where crash and log SDKs collect
+  // it, and the token is meant for the app's server alone.
+#if DEBUG
   NSLog(@"[SignalWireVoipPush] token %@", hex);
+#endif
 
   [[NSNotificationCenter defaultCenter] postNotificationName:SignalWireVoipTokenNotification
                                                       object:nil
@@ -193,7 +198,9 @@ static NSString *SWCallUUID(id value) {
                         fromPushKit:YES
                             payload:[self payloadWithCallId:callId extras:extras]
               withCompletionHandler:completion];
+#if DEBUG
   NSLog(@"[SignalWireVoipPush] reported call %@ to CallKit", uuid);
+#endif
 }
 
 @end
