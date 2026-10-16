@@ -387,9 +387,12 @@ listeners; the bridge replays the call events among them and then calls
 `RNCallKeep.clearInitialEvents()`, because callkeep would otherwise send the
 same buffer again after an in-process JS reload. After that,
 `RNCallKeep.getInitialEvents()` resolves `[]`. To see the launch events
-yourself (a Recents or Siri call-back, a buffered mute), register your own
-`didLoadWithEvents` listener in your entry file: it receives the same
-dispatch.
+yourself (a buffered mute, say), register your own `didLoadWithEvents`
+listener in your entry file: it receives the same dispatch. A Recents or Siri
+call-back is among them only if the AppDelegate passes the activity to
+`[RNCallKeep application:continueUserActivity:restorationHandler:]`; nothing
+in this package does that yet, and Expo's Swift AppDelegate cannot import
+RNCallKeep, so without that native hook callkeep never sees the call-back.
 
 A runnable support server lives in [`server/`](server/) — device-token registry,
 APNs VoIP and FCM senders, and a webhook endpoint.
