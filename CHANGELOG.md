@@ -19,7 +19,11 @@
   shows every VoIP push as a voice call, and so does a push reported from
   JavaScript. Its audio session starts when its call (or the bridge call
   placed for it) connects, with that call's media; on iOS a video bridge call
-  also turns the CallKit entry into a video call (callkeep's `updateDisplay`).
+  also turns the CallKit entry into a video call (callkeep's `updateDisplay`)
+  when the caller's handle is a phone number. updateDisplay always re-sends
+  the handle as a phone number, so for a `sip:` or Fabric caller the entry
+  stays shown as voice rather than turn that address into a phone number in
+  CallKit and Recents.
 - A call is reported to CallKit as video only when the provider was set up
   with `supportsVideo: true`.
 - `CallKeepBridge.trackCall(call, handle, displayName)` keeps its signature;

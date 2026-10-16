@@ -139,6 +139,25 @@ describe('CallKeepBridge on iOS — the audio-session gate', () => {
     expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
   });
 
+  it("leaves a SIP or Fabric caller's generic handle alone when its video bridge call binds", async () => {
+    // callkeep's updateDisplay always rebuilds the remote handle as
+    // CXHandleTypePhoneNumber, so a `sip:` or Fabric address reported as
+    // generic would become a 'phone number' in CallKit and Recents.
+    bridge.destroy();
+    resetAudioRouteControllerForTesting();
+    bridge = new CallKeepBridge();
+    await bridge.setup({ appName: 'Demo', supportsVideo: true });
+
+    for (const from of ['sip:alice@example.com', '/private/alice']) {
+      const uuid = bridge.reportIncomingPush({ callId: `c-${from}`, from, fromName: 'Alice' });
+      callkeep.__emit('answerCall', { callUUID: uuid });
+      const call = { ...createCall(`bridge-${from}`), mediaDirections: { audio: 'sendrecv', video: 'sendrecv' } };
+      expect(bridge.bindBridgeCall(uuid, call as never)).toBe(true);
+    }
+
+    expect(RNCallKeep.updateDisplay).not.toHaveBeenCalled();
+  });
+
   it('leaves the CallKit type alone when a voice bridge call binds', async () => {
     const uuid = bridge.reportIncomingPush({ callId: 'c2' });
     callkeep.__emit('answerCall', { callUUID: uuid });
