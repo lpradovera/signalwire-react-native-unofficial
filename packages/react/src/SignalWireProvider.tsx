@@ -18,7 +18,11 @@ export const SignalWireContext = createContext<SignalWireContextValue | null>(nu
 export interface SignalWireProviderProps {
   /**
    * Supplies authentication credentials. Memoize it — a new identity tears
-   * down the client and builds a fresh one.
+   * down the client and builds a fresh one, and tearing down a client hangs
+   * up every call it has in progress. To rotate a token during a call, keep
+   * the same provider: return `expiry_at` from `authenticate()` and implement
+   * `refresh()`, which the SDK calls before the credential expires without
+   * touching the session.
    */
   credentialProvider: CredentialProvider;
   /**

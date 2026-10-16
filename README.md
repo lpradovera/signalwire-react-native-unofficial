@@ -318,7 +318,9 @@ function Dialer() {
 }
 
 export default function App() {
-  // Memoize: a new identity tears down the client and rebuilds it.
+  // Memoize: a new identity tears down the client and rebuilds it, which
+  // hangs up any call in progress. To rotate a token mid-call, return
+  // `expiry_at` from authenticate() and implement refresh() instead.
   const credentials = useMemo<CredentialProvider>(
     () => ({ authenticate: async () => ({ token: 'YOUR_SUBSCRIBER_TOKEN' }) }),
     []
