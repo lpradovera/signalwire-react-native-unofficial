@@ -289,31 +289,50 @@ import {
   useCall,
   useSignalWire
 } from '@signalwire/react-native';
-import { useMemo, useState } from 'react';
-import { Button, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Button, Text, View } from 'react-native';
 
 import type { Call, CredentialProvider } from '@signalwire/js';
+
+const ENDED = new Set(['disconnected', 'destroyed', 'failed']);
+
+function ActiveCall({ call, onEnded }: { call: Call; onEnded: () => void }) {
+  const { status, hangup } = useCall(call);
+
+  // Back to the dialer when the call ends, whichever side hangs up.
+  useEffect(() => {
+    if (ENDED.has(status)) onEnded();
+  }, [status, onEnded]);
+
+  return (
+    <View style={{ flex: 1 }}>
+      <SignalWireVideoView call={call} kind="remote" style={{ flex: 1 }} />
+      <Button title={`End (${status})`} onPress={() => void hangup().catch(onEnded)} />
+    </View>
+  );
+}
 
 function Dialer() {
   const { isConnected, dial } = useSignalWire();
   const [call, setCall] = useState<Call | null>(null);
-  const { status, hangup } = useCall(call);
+  const [dialing, setDialing] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
 
-  if (call) {
-    return (
-      <View style={{ flex: 1 }}>
-        <SignalWireVideoView call={call} kind="remote" style={{ flex: 1 }} />
-        <Button title={`End (${status})`} onPress={() => void hangup()} />
-      </View>
-    );
-  }
+  if (call) return <ActiveCall call={call} onEnded={() => setCall(null)} />;
+
+  const start = () => {
+    setDialing(true);
+    setFailure(null);
+    dial('/public/my-room', { audio: true, video: true })
+      .then(setCall, (e: unknown) => setFailure(String(e)))
+      .finally(() => setDialing(false));
+  };
 
   return (
-    <Button
-      title="Call"
-      disabled={!isConnected}
-      onPress={() => void dial('/public/my-room', { audio: true, video: true }).then(setCall)}
-    />
+    <View>
+      <Button title="Call" disabled={!isConnected || dialing} onPress={start} />
+      {failure && <Text>{failure}</Text>}
+    </View>
   );
 }
 
