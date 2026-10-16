@@ -6,6 +6,7 @@ import { logger } from '@signalwire/react';
 import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
 import { assertPeerModule } from '../platform/peers';
 import {
+  androidAudioDeviceReports$,
   getAudioDeviceStatus,
   hasIosAudioRoutes,
   parseAudioDeviceStatus,
@@ -29,6 +30,22 @@ interface RouteState {
 
 /** Off the speaker, with nothing chosen: iOS uses a connected headset or car, else the receiver. */
 const DEFAULT_ROUTE: RouteState = { route: 'earpiece', chosen: false };
+
+/**
+ * How long an Android session waits for incall-manager's first device report
+ * (its own start sends one) before applying a held choice anyway.
+ */
+const FIRST_REPORT_TIMEOUT_MS = 1000;
+
+/**
+ * incall-manager's starting route for the media when nothing else is
+ * connected: video on the speaker, voice on the receiver. Shown until the
+ * session's first status replaces it; with released incall-manager on iOS
+ * nothing reports, so it stays (iOS may have put the call on a headset or car).
+ */
+function mediaDefault(media: 'audio' | 'video'): AudioRoute {
+  return media === 'video' ? 'speaker' : 'earpiece';
+}
 
 /** The route each incall-manager device is. incall-manager reports USB audio as WIRED_HEADSET and a car as BLUETOOTH. */
 const ROUTE_FOR_DEVICE: Record<AudioDeviceName, AudioRoute> = {
@@ -84,14 +101,21 @@ interface Session {
   readonly media: 'audio' | 'video';
   /** Whether incall-manager has iOS routes, read once per call. */
   readonly iosRoutes: boolean;
-  /** The device subscription (iOS routes only). */
+  /** Whether incall-manager reports the devices: with iOS routes, and on Android. */
+  readonly reports: boolean;
+  /** The device subscription (iOS routes, Android). */
   devices: Subscription | null;
   /**
-   * Whether the status read queued after incall-manager's `start()` has
-   * come back (the device feed drops the reports before it, which describe
-   * the session before this call).
+   * Whether the session's first status has come in: the read queued after
+   * incall-manager's `start()` with iOS routes (the device feed drops the
+   * reports before it, which describe the session before this call), or
+   * Android's first report. Until then route choices are held, so they act on
+   * the call's real route, not the media default; without reports it is set
+   * at once.
    */
   ready: boolean;
+  /** Android: applies held choices if no report comes. */
+  readyTimer: ReturnType<typeof setTimeout> | null;
   /** What is connected, as last reported or answered. */
   available: readonly AudioDeviceName[];
   /** Writes sent to incall-manager whose settled status hasn't come back. */
@@ -117,10 +141,17 @@ interface Session {
  * - **Without** (released incall-manager through 4.3.0): speaker on and off
  *   only. `'bluetooth'` logs a warning once and is ignored, `'earpiece'` and
  *   `'headset'` turn the speaker off (iOS still prefers a connected headset
- *   or car), and `route` is what was asked for.
+ *   or car), and `route` is what was asked for, starting from the media's
+ *   default (`'speaker'` for video), which iOS doesn't report overriding.
  *
- * Android uses incall-manager's routes; a choice it can't make (Bluetooth
- * or a headset with no such device) goes back, as on iOS.
+ * Android uses incall-manager's routes, and `route` follows its device
+ * reports; a choice it can't make (Bluetooth or a headset with no such
+ * device) goes back, as on iOS.
+ *
+ * Where incall-manager reports (iOS routes, Android), a route choice made
+ * after `start()` but before the session's first status is held until it
+ * comes in, so it acts on the call's real route rather than the media
+ * default shown meanwhile.
  *
  * A choice made while a call that will start a session has not yet (a
  * speaker tap while an outbound CallKit call rings) is shown at once and
@@ -213,35 +244,87 @@ export class AudioRouteController {
       logger.warn('Failed to start the audio session:', error);
       return;
     }
+    const android = Platform.OS === 'android';
+    const iosRoutes = Platform.OS === 'ios' && hasIosAudioRoutes();
     const session: Session = {
       media,
-      iosRoutes: Platform.OS === 'ios' && hasIosAudioRoutes(),
+      iosRoutes,
+      reports: iosRoutes || android,
       devices: null,
       ready: false,
+      readyTimer: null,
       available: [],
       pending: 0,
       deferred: null
     };
     this.session = session;
-    const early = this.early;
-    this.early = null;
     this.chosen = false;
     this.beforeSpeaker = DEFAULT_ROUTE;
-    if (!early) {
-      this._route$.next(media === 'video' ? 'speaker' : 'earpiece');
+    if (!this.early) {
+      this._route$.next(mediaDefault(media));
     }
-    if (session.iosRoutes) {
+    if (iosRoutes) {
       // Its first value is a status read after incall-manager's start (or
       // null if that read failed), so it describes this call's session.
-      session.devices = sessionAudioDevices$().subscribe((status) => {
-        session.ready = true;
-        if (status) {
-          this.mirror(session, status);
-        }
-      });
+      session.devices = sessionAudioDevices$().subscribe((status) => this.report(session, status));
+    } else if (android) {
+      // incall-manager's start clears its devices and reports the one it
+      // picks, so the first report after start() is this call's.
+      session.devices = androidAudioDeviceReports$().subscribe((status) => this.report(session, status));
+      session.readyTimer = setTimeout(() => this.report(session, null), FIRST_REPORT_TIMEOUT_MS);
+    } else {
+      this.begin(session, null);
     }
-    if (early) {
-      this.select(early.route, early.chosen);
+  }
+
+  /** A status for the session (`null`: none came, or its read failed). */
+  private report(session: Session, status: AudioDeviceStatus | null): void {
+    if (this.session !== session) {
+      return;
+    }
+    if (!session.ready) {
+      this.begin(session, status);
+    } else if (status) {
+      this.mirror(session, status);
+    }
+  }
+
+  /**
+   * The session's first status: takes it on, then applies the choice held
+   * for the session to the route it reports (or, with nothing reported, the
+   * media default).
+   */
+  private begin(session: Session, status: AudioDeviceStatus | null): void {
+    session.ready = true;
+    if (session.readyTimer !== null) {
+      clearTimeout(session.readyTimer);
+      session.readyTimer = null;
+    }
+    const held = this.early;
+    this.early = null;
+    if (!held) {
+      if (status) {
+        this.mirror(session, status);
+      }
+      return;
+    }
+    if (status) {
+      session.available = status.available;
+    }
+    const confirmed: Snapshot = {
+      route: status?.selected ? ROUTE_FOR_DEVICE[status.selected] : mediaDefault(session.media),
+      chosen: false,
+      beforeSpeaker: DEFAULT_ROUTE
+    };
+    if (held.chosen) {
+      this.select(held.route, true, undefined, confirmed);
+    } else if (confirmed.route === 'speaker') {
+      // Speaker off, held: it keeps a video call off the speaker.
+      this.speakerOff(confirmed);
+    } else {
+      // Speaker off, held, and the call isn't on the speaker: nothing to write.
+      this.chosen = false;
+      this._route$.next(confirmed.route);
     }
   }
 
@@ -251,6 +334,9 @@ export class AudioRouteController {
     this.session = null;
     this.early = null;
     session?.devices?.unsubscribe();
+    if (session?.readyTimer) {
+      clearTimeout(session.readyTimer);
+    }
     try {
       if (session) {
         InCallManager.stop();
@@ -299,16 +385,28 @@ export class AudioRouteController {
     if (this._route$.value !== 'speaker') {
       return;
     }
-    const session = this.session;
-    const known = session !== null && (session.iosRoutes || Platform.OS === 'android');
-    const present = (device: AudioDeviceName): boolean => !known || session.available.includes(device);
-    const back = this.beforeSpeaker;
-    const target = present(DEVICE_FOR_ROUTE[back.route]) ? back : DEFAULT_ROUTE;
-    // A device that turns out to be gone when asked for: speaker off anyway.
-    this.select(target.route, target.chosen, () => this.select(DEFAULT_ROUTE.route, false));
+    this.speakerOff();
   }
 
-  private select(route: AudioRoute, chosen: boolean, onRefused?: () => void): void {
+  /** Off the speaker, back to {@link beforeSpeaker} (or `base`'s) if that device is still there. */
+  private speakerOff(base?: Snapshot): void {
+    const session = this.session;
+    const known = session !== null && session.reports && session.ready;
+    const present = (device: AudioDeviceName): boolean => !known || session.available.includes(device);
+    const back = base ? base.beforeSpeaker : this.beforeSpeaker;
+    const target = present(DEVICE_FOR_ROUTE[back.route]) ? back : DEFAULT_ROUTE;
+    // A device that turns out to be gone when asked for: speaker off anyway.
+    this.select(target.route, target.chosen, () => this.select(DEFAULT_ROUTE.route, false), base);
+  }
+
+  /**
+   * Shows a route and applies it, holds it for the session, or writes the
+   * speaker setting outside one.
+   *
+   * @param base - The state to apply over instead of the shown one: a held
+   *   choice is applied over the route the session's first status reported.
+   */
+  private select(route: AudioRoute, chosen: boolean, onRefused?: () => void, base?: Snapshot): void {
     const session = this.session;
     if (route === 'bluetooth' && Platform.OS === 'ios' && !(session?.iosRoutes ?? hasIosAudioRoutes())) {
       warnOnce('noIosRoutes');
@@ -323,18 +421,23 @@ export class AudioRouteController {
       warnOnce('noSessionRoute');
       return;
     }
-    const before: Snapshot = { route: this._route$.value, chosen: this.chosen, beforeSpeaker: this.beforeSpeaker };
+    const before: Snapshot = base ?? {
+      route: this._route$.value,
+      chosen: this.chosen,
+      beforeSpeaker: this.beforeSpeaker
+    };
+    this.beforeSpeaker = before.beforeSpeaker;
     if (route === 'speaker' && before.route !== 'speaker') {
-      this.beforeSpeaker = { route: before.route, chosen: this.chosen };
+      this.beforeSpeaker = { route: before.route, chosen: before.chosen };
     }
     this.chosen = chosen;
     this._route$.next(route);
-    if (session) {
+    if (session?.ready) {
       this.applyRoute(session, route, chosen, before, onRefused);
       return;
     }
-    if (this.expecting) {
-      // No session yet: shown now, applied when the call's session starts.
+    if (session || this.expecting) {
+      // Not yet: shown now, applied when the session's first status is in.
       // Kept whether or not it is a choice: speaker-off (the default
       // route, not chosen) is still the user's last action, and start()
       // must not put a video call back on the speaker over it.
@@ -361,18 +464,11 @@ export class AudioRouteController {
     onRefused: (() => void) | undefined
   ): void {
     const android = Platform.OS === 'android';
-    if (session.iosRoutes ? chosen : android && (route === 'bluetooth' || route === 'headset')) {
+    if (chosen && (session.iosRoutes || (android && (route === 'bluetooth' || route === 'headset')))) {
       this.choose(session, route, before, onRefused);
       return;
     }
-    // Speaker on, or off. With iOS routes, off goes back to a headset or car
-    // the speaker had replaced at incall-manager's default (null), which
-    // keeps a video call in video chat mode there; a call that was on the
-    // receiver, or any call without iOS routes, gets "speaker off" (false),
-    // which also takes a video call out of video chat mode, so it doesn't
-    // fall back to the speaker.
-    const toDevice = session.iosRoutes && (route === 'headset' || route === 'bluetooth');
-    const flag = route === 'speaker' ? true : toDevice ? null : false;
+    const flag = speakerFlag(session, route, chosen);
     if (!session.iosRoutes) {
       this.writeSpeaker(route, flag);
       return;
@@ -464,11 +560,11 @@ export class AudioRouteController {
   }
 
   /**
-   * Takes on the route iOS reports (iOS routes only): the call's starting
-   * device, a choice in the system route picker or CallKit, a headset or car
-   * connecting or dropping. incall-manager has already brought its speaker
-   * setting in step, so nothing is written back. A reported route other than
-   * the one shown ends the user's choice.
+   * Takes on the route incall-manager reports (iOS routes, Android): the
+   * call's starting device, a choice in the system route picker or CallKit,
+   * a headset or car connecting or dropping. incall-manager has already
+   * brought its speaker setting in step, so nothing is written back. A
+   * reported route other than the one shown ends the user's choice.
    */
   private mirror(session: Session, status: AudioDeviceStatus): void {
     if (this.session !== session || !session.ready) {
@@ -510,6 +606,35 @@ export class AudioRouteController {
     this.stop();
     this._route$.complete();
   }
+}
+
+/**
+ * The `setForceSpeakerphoneOn` flag for a speaker write: on (`true`), off
+ * (`false`, incall-manager's "speaker off": the receiver on Android, and on
+ * iOS voice chat mode for a video call), or incall-manager's default for the
+ * media (`null`).
+ *
+ * Off back to a headset or car the speaker replaced (not a choice; a choice
+ * goes through `chooseAudioRoute`) is the default, which picks it: on iOS it
+ * keeps a video call in video chat mode there, and on Android `false` would
+ * make the receiver the user's selection, which Android prefers over the
+ * headset. Off back to the receiver is the default too for an Android voice
+ * call (a headset or car if one is connected, else the receiver); a video
+ * call's default is the speaker, so it gets `false`, as does every call with
+ * iOS routes (the receiver) and without reports (released incall-manager on
+ * iOS: speaker on/off only).
+ */
+function speakerFlag(session: Session, route: AudioRoute, chosen: boolean): boolean | null {
+  if (route === 'speaker') {
+    return true;
+  }
+  if (!session.reports) {
+    return false;
+  }
+  if (route === 'headset' || route === 'bluetooth') {
+    return null;
+  }
+  return Platform.OS === 'android' && !chosen && session.media === 'audio' ? null : false;
 }
 
 /** Same duplication hazard as the CallKit bridge — see its note. One audio

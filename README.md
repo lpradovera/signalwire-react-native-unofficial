@@ -371,8 +371,12 @@ speaker setting can be written, and only on iOS (speaker on and off;
 `'headset'` and `'bluetooth'` are ignored with a warning), because on
 Android incall-manager refuses every route before its `start()`. A video call starts on the speaker only when nothing else is
 connected: incall-manager's own start decides, and this package doesn't force
-the speaker over a headset or car. A route that can't be chosen (no such
-device) goes back to where it was, on Android too.
+the speaker over a headset or car. `route` shows the media's default (`'speaker'`
+for video) until the session's first status replaces it: on Android
+incall-manager reports its devices, and with iOS routes the session reads
+them; a choice made before that status is held and then applied to the
+reported route. A route that can't be chosen (no such device) goes back to
+where it was, on Android too.
 
 #### Audio routes on iOS
 
@@ -387,7 +391,7 @@ and what you get depends on which you have:
 | `setRoute('earpiece')` | Speaker off; a connected headset or car keeps the call | The receiver |
 | `setRoute('headset')` | Speaker off; a plugged-in headset takes the call | The wired or USB-C headset |
 | `setRoute('bluetooth')` | Ignored, with one warning | A connected Bluetooth headset or car |
-| `route` | What was asked for | What iOS reports: the starting device, a headset or car connecting or dropping, a choice in the system route menu or CallKit |
+| `route` | What was asked for; at start the media's default (`'speaker'` for video), even when iOS kept the call on a headset or car | What iOS reports: the starting device, a headset or car connecting or dropping, a choice in the system route menu or CallKit |
 | `useAudioDevices()` | Empty | The devices, by name, kept current during a call |
 
 iOS routes come from a change to incall-manager that is proposed upstream
