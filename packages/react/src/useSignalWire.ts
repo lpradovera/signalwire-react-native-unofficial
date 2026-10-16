@@ -42,6 +42,9 @@ export function useSignalWire(): UseSignalWireResult {
       if (!client) {
         throw new Error('SignalWire client is not ready yet.');
       }
+      // May throw to refuse the dial (a call already in progress on React
+      // Native): nothing has been placed yet.
+      observer?.beforeOutgoingCall?.(destination);
       const call = await client.dial(destination, options);
       // The core does not know what an observer does with this — on React
       // Native it registers the call with CallKit; on the web nobody listens.
