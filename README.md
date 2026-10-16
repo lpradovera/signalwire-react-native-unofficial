@@ -430,7 +430,7 @@ npm run lint
 npm run build
 npm run bundle-check     # Metro bundles the example for iOS and Android
 npm run verify           # all of the above, in order
-npm run verify:package   # publint + are-the-types-wrong on the built package
+npm run verify:package   # publint + are-the-types-wrong on all four packages
 npm run verify:prebuild  # real `expo prebuild`, asserts the config plugin applied
 ```
 

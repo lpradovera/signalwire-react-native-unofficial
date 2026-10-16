@@ -39,8 +39,9 @@ jobs:
       - name: Bundle both examples
         run: npm run bundle-check
 
-      # Catches broken exports maps and type-resolution regressions, which
-      # otherwise only surface inside a consumer's project.
+      # publint and attw on all four packages' tarballs, at the versions in
+      # the lockfile. Catches broken exports maps and type-resolution
+      # regressions, which otherwise only surface inside a consumer's project.
       - name: Package lint
         run: npm run verify:package
 
