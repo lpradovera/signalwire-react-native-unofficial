@@ -8,7 +8,8 @@
   versioned together and depend on each other at `^2.0.0-alpha.0`. They are
   on their way to becoming SignalWire's supported React Native SDK, as the
   next major of `@signalwire/react-native` after the 1.x SDK
-  (signalwire-node); `latest` stays on 1.x until 2.0.0. Install with
+  (signalwire-node); `latest` and `next` stay on 1.x until 2.0.0, and
+  `alpha` moves from the 1.x line's 1.1.0-alpha.4 to this one. Install with
   `npm install @signalwire/react-native@alpha`. Each package's
   `publishConfig` sets the tag, and `npm run verify:package` checks the
   packed manifests. RELEASING.md has the steps.

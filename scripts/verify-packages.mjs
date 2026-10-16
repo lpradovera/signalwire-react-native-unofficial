@@ -3,17 +3,24 @@
 // the four @signalwire/* packages are released in lockstep, so each must
 // carry the same version, depend on the others at exactly `^<that version>`,
 // and publish under the `alpha` dist-tag, so a publish can never take
-// `latest` (SignalWire's 1.x SDK) by accident. See RELEASING.md.
+// `latest` or `next` (SignalWire's 1.x SDK, 1.0.4) by accident. `alpha` was
+// 1.x's too (1.1.0-alpha.4); taking it over is deliberate. A tag that is also
+// a semver range (`v2`, say) is refused by npm publish, and `npm install
+// pkg@v2` reads it as the range, which no prerelease satisfies.
+// See RELEASING.md.
 //
 // Run after `npm run build` (verify:package does both).
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import semver from 'semver';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PACKAGES = ['@signalwire/react', '@signalwire/react-ui', '@signalwire/react-native', '@signalwire/react-native-ui'];
 const TAG = 'alpha';
+/** dist-tags the 1.x SDK holds on @signalwire/react-native that no alpha may move. */
+const RESERVED_TAGS = ['latest', 'next'];
 
 const scratch = join(root, '.tmp', 'verify-packages');
 rmSync(scratch, { recursive: true, force: true });
@@ -47,7 +54,12 @@ for (const [name, { file, manifest }] of manifests) {
   if (manifest.version !== version) {
     problems.push(`${where} version ${manifest.version}, expected ${version} (the packages are released in lockstep)`);
   }
-  if (manifest.publishConfig?.tag !== TAG) {
+  const tag = manifest.publishConfig?.tag;
+  if (RESERVED_TAGS.includes(tag)) {
+    problems.push(`${where} publishConfig.tag is "${tag}", which belongs to the 1.x SDK`);
+  } else if (typeof tag === 'string' && semver.validRange(tag)) {
+    problems.push(`${where} publishConfig.tag "${tag}" is a semver range; npm refuses it as a tag`);
+  } else if (tag !== TAG) {
     problems.push(`${where} publishConfig.tag is ${JSON.stringify(manifest.publishConfig?.tag)}, expected "${TAG}"`);
   }
   if (manifest.publishConfig?.access !== 'public') {
