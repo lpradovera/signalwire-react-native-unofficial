@@ -97,8 +97,11 @@ export class CallRegistry {
    * will ever arrive to fuse with and the buffered intent would sit there
    * until the entry timed out as missed.
    *
-   * Subscribe to place that call, then hand it back with {@link bindCall} so
-   * it lands on the same native entry the user is already looking at.
+   * Subscribe to place that call, then hand it back so it lands on the same
+   * native entry the user is already looking at. With the CallKit bridge,
+   * hand it back through `CallKeepBridge.bindBridgeCall` (after
+   * `beginBridgeDial`), not {@link bindCall}: the bridge also watches the
+   * call, which is what starts its audio session when it connects.
    */
   get answerRequested$(): Observable<CallEntry> {
     // Replays answers that are still waiting for a call to be placed.
@@ -283,6 +286,11 @@ export class CallRegistry {
    * Returns `false` when the entry is gone (the caller hung up, or the user
    * declined, while the call was being placed), which is the signal to hang
    * that call straight back up.
+   *
+   * This only attaches the call. An app on the CallKit bridge uses
+   * `CallKeepBridge.bindBridgeCall`, which calls this and also watches the
+   * call: that watch starts a pushed call's audio session when the call
+   * connects and reports its connect and hang-up to CallKit.
    */
   bindCall(uuid: string, call: Call): boolean {
     const entry = this.byUuid.get(uuid);
