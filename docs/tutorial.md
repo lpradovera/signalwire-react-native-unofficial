@@ -26,15 +26,22 @@ dev client. That is what `expo-dev-client` is for.
 
 ```bash
 npm install @signalwire/react-native @signalwire/js rxjs \
-  react-native-webrtc \
+  react-native-webrtc @config-plugins/react-native-webrtc \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
   react-native-url-polyfill \
-  react-native-callkeep react-native-incall-manager
+  react-native-callkeep react-native-incall-manager \
+  @signalwire/react-native-ui
 ```
 
-The last two are optional peers, but you want native call UI and audio routing,
-so install them now.
+`react-native-callkeep` and `react-native-incall-manager` are optional peers,
+but you want native call UI and audio routing, so install them now.
+`@signalwire/react-native-ui` supplies the incoming-call sheet in step 6.
+`@config-plugins/react-native-webrtc` is the webrtc config plugin that the
+`app.json` below lists; without it prebuild stops with `PLUGIN_NOT_FOUND`. Its
+major version follows the Expo SDK (13.x is the one for SDK 54; its `expo` peer
+names the SDK), so if npm picks one for a different SDK, install the matching
+major.
 
 Add the config plugin to `app.json`:
 
@@ -114,10 +121,11 @@ import { Button, Text, View } from 'react-native';
 import type { CredentialProvider } from '@signalwire/js';
 
 function Dialer() {
-  const { isConnected, user, dial } = useSignalWire();
+  const { isConnected, user, error, dial } = useSignalWire();
   return (
     <View>
       <Text>{isConnected ? `Online as ${user?.displayName}` : 'Connecting…'}</Text>
+      {error && <Text>{error.message}</Text>}
       <Button title="Call" onPress={() => void dial('/public/your-resource', {
         audio: true,
         video: false
@@ -136,7 +144,7 @@ export default function App() {
   }, []);
 
   const credentials = useMemo<CredentialProvider | null>(
-    () => (token ? { getToken: async () => token } : null),
+    () => (token ? { authenticate: async () => ({ token }) } : null),
     [token]
   );
 
@@ -150,14 +158,22 @@ export default function App() {
 }
 ```
 
+A `CredentialProvider` is an object with `authenticate()`, which resolves
+`{ token }`; the SDK calls it once while the client starts. This one returns
+the token with no `expiry_at` and has no `refresh()`, so the SDK never renews
+it. For sessions that outlive the token, return `expiry_at` and supply
+`refresh()` (the `CredentialProvider` type in `@signalwire/js` documents both).
+
 `credentialProvider` is memoised deliberately: the provider rebuilds its client
 whenever that value changes, and an inline object literal is a new value on
 every render.
 
-**Checkpoint:** the app says "Online as …". If it says "Connecting…" forever,
-your token endpoint is the first thing to check — on Android an emulator cannot
-resolve your Mac's hostname, so use `adb reverse tcp:3000 tcp:3000` and
-`http://localhost:3000`.
+**Checkpoint:** the app says "Online as …". If it stays on "Loading…", the
+token fetch failed, and your token endpoint is the first thing to check — on
+Android an emulator cannot resolve your Mac's hostname, so use
+`adb reverse tcp:3000 tcp:3000` and `http://localhost:3000`. If an error shows
+under "Connecting…", the app has a token and the client failed with it; the
+message says how.
 
 ## 5. Place a call, with audio
 
