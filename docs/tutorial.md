@@ -25,7 +25,7 @@ This package needs native modules, so **Expo Go will not work** — you build a
 dev client. That is what `expo-dev-client` is for.
 
 ```bash
-npm install @signalwire/react-native @signalwire/js rxjs \
+npm install @signalwire/react-native@alpha @signalwire/js rxjs \
   react-native-webrtc \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
@@ -34,7 +34,8 @@ npm install @signalwire/react-native @signalwire/js rxjs \
 ```
 
 The last two are optional peers, but you want native call UI and audio routing,
-so install them now.
+so install them now. `@alpha` matters: without it npm installs `latest`, which
+is still SignalWire's unrelated 1.x SDK (see "Install" in the README).
 
 Add the config plugin to `app.json`:
 

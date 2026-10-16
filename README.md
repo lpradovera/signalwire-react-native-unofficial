@@ -218,7 +218,10 @@ npm install @signalwire/react-native@alpha @signalwire/js rxjs \
 
 `@signalwire/react` comes with `@signalwire/react-native` as a dependency.
 The four `@signalwire/*` packages of this repository are released together at
-one version, and each depends on the others at that version.
+one version, and where one needs another it names it at that version:
+`@signalwire/react-native` depends on `@signalwire/react`, and
+`@signalwire/react-native-ui` takes both as peers. `@signalwire/react` and
+`@signalwire/react-ui` depend on no other package of the four.
 
 **From the repository instead** (an unreleased commit, or a fork): build the
 packages and install the tarballs.

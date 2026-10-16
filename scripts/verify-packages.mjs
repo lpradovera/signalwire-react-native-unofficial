@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Packs each published package and checks the manifest inside the tarball:
 // the four @signalwire/* packages are released in lockstep, so each must
-// carry the same version, depend on the others at exactly `^<that version>`,
-// and publish under the `alpha` dist-tag, so a publish can never take
+// carry the same version, name any of the others it depends on (react-native
+// depends on react; react-native-ui peers on both) at exactly
+// `^<that version>`, and publish under the `alpha` dist-tag, so a publish can never take
 // `latest` or `next` (SignalWire's 1.x SDK, 1.0.4) by accident. `alpha` was
 // 1.x's too (1.1.0-alpha.4); taking it over is deliberate. A tag that is also
 // a semver range (`v2`, say) is refused by npm publish, and `npm install
@@ -29,12 +30,18 @@ mkdirSync(scratch, { recursive: true });
 const problems = [];
 const manifests = new Map();
 try {
+  // One npm process packs all four.
+  const out = execFileSync(
+    'npm',
+    ['pack', ...PACKAGES.flatMap((name) => ['-w', name]), '--pack-destination', scratch, '--json', '--silent'],
+    { cwd: root, encoding: 'utf8' }
+  );
+  const packedByName = new Map(JSON.parse(out).map((packed) => [packed.name, packed]));
   for (const name of PACKAGES) {
-    const out = execFileSync('npm', ['pack', '-w', name, '--pack-destination', scratch, '--json', '--silent'], {
-      cwd: root,
-      encoding: 'utf8'
-    });
-    const [packed] = JSON.parse(out);
+    const packed = packedByName.get(name);
+    if (!packed) {
+      throw new Error(`verify-packages: npm pack returned no tarball for ${name}`);
+    }
     const json = execFileSync('tar', ['-xzOf', join(scratch, packed.filename), 'package/package.json'], {
       encoding: 'utf8'
     });
