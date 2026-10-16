@@ -1,10 +1,12 @@
 import { AppState, NativeModules, PermissionsAndroid, Platform } from 'react-native';
 import RNCallKeep, { CONSTANTS } from 'react-native-callkeep';
-import { EMPTY, of, Subject, switchMap, takeUntil } from 'rxjs';
+import { EMPTY, distinctUntilChanged, map, of, Subject, switchMap, takeUntil } from 'rxjs';
 
 import { getAudioRouteController } from '../audio/AudioRouteController';
+import type { AudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
+import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
 import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
 import { CallRegistry, INBOUND_ANSWER } from './CallRegistry';
 
@@ -157,6 +159,8 @@ export class CallKeepBridge {
   private isSetup = false;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private releaseAudioGate: (() => void) | null = null;
+  /** Whether the audio controller was last told a live call will start its session. */
+  private expectingAudio = false;
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
   /**
@@ -281,6 +285,21 @@ export class CallKeepBridge {
     this.registerNativeListeners();
     this.isSetup = true;
     this.requestAndroidPermissions();
+    // A live entry's call gets its audio session from this bridge, so while
+    // one exists a route chosen with no session (a tap while an outbound
+    // call rings) waits for it; when the last one ends without a session the
+    // choice is dropped. Keyed on the entries, not on audio start/stop: a
+    // call that never starts audio ends with neither.
+    this.registry.entries$
+      .pipe(
+        map((entries) => entries.some((entry) => entry.state !== 'ended')),
+        distinctUntilChanged(),
+        takeUntil(this.destroyed$)
+      )
+      .subscribe((live) => {
+        this.expectingAudio = live;
+        this.withAudioRoutes('debug', (audio) => audio.expectSession(live));
+      });
     await this.adoptPendingNativeCall();
     logger.debug('CallKit ready');
   }
@@ -493,6 +512,10 @@ export class CallKeepBridge {
     this.permissionsWait = null;
     for (const uuid of [...this.notified]) {
       this.withdrawNotification(uuid);
+    }
+    if (this.expectingAudio) {
+      this.expectingAudio = false;
+      this.withAudioRoutes('debug', (audio) => audio.expectSession(false));
     }
     this.destroyed$.next();
     this.destroyed$.complete();
@@ -953,12 +976,8 @@ export class CallKeepBridge {
       return;
     }
     this.audioUuid = uuid;
-    try {
-      // 'video' defaults the route to the speaker; a voice call starts on the receiver.
-      getAudioRouteController().start(media);
-    } catch (error) {
-      logger.warn('Audio routing unavailable:', error);
-    }
+    // 'video' defaults the route to the speaker; a voice call starts on the receiver.
+    this.withAudioRoutes('warn', (audio) => audio.start(media));
   }
 
   /**
@@ -993,10 +1012,19 @@ export class CallKeepBridge {
       return;
     }
     this.audioUuid = null;
+    this.withAudioRoutes('debug', (audio) => audio.stop());
+  }
+
+  /**
+   * Runs `action` on the audio route controller. incall-manager is an
+   * optional peer: when it isn't linked the controller can't be built
+   * (`MissingPeerDependencyError`), and the call goes on without routing.
+   */
+  private withAudioRoutes(level: 'warn' | 'debug', action: (audio: AudioRouteController) => void): void {
     try {
-      getAudioRouteController().stop();
+      action(getAudioRouteController());
     } catch (error) {
-      logger.debug('Audio routing unavailable on stop:', error);
+      logger[level]('Audio routing unavailable:', error);
     }
   }
 
@@ -1086,18 +1114,13 @@ function generateUuid(): string {
  */
 const CALLKIT_GLOBAL = '__signalwireRNCallKitBridge';
 
-type CallKitHolder = { [CALLKIT_GLOBAL]?: CallKeepBridge };
-
 /** The process-wide CallKit bridge. Safe to call before React mounts. */
 export function getCallKit(): CallKeepBridge {
-  const holder = globalThis as CallKitHolder;
-  holder[CALLKIT_GLOBAL] ??= new CallKeepBridge();
-  return holder[CALLKIT_GLOBAL];
+  return processGlobal(CALLKIT_GLOBAL, () => new CallKeepBridge());
 }
 
 /** Test seam — drops the singleton. */
 export function resetCallKitForTesting(): void {
-  const holder = globalThis as CallKitHolder;
-  holder[CALLKIT_GLOBAL]?.destroy();
-  delete holder[CALLKIT_GLOBAL];
+  peekProcessGlobal<CallKeepBridge>(CALLKIT_GLOBAL)?.destroy();
+  dropProcessGlobal(CALLKIT_GLOBAL);
 }

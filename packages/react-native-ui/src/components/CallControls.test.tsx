@@ -5,13 +5,13 @@ import { BehaviorSubject, Subject } from 'rxjs';
 jest.mock('@signalwire/react-native/audio', () => {
   // State lives inside the factory: a factory that closes over an outer const
   // reads it before the initialiser has run.
-  const state = { route: 'earpiece', setRoute: jest.fn() };
+  const state = { route: 'earpiece', setRoute: jest.fn(), setSpeakerOn: jest.fn() };
   return { useAudioRoute: () => state, __state: state };
 });
 
  
 const audio = require('@signalwire/react-native/audio') as {
-  __state: { route: string; setRoute: jest.Mock };
+  __state: { route: string; setRoute: jest.Mock; setSpeakerOn: jest.Mock };
 };
 
 import { CallControls } from './CallControls';
@@ -81,7 +81,7 @@ describe('CallControls', () => {
     const call = createCall();
     await render(<CallControls call={call as never} />);
 
-    fireEvent.press(screen.getByTestId('sw-mute'));
+    await fireEvent.press(screen.getByTestId('sw-mute'));
 
     expect(call.self.mute).toHaveBeenCalled();
   });
@@ -91,7 +91,7 @@ describe('CallControls', () => {
     call._audioMuted$.next(true);
     await render(<CallControls call={call as never} />);
 
-    fireEvent.press(screen.getByTestId('sw-mute'));
+    await fireEvent.press(screen.getByTestId('sw-mute'));
 
     expect(call.self.unmute).toHaveBeenCalled();
   });
@@ -111,16 +111,44 @@ describe('CallControls', () => {
     const onHangup = jest.fn();
     await render(<CallControls call={call as never} onHangup={onHangup} />);
 
-    fireEvent.press(screen.getByTestId('sw-hangup'));
+    await fireEvent.press(screen.getByTestId('sw-hangup'));
     await Promise.resolve();
 
     expect(call.hangup).toHaveBeenCalled();
   });
 
-  it('toggles the audio route', async () => {
+  it('toggles the speaker on', async () => {
     await render(<CallControls call={createCall() as never} />);
-    fireEvent.press(screen.getByTestId('sw-route'));
-    expect(audio.__state.setRoute).toHaveBeenCalledWith('speaker');
+    await fireEvent.press(screen.getByTestId('sw-route'));
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
+  });
+
+  it('toggles the speaker off without choosing the earpiece', async () => {
+    // setRoute('earpiece') pins the call to the receiver, pulling it off a car
+    // or headset; off returns to the call's own route instead.
+    audio.__state.route = 'speaker';
+    await render(<CallControls call={createCall() as never} />);
+    await fireEvent.press(screen.getByTestId('sw-route'));
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(false);
+    expect(audio.__state.setRoute).not.toHaveBeenCalled();
+  });
+
+  it('names the route the call is on, Bluetooth included, and turns the speaker on from it', async () => {
+    // With iOS routes the route follows a car or headset taking the call; it
+    // read "Earpiece" while audio played in the car.
+    audio.__state.route = 'bluetooth';
+    await render(<CallControls call={createCall() as never} />);
+    expect(screen.getByText('Bluetooth')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('sw-route'));
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
+  });
+
+  it('names a wired or USB-C headset "Headset", not "Earpiece"', async () => {
+    audio.__state.route = 'headset';
+    await render(<CallControls call={createCall() as never} />);
+    expect(screen.getByText('Headset')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('sw-route'));
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
   });
 
   it('hides the camera toggle when asked', async () => {
@@ -154,7 +182,7 @@ describe('CallControls', () => {
     const onHangup = jest.fn();
     await render(<CallControls call={call as never} onHangup={onHangup} />);
 
-    fireEvent.press(screen.getByTestId('sw-hangup'));
+    await fireEvent.press(screen.getByTestId('sw-hangup'));
 
     expect(onHangup).toHaveBeenCalled();
   });
@@ -170,7 +198,7 @@ describe('CallControls', () => {
     const onHangup = jest.fn();
     await render(<CallControls call={call as never} onHangup={onHangup} />);
 
-    fireEvent.press(screen.getByTestId('sw-hangup'));
+    await fireEvent.press(screen.getByTestId('sw-hangup'));
     await act(async () => {
       await Promise.resolve();
     });
