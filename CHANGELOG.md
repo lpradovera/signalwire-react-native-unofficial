@@ -28,6 +28,9 @@
   reported missed.
 - `setup({ fusionTimeoutMs })` takes effect (it was dropped); the default
   is 45 s, not the 20 s the JSDoc said.
+- An empty caller name (a push's `from_name: ""`, an empty
+  `caller_id_name`) is no name: the call is shown by its number, and a call
+  with no name at all is too, instead of 'Unknown caller'.
 
 ### CallKit audio belongs to its call
 
