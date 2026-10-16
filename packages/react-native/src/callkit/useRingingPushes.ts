@@ -1,5 +1,7 @@
 import { useCallback, useRef, useSyncExternalStore } from 'react';
 
+import { peekProcessGlobal } from '../platform/processGlobal';
+
 import type { CallKeepBridge } from './CallKeepBridge';
 import type { CallEntry } from './types';
 
@@ -16,7 +18,7 @@ import type { CallEntry } from './types';
 const CALLKIT_GLOBAL = '__signalwireRNCallKitBridge';
 
 function existingBridge(): CallKeepBridge | undefined {
-  return (globalThis as Record<string, unknown>)[CALLKIT_GLOBAL] as CallKeepBridge | undefined;
+  return peekProcessGlobal<CallKeepBridge>(CALLKIT_GLOBAL);
 }
 
 /** A call that is ringing natively but has no SDK call yet. */

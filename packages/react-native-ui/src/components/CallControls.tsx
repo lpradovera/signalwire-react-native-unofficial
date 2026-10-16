@@ -7,6 +7,7 @@ import { useSignalWireTheme } from '../theme/ThemeProvider';
 import { ControlButton } from './ControlButton';
 
 import type { Call } from '@signalwire/js';
+import type { AudioRoute } from '@signalwire/react-native/audio';
 import type { StyleProp, ViewStyle } from 'react-native';
 
 export interface CallControlsProps {
@@ -39,7 +40,7 @@ export function CallControls({
 }: CallControlsProps): React.JSX.Element {
   const theme = useSignalWireTheme();
   const { isAudioMuted, isVideoMuted, setAudioMuted, setVideoMuted, hangup } = useCall(call);
-  const { route, setRoute } = useAudioRoute();
+  const { route, setSpeakerOn } = useAudioRoute();
 
   return (
     <View
@@ -66,9 +67,11 @@ export function CallControls({
       {showAudioRoute ? (
         <ControlButton
           testID="sw-route"
-          label={route === 'speaker' ? 'Speaker' : 'Earpiece'}
+          label={ROUTE_LABELS[route]}
           active={route === 'speaker'}
-          onPress={() => setRoute(route === 'speaker' ? 'earpiece' : 'speaker')}
+          // Off returns to the call's own route (a headset or car, if one is
+          // connected), not the receiver.
+          onPress={() => setSpeakerOn(route !== 'speaker')}
         />
       ) : null}
 
@@ -92,6 +95,14 @@ export function CallControls({
     </View>
   );
 }
+
+/** The speaker toggle names the route the call is on. */
+const ROUTE_LABELS: Record<AudioRoute, string> = {
+  speaker: 'Speaker',
+  earpiece: 'Earpiece',
+  headset: 'Headset',
+  bluetooth: 'Bluetooth'
+};
 
 const styles = StyleSheet.create({
   bar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }
