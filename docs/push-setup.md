@@ -245,25 +245,15 @@ app builds the call UI itself — because a self-managed ConnectionService gets
 none from the system. Everything below is verified on an Android 16 emulator,
 hot and cold.
 
-### 2a. Version ceiling — read this before installing
+### 2a. Firebase version
 
-`@react-native-firebase` **v23 and later require the New Architecture.** This
-package now requires it too, so that ceiling no longer applies to apps on it.
-The example still pins **v22.4.0**, the line push was verified with:
+`@react-native-firebase` v23 and later require the New Architecture, which
+this package requires too, so any version from 22 on works with it. The
+example pins **v22.4.0**, the line push was verified with:
 
 ```bash
 npm install @react-native-firebase/app@22 @react-native-firebase/messaging@22
 ```
-
-Install v23+ in an app still on the old architecture and Gradle fails with:
-
-```
-Gradle build daemon disappeared unexpectedly (it may have been killed or may have crashed)
-```
-
-which reads like an out-of-memory kill. The real message —
-`New Architecture support is required for @react-native-firebase/app` — appears
-only in `~/.gradle/daemon/*/daemon-*.out.log`.
 
 Versions below 22 predate the modular API this package calls, so the supported
 range is `>=22.0.0`.
@@ -290,8 +280,14 @@ range is `>=22.0.0`.
 > **A wrinkle worth knowing.** Firebase's Expo plugin demands an iOS
 > `GoogleService-Info.plist` whenever it is applied, even for an Android-only
 > setup and even when prebuilding iOS, which uses PushKit and no Firebase at
-> all. Either add an iOS app in Firebase purely to obtain that file, or apply
-> the plugin conditionally, as `example/app.config.js` does.
+> all. Apply the plugin conditionally, as `example/app.config.js` does.
+> Adding an iOS app in Firebase purely to obtain that file gets prebuild past
+> the check, but the plugin then adds `import FirebaseCore` and
+> `FirebaseApp.configure()` to `AppDelegate.swift`, so the Firebase pods must
+> be linked on iOS. The example keeps them off iOS autolinking
+> (`expo.autolinking.ios.exclude` in `example/package.json`, because their
+> `pod install` failed), and there that route ends in Xcode with
+> "No such module 'FirebaseCore'".
 
 ### 2c. Register the token
 

@@ -86,16 +86,6 @@ test('a changed block is replaced on the next prebuild without --clean', async (
   assert.equal(two.podfile, one.podfile);
 });
 
-test("replaces the previous version's begin/end block instead of adding a second one", async () => {
-  const legacy = fs.readFileSync(path.join(__dirname, '__fixtures__', 'legacy-12abf23', 'Podfile'), 'utf8');
-  const root = makeProject('legacy', { Podfile: () => legacy });
-  const { podfile } = await prebuild(root, [withPodDeploymentTarget]);
-  assert.ok(!podfile.includes('# withPodDeploymentTarget: begin'));
-  assert.ok(!podfile.includes('# withPodDeploymentTarget: end'));
-  assert.equal(count(podfile, BEGIN), 1);
-  assert.equal(count(podfile, 'resource_bundle_targets'), 1);
-});
-
 test('a post_install that names its block parameter differently gets that name', async () => {
   const root = makeProject('param', {
     Podfile: (podfile) =>

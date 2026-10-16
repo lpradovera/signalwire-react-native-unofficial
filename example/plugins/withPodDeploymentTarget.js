@@ -2,8 +2,6 @@ const { withPodfile } = require('@expo/config-plugins');
 const { mergeContents, withLf } = require('./generatedCode');
 
 const TAG = 'withPodDeploymentTarget';
-// The block this plugin wrote before it used Expo's tagged blocks.
-const PREVIOUS_BLOCK = /^[ \t]*# withPodDeploymentTarget: begin\n[\s\S]*?^[ \t]*# withPodDeploymentTarget: end\n/m;
 const POST_INSTALL = /^[ \t]*post_install do \|(\w+)\|[ \t]*$/m;
 
 /**
@@ -49,7 +47,6 @@ function block(installer) {
 
 function addDeploymentTargetBlock(podfile) {
   return withLf(podfile, (contents) => {
-    contents = contents.replace(PREVIOUS_BLOCK, '');
     const postInstall = POST_INSTALL.exec(contents);
     if (!postInstall) {
       throw new Error('withPodDeploymentTarget: no `post_install do |installer|` block in the Podfile');
