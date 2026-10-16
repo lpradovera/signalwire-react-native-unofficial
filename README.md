@@ -213,7 +213,9 @@ names the package and the install command.
 `SignalWireReactNative`): the system audio output button,
 `AudioRoutePickerButton`. It autolinks, but only into a rebuilt app: run
 `pod install` (Expo: `expo prebuild` or `expo run:ios`) after installing or
-upgrading. Until then the button renders nothing. Everything else, audio
+upgrading. Until then the button renders nothing, and it also renders
+nothing without incall-manager's iOS routes (see
+[Audio routes on iOS](#audio-routes-on-ios)). Everything else, audio
 routing included, is JavaScript over the peers above.
 
 ## The import-order rule
@@ -406,13 +408,14 @@ For iOS's own output menu, render `<AudioRoutePickerButton />` from
 `@signalwire/react-native/audio` (an `AVRoutePickerView`, which lists the phone,
 the speaker and each connected headset or car by name, and switches the call
 itself). `CallControls` in `@signalwire/react-native-ui` shows it on iOS next
-to the speaker toggle; `showRoutePicker` defaults to `showAudioRoute`. With
-incall-manager's iOS routes, a choice there is followed by `route` and kept
-by incall-manager. With released incall-manager it still switches the call,
-but nothing reports it (`route` keeps what the app last asked for), and once
-the speaker was turned on from the app, incall-manager 4.3.0 re-applies the
-speaker on the next audio category change (a CallKit re-activation, say), so
-a choice made there holds only until then. VoiceOver reads the button as
+to the speaker toggle; `showRoutePicker` defaults to `showAudioRoute`. The
+button needs incall-manager's iOS routes, which follow a choice made there
+(`route` reports it) and keep it. **On released incall-manager 4.3.0 the
+button isn't rendered** (`isAudioRoutePickerAvailable()` is false): nothing
+would report its choice, and 4.3.0 re-applies the speaker on the next audio
+category change, undoing it. There `CallControls` offers speaker on/off
+only; for full routing, apply the incall-manager patch above
+(`docs/patches/`) or wait for the upstream change. VoiceOver reads the button as
 "Audio output" (`accessibilityLabel`). Its `activeTintColor` is AVKit's
 colour for AirPlay being active; a headset or car is not AirPlay.
 

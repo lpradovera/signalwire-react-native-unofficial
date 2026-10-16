@@ -2,6 +2,7 @@ import { render } from '@testing-library/react-native';
 import React from 'react';
 import { Platform, UIManager } from 'react-native';
 
+import { installIncallIosRoutes, uninstallIncallIosRoutes } from '../../jest/mocks/incallIosRoutes';
 import {
   AudioRoutePickerButton,
   isAudioRoutePickerAvailable,
@@ -9,8 +10,11 @@ import {
 } from './AudioRoutePickerButton';
 
 describe('AudioRoutePickerButton', () => {
+  beforeEach(() => installIncallIosRoutes());
+
   afterEach(() => {
     jest.restoreAllMocks();
+    uninstallIncallIosRoutes();
     resetAudioRoutePickerForTesting();
   });
 
@@ -22,6 +26,16 @@ describe('AudioRoutePickerButton', () => {
       type: 'SWAudioRoutePicker',
       props: { testID: 'picker', accessibilityLabel: 'Audio output' }
     });
+  });
+
+  it('draws nothing with released incall-manager, where nothing follows the picker’s choice', async () => {
+    // incall-manager 4.3.0 neither reports a route the picker chose nor keeps
+    // it: its next category-change re-apply can put the call back.
+    uninstallIncallIosRoutes();
+    jest.spyOn(UIManager, 'hasViewManagerConfig').mockImplementation((name) => name === 'SWAudioRoutePicker');
+    const { toJSON } = await render(<AudioRoutePickerButton />);
+    expect(isAudioRoutePickerAvailable()).toBe(false);
+    expect(toJSON()).toBeNull();
   });
 
   it('draws nothing when the app was built without the native view', async () => {
@@ -56,6 +70,10 @@ describe('AudioRoutePickerButton', () => {
       jest.isolateModules(() => {
         const RN = require('react-native') as typeof import('react-native');
         jest.spyOn(RN.UIManager, 'hasViewManagerConfig').mockReturnValue(true);
+        // This copy's incall-manager, with its iOS routes.
+        (RN.NativeModules as Record<string, unknown>).InCallManager = { getAudioDeviceStatus: jest.fn() };
+        const incall = (require('react-native-incall-manager') as { default: Record<string, unknown> }).default;
+        Object.assign(incall, { getAudioDeviceStatus: jest.fn(), addListener: jest.fn() });
         jest.spyOn(RN, 'requireNativeComponent').mockImplementation(((name: string) => {
           registrations.push(name);
           return name;
