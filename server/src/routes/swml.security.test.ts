@@ -330,6 +330,23 @@ describe('POST /swml/bridge/status', () => {
 
     assert.deepEqual(h.ended.map((end) => end.callId), ['parked-sid']);
   });
+
+  it('ends the caller when the device hangs up minutes after the park', async () => {
+    // Park at T0, answer at T0+10s, a two-minute conversation: the callback
+    // arrives at T0+130s, past the 60 s redemption window.
+    let now = 0;
+    const tokens = new BridgeTokenStore({ now: () => now });
+    const h = await harness({ publicUrl: PUBLIC_URL, tokens });
+    const { token } = tokens.mint('parked-sid', 'rn-example');
+    now = 10_000;
+    tokens.redeem(token, 'rn-example');
+
+    now = 130_000;
+    await h.post(`/swml/bridge/status?token=${token}`, { params: { connect_state: 'disconnected' } });
+    await settle();
+
+    assert.deepEqual(h.ended.map((end) => end.callId), ['parked-sid']);
+  });
 });
 
 describe('POST /swml/decline', () => {
