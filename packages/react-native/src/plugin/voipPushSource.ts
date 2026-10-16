@@ -62,6 +62,14 @@ static NSString *SWCallUUID(id value) {
   return [(parsed ?: [NSUUID UUID]).UUIDString lowercaseString];
 }
 
+// callkeep keeps its CallKit configuration in NSUserDefaults from the first
+// time JavaScript runs RNCallKeep.setup(), and has no CXProvider before that.
+// RNCallKeep.h does not declare this, so it is checked with
+// respondsToSelector: before use.
+@interface RNCallKeep (SignalWireVoipPush)
++ (NSDictionary *)getSettings;
+@end
+
 // The token and the pending calls are written on PushKit's queue (main) and
 // read on React Native's module queue. Every access takes this one lock: an
 // unsynchronised read can be handed an object the other thread is releasing.
@@ -197,6 +205,36 @@ static const NSUInteger SWMaxPendingCalls = 8;
   NSLog(@"[SignalWireVoipPush] token invalidated");
 }
 
+/**
+ * Gives callkeep a CXProvider when JavaScript has never set it up.
+ *
+ * Until RNCallKeep.setup() has run once on this install callkeep has no
+ * settings and so no provider, and its reportNewIncomingCall messages nil: no
+ * call is shown, PushKit's completion never runs, and iOS terminates the app
+ * and eventually stops delivering VoIP pushes to it. That happens when a push
+ * arrives before the app's first setup() (a token registered before sign-in,
+ * a setup() that threw). The native setup is callkeep's own documented path,
+ * and it stores these settings, so it runs at most once per install. It makes
+ * callkeep ignore JavaScript's setup() for the rest of this process; the next
+ * launch's setup() stores the app's own options, which callkeep's provider
+ * picks up from the launch after (as with any change to them). The values
+ * are the fixed ones CallKeepBridge.setup() passes.
+ */
+- (void)ensureCallKeepProvider {
+  if (![RNCallKeep respondsToSelector:@selector(getSettings)] || [RNCallKeep getSettings] != nil) {
+    return;
+  }
+  NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
+  NSString *appName = SWStringValue(info[@"CFBundleDisplayName"]) ?: SWStringValue(info[@"CFBundleName"]) ?: @"Calls";
+  NSLog(@"[SignalWireVoipPush] RNCallKeep.setup() has not run on this install; setting callkeep up natively");
+  [RNCallKeep setup:@{
+    @"appName": appName,
+    @"supportsVideo": @NO,
+    @"maximumCallGroups": @"1",
+    @"maximumCallsPerCallGroup": @"1"
+  }];
+}
+
 /** callkeep hands this dictionary back to JS on didDisplayIncomingCall. */
 - (NSDictionary *)payloadWithCallId:(NSString *)callId extras:(NSDictionary *)extras {
   NSMutableDictionary *result = [NSMutableDictionary dictionaryWithDictionary:extras];
@@ -242,6 +280,7 @@ static const NSUInteger SWMaxPendingCalls = 8;
   // Reported unconditionally, even when the payload is malformed: iOS kills an
   // app that takes a VoIP push without reporting a call, and a call that ends
   // itself as missed is far better than a terminated process.
+  [self ensureCallKeepProvider];
   [RNCallKeep reportNewIncomingCall:uuid
                              handle:handle
                          handleType:@"generic"

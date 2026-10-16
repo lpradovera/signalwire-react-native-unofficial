@@ -110,4 +110,20 @@ describe('generated SignalWireVoipPush.m', () => {
       expect(methodBody(VOIP_PUSH_SOURCE, '+ (void)addPendingCall:')).toContain('SWMaxPendingCalls');
     });
   });
+
+  describe('callkeep before RNCallKeep.setup() has ever run (plugins-5)', () => {
+    it('sets callkeep up natively when it has no settings, before reporting', () => {
+      const handler = pushHandler();
+      const ensure = handler.indexOf('[self ensureCallKeepProvider]');
+      const report = handler.indexOf('[RNCallKeep reportNewIncomingCall:');
+      expect(ensure).toBeGreaterThan(-1);
+      expect(ensure).toBeLessThan(report);
+
+      const body = methodBody(VOIP_PUSH_SOURCE, '- (void)ensureCallKeepProvider');
+      expect(body).toContain('respondsToSelector:@selector(getSettings)');
+      expect(body).toContain('[RNCallKeep getSettings] != nil');
+      expect(body).toContain('[RNCallKeep setup:');
+      expect(body).toContain('@"appName"');
+    });
+  });
 });
