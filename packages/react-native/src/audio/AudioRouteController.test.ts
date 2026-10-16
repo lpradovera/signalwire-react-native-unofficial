@@ -304,6 +304,15 @@ describe('AudioRouteController', () => {
       copies.forEach((spy) => spy.mockRestore());
     });
 
+    it('setRoute("headset") turns the speaker off, which a plugged-in headset then takes', () => {
+      controller.start('video');
+      controller.setRoute('headset');
+      expect(flag).toHaveBeenLastCalledWith(false);
+      expect(choose).not.toHaveBeenCalled();
+      expect(controller.route).toBe('headset');
+      expect(warn).not.toHaveBeenCalled();
+    });
+
     it('logs nothing at call start', () => {
       controller.start('audio');
       controller.stop();
@@ -356,6 +365,21 @@ describe('AudioRouteController', () => {
       expect(flag).toHaveBeenLastCalledWith(false);
     });
 
+    it('chooses a wired headset through incall-manager, and goes back without one', async () => {
+      choose.mockResolvedValueOnce(deviceStatus('WIRED_HEADSET', '["SPEAKER_PHONE","WIRED_HEADSET"]'));
+      controller.start('audio');
+      controller.setRoute('headset');
+      await flush();
+      expect(choose).toHaveBeenLastCalledWith('WIRED_HEADSET');
+      expect(controller.route).toBe('headset');
+
+      choose.mockResolvedValueOnce(deviceStatus('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]'));
+      controller.setRoute('speaker');
+      controller.setRoute('headset');
+      await flush();
+      expect(controller.route).toBe('speaker');
+    });
+
     it('the earpiece only turns the speaker off', () => {
       controller.start('audio');
       controller.setRoute('speaker');
@@ -385,13 +409,21 @@ describe('AudioRouteController', () => {
       expect(controller.route).toBe('bluetooth');
     });
 
+    it('reports a wired or USB-C headset as the headset, not the earpiece', async () => {
+      installIncallIosRoutes(deviceStatus('WIRED_HEADSET', '["SPEAKER_PHONE","WIRED_HEADSET"]', 'Headphones'));
+      controller.start('audio');
+      await flush();
+      expect(controller.route).toBe('headset');
+    });
+
     it('chooses every route through incall-manager', () => {
       controller.start('audio');
       controller.setRoute('bluetooth');
       controller.setRoute('earpiece');
       controller.setRoute('speaker');
+      controller.setRoute('headset');
       return flush().then(() =>
-        expect(choose.mock.calls).toEqual([['BLUETOOTH'], ['EARPIECE'], ['SPEAKER_PHONE']])
+        expect(choose.mock.calls).toEqual([['BLUETOOTH'], ['EARPIECE'], ['SPEAKER_PHONE'], ['WIRED_HEADSET']])
       );
     });
 
@@ -427,6 +459,7 @@ describe('AudioRouteController', () => {
       reportDevice('EARPIECE');
       reportDevice('SPEAKER_PHONE');
       reportDevice('WIRED_HEADSET');
+      expect(controller.route).toBe('headset');
       reportDevice('BLUETOOTH');
       await flush();
       expect(controller.route).toBe('bluetooth');
@@ -550,7 +583,7 @@ describe('AudioRouteController', () => {
       await flush();
       controller.setRoute('bluetooth');
       await flush();
-      expect(controller.route).toBe('earpiece');
+      expect(controller.route).toBe('headset');
     });
 
     it('speaker off after the system picker chose the speaker returns to the earlier device', async () => {
@@ -597,10 +630,18 @@ describe('AudioRouteController', () => {
       controller.setRoute('earpiece');
       await flush();
       reportDevice('EARPIECE');
+      const seen: string[] = [];
+      const sub = controller.route$.subscribe((route) => seen.push(route));
+      seen.length = 0;
       reportDevice('WIRED_HEADSET', '["EARPIECE","SPEAKER_PHONE","WIRED_HEADSET"]');
+      sub.unsubscribe();
+      expect(seen).toEqual(['headset']);
       controller.setSpeakerOn(true);
       await flush();
       choose.mockClear();
+      incallIosRoutes.getAudioDeviceStatus.mockImplementation(async () =>
+        deviceStatus('WIRED_HEADSET', '["EARPIECE","SPEAKER_PHONE","WIRED_HEADSET"]')
+      );
 
       controller.setSpeakerOn(false);
       await flush();
@@ -608,6 +649,26 @@ describe('AudioRouteController', () => {
       // Back to the headset at incall-manager's default, without the receiver pin.
       expect(choose).not.toHaveBeenCalled();
       expect(flag).toHaveBeenLastCalledWith(null);
+      expect(controller.route).toBe('headset');
+    });
+
+    it('speaker off returns to a chosen headset by choosing it again', async () => {
+      installIncallIosRoutes(deviceStatus('EARPIECE', '["SPEAKER_PHONE","WIRED_HEADSET"]'));
+      choose.mockImplementation(async (route: string) => deviceStatus(route, '["SPEAKER_PHONE","WIRED_HEADSET"]'));
+      controller.start('audio');
+      await flush();
+      controller.setRoute('headset');
+      await flush();
+      reportDevice('WIRED_HEADSET', '["SPEAKER_PHONE","WIRED_HEADSET"]');
+      controller.setSpeakerOn(true);
+      await flush();
+      choose.mockClear();
+
+      controller.setSpeakerOn(false);
+      await flush();
+
+      expect(choose).toHaveBeenCalledWith('WIRED_HEADSET');
+      expect(controller.route).toBe('headset');
     });
 
     it('keeps a choice when iOS reports the chosen device', async () => {

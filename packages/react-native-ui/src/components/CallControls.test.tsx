@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 import { BehaviorSubject, Subject } from 'rxjs';
 
 jest.mock('@signalwire/react-native/audio', () => {
@@ -9,8 +10,8 @@ jest.mock('@signalwire/react-native/audio', () => {
   const { View } = jest.requireActual('react-native');
   return {
     useAudioRoute: () => state,
-    isAudioRoutePickerAvailable: () => state.pickerAvailable,
-    AudioRoutePickerButton: (props: object) => <View {...props} />,
+    // Like the real button: nothing unless iOS, the native view and incall-manager's iOS routes.
+    AudioRoutePickerButton: (props: object) => (state.pickerAvailable ? <View {...props} /> : null),
     __state: state
   };
 });
@@ -150,6 +151,14 @@ describe('CallControls', () => {
     expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
   });
 
+  it('names a wired or USB-C headset "Headset", not "Earpiece"', async () => {
+    audio.__state.route = 'headset';
+    await render(<CallControls call={createCall() as never} />);
+    expect(screen.getByText('Headset')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('sw-route'));
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
+  });
+
   it('hides the camera toggle when asked', async () => {
     await render(<CallControls call={createCall() as never} showVideo={false} />);
     expect(screen.queryByTestId('sw-video')).toBeNull();
@@ -165,6 +174,28 @@ describe('CallControls', () => {
     await render(<CallControls call={createCall() as never} />);
     expect(screen.getByTestId('sw-route-picker')).toBeTruthy();
     expect(screen.getByTestId('sw-route')).toBeTruthy();
+  });
+
+  it('styles the output button as a pill itself, with no wrapper', async () => {
+    // On the New Architecture React Native's interop container paints the
+    // background and corner radius and insets the native view by the padding.
+    audio.__state.pickerAvailable = true;
+    await render(<CallControls call={createCall() as never} />);
+    const picker = screen.getByTestId('sw-route-picker');
+    expect(StyleSheet.flatten(picker.props.style)).toMatchObject({
+      backgroundColor: expect.any(String),
+      borderRadius: expect.any(Number),
+      padding: expect.any(Number)
+    });
+    // No host view between the button and the bar.
+    let between = 0;
+    let node = picker.parent;
+    while (node && node.props.accessibilityRole !== 'toolbar') {
+      if (typeof node.type === 'string') between += 1;
+      node = node.parent;
+    }
+    expect(node).toBeTruthy();
+    expect(between).toBe(0);
   });
 
   it('leaves the output button out where it is not, or when asked', async () => {

@@ -1,9 +1,5 @@
 import { logger, useCall } from '@signalwire/react';
-import {
-  AudioRoutePickerButton,
-  isAudioRoutePickerAvailable,
-  useAudioRoute
-} from '@signalwire/react-native/audio';
+import { AudioRoutePickerButton, useAudioRoute } from '@signalwire/react-native/audio';
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 
@@ -87,18 +83,16 @@ export function CallControls({
         />
       ) : null}
 
-      {showRoutePicker && isAudioRoutePickerAvailable() ? (
-        <View
-          style={[
-            styles.picker,
-            { backgroundColor: theme.colors.surface, borderRadius: theme.radii.pill, padding: theme.spacing.xs }
-          ]}
-        >
-          <AudioRoutePickerButton
-            testID="sw-route-picker"
-            tintColor={theme.colors.text}
-          />
-        </View>
+      {showRoutePicker ? (
+        // Renders nothing off iOS, without the native view, or without
+        // incall-manager's iOS routes. The pill style sits on the button: on
+        // the New Architecture React Native's interop container paints the
+        // background and radius and insets the native view by the padding.
+        <AudioRoutePickerButton
+          testID="sw-route-picker"
+          tintColor={theme.colors.text}
+          style={{ backgroundColor: theme.colors.surface, borderRadius: theme.radii.pill, padding: theme.spacing.xs }}
+        />
       ) : null}
 
       <ControlButton
@@ -126,10 +120,10 @@ export function CallControls({
 const ROUTE_LABELS: Record<AudioRoute, string> = {
   speaker: 'Speaker',
   earpiece: 'Earpiece',
+  headset: 'Headset',
   bluetooth: 'Bluetooth'
 };
 
 const styles = StyleSheet.create({
-  bar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center' },
-  picker: { alignItems: 'center', justifyContent: 'center' }
+  bar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }
 });
