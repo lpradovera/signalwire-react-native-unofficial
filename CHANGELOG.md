@@ -418,7 +418,10 @@ Needs a native rebuild: the package now has an Android library (autolinked).
   is outside every module load, where Metro reports a throw as fatal before
   any `catch` runs: a release build without Firebase configured died about
   half a second after launch with `Requiring unknown module
-  "@react-native-firebase/messaging"`. Why push is off is logged once, at info.
+  "@react-native-firebase/messaging"`. Why push is off is logged once per run,
+  as a warning (the logger's default level hides info in release builds),
+  including on a build whose Firebase has no default app, where it was logged
+  again each time the push token was watched.
 - `getFcmToken()` (and so `watchPushToken()`) asks for `POST_NOTIFICATIONS` on
   Android 13 and later; React Native Firebase's `requestPermission` does not
   ask on Android.
