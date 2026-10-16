@@ -2,13 +2,15 @@
  * The provider and hooks against the REAL @signalwire/js client, talking to
  * an in-process fake server (see jest/realSdk.ts). The unit tests' fakes
  * hide what these check: the real destroy() throws until connect() has built
- * a session.
+ * a session, the session appears only at the end of connect(), and
+ * disconnect() does not come back by itself.
  */
-import { act, render } from '@testing-library/react';
-import React from 'react';
+import { act, render, screen } from '@testing-library/react';
+import React, { useContext } from 'react';
 
 import { installFakeFetch, options, quietSdk, server, tick, token } from '../jest/realSdk';
-import { SignalWireProvider } from './SignalWireProvider';
+import { SignalWireContext, SignalWireProvider } from './SignalWireProvider';
+import { useIncomingCalls } from './useIncomingCalls';
 import { useSignalWire } from './useSignalWire';
 
 jest.mock('@signalwire/js', () => jest.requireActual('../jest/realSdk').sdk);
@@ -130,6 +132,73 @@ describe('client lifecycle', () => {
     expect(await waitUntil(() => server.count('subscriber.online') === 2)).toBe(true);
     await settle(100);
     expect(server.open()).toHaveLength(1);
+    view.unmount();
+  });
+});
+
+describe('useIncomingCalls', () => {
+  function IncomingOnly(): React.JSX.Element {
+    const { calls } = useIncomingCalls();
+    return <span data-testid="incoming">{String(calls.length)}</span>;
+  }
+
+  /** What ClientSessionManager does with an inbound invite once it has built the call. */
+  function deliverInbound(client: unknown, id: string): void {
+    const session = (client as { _clientSession: { _calls$: { next(v: unknown): void } } })
+      ._clientSession;
+    session._calls$.next({ [id]: { id, direction: 'inbound', from: '+15550001' } });
+  }
+
+  it('shows an inbound call in a component that uses nothing else', async () => {
+    let client: { isConnected: boolean } | null | undefined;
+    // Reads the context only: it re-renders when the client is set, not when
+    // the client connects, like IncomingOnly.
+    function Grab(): null {
+      client = useContext(SignalWireContext)?.client as never;
+      return null;
+    }
+    const view = render(
+      <SignalWireProvider credentialProvider={credentials()} options={options}>
+        <Grab />
+        <IncomingOnly />
+      </SignalWireProvider>
+    );
+    expect(await waitUntil(() => client?.isConnected === true)).toBe(true);
+
+    await act(async () => {
+      deliverInbound(client, 'inbound-1');
+      await tick(20);
+    });
+
+    expect(screen.getByTestId('incoming').textContent).toBe('1');
+    view.unmount();
+  });
+
+  it('follows the new session after disconnect() and connect()', async () => {
+    let client: { isConnected: boolean; connect(): Promise<void>; disconnect(): Promise<void> } | undefined;
+    function Grab(): null {
+      client = useContext(SignalWireContext)?.client as never;
+      return null;
+    }
+    const view = render(
+      <SignalWireProvider credentialProvider={credentials()} options={options}>
+        <Grab />
+        <IncomingOnly />
+      </SignalWireProvider>
+    );
+    expect(await waitUntil(() => client?.isConnected === true)).toBe(true);
+    await act(async () => {
+      await client!.disconnect();
+      await client!.connect();
+    });
+    expect(await waitUntil(() => client?.isConnected === true)).toBe(true);
+
+    await act(async () => {
+      deliverInbound(client, 'inbound-2');
+      await tick(20);
+    });
+
+    expect(screen.getByTestId('incoming').textContent).toBe('1');
     view.unmount();
   });
 });
