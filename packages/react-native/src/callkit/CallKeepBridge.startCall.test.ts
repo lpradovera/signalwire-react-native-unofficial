@@ -6,7 +6,8 @@ import { CallKeepBridge } from './CallKeepBridge';
 
 import type { StartCallRequest } from './CallKeepBridge';
 
-jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
+// callkeep linked: setup() checks for its native module.
+jest.mock('react-native', () => ({ Platform: { OS: 'ios' }, NativeModules: { RNCallKeep: { setup: () => undefined } } }));
 
 const callkeep = RNCallKeep as unknown as typeof RNCallKeep & {
   __emit: (event: string, payload: unknown) => void;

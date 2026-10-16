@@ -22,3 +22,6 @@ jest.mock('@react-native-community/netinfo', () => ({
 // react-native-webrtc's native module, as a linked build has it. The package
 // checks for it before loading react-native-webrtc (platform/reactNativeWebRTC).
 require('react-native').NativeModules.WebRTCModule ??= {};
+// react-native-callkeep's native module, as a linked build has it. setup()
+// checks for it (CallKeepBridge.setup); tests of an unlinked callkeep remove it.
+require('react-native').NativeModules.RNCallKeep ??= { setup: jest.fn() };

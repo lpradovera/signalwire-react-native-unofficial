@@ -50,7 +50,11 @@ jest.mock('react-native', () => ({
     }
   },
   get NativeModules() {
-    return mockNativeModuleLinked ? { SignalWireIncomingCall: mockIncomingCall } : {};
+    // callkeep is linked throughout (setup() checks for RNCallKeep); the
+    // package's own Android module only when the test says so.
+    return mockNativeModuleLinked
+      ? { RNCallKeep: { setup: () => undefined }, SignalWireIncomingCall: mockIncomingCall }
+      : { RNCallKeep: { setup: () => undefined } };
   }
 }));
 
