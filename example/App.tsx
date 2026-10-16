@@ -1,5 +1,6 @@
 import { SignalWireProvider, useSignalWire } from '@signalwire/react-native';
 import { getCallKit } from '@signalwire/react-native/callkit';
+import { CallOverlayHost } from '@signalwire/react-native-ui';
 import React, { useEffect, useMemo, useState } from 'react';
 import { SafeAreaView, StyleSheet } from 'react-native';
 
@@ -84,6 +85,8 @@ export default function App(): React.JSX.Element {
       >
         <Shell />
       </SignalWireProvider>
+      {/* Last in the root: the incoming-call sheet draws here, not in a Modal. */}
+      <CallOverlayHost />
     </SafeAreaView>
   );
 }
