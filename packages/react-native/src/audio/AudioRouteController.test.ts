@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 import InCallManager from 'react-native-incall-manager';
 
 import { logger } from '@signalwire/react';
@@ -10,9 +10,11 @@ import {
   uninstallIncallIosRoutes
 } from '../../jest/mocks/incallIosRoutes';
 import { AudioRouteController, resetAudioRouteControllerForTesting } from './AudioRouteController';
+import { audioDevices$, resetAudioDevicesForTesting } from './nativeAudioRoutes';
 
 const flag = InCallManager.setForceSpeakerphoneOn as jest.Mock;
 const choose = InCallManager.chooseAudioRoute as jest.Mock;
+const wrapper = InCallManager as unknown as { addListener: jest.Mock; getAudioDeviceStatus: jest.Mock };
 
 /** Lets promise chains (the status read, a rejected choice) settle. */
 async function flush(): Promise<void> {
@@ -25,8 +27,9 @@ let controller: AudioRouteController;
 let warn: jest.SpyInstance;
 
 beforeEach(() => {
-  jest.clearAllMocks();
   resetAudioRouteControllerForTesting();
+  resetAudioDevicesForTesting();
+  jest.clearAllMocks();
   warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
   controller = new AudioRouteController();
 });
@@ -42,19 +45,50 @@ describe('AudioRouteController', () => {
     expect(controller.route).toBe('earpiece');
   });
 
-  it('start("audio") begins an audio session off the speaker', () => {
+  it('start("audio") begins an audio session off the speaker, leaving the route to incall-manager', () => {
     controller.start('audio');
     expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
     expect(controller.route).toBe('earpiece');
-    expect(flag).toHaveBeenCalledWith(false);
+    expect(flag).not.toHaveBeenCalled();
     expect(choose).not.toHaveBeenCalled();
   });
 
-  it('start("video") defaults to speaker', () => {
+  it('start("video") defaults to speaker without forcing it over a headset or car', () => {
+    // incall-manager's own video start uses the speaker only when nothing
+    // else is connected. Forcing the speaker on top took a video call off
+    // AirPods or a car.
     controller.start('video');
     expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
     expect(controller.route).toBe('speaker');
-    expect(flag).toHaveBeenCalledWith(true);
+    expect(flag).not.toHaveBeenCalled();
+  });
+
+  it('setRoute("speaker") forces speakerphone on', () => {
+    controller.start('audio');
+    controller.setRoute('speaker');
+    expect(flag).toHaveBeenLastCalledWith(true);
+  });
+
+  it('does not re-emit when the route is unchanged', () => {
+    controller.start('audio');
+    controller.setRoute('speaker');
+    const seen: string[] = [];
+    controller.route$.subscribe((route) => seen.push(route));
+    controller.setRoute('speaker');
+    expect(seen).toEqual(['speaker']);
+    expect(flag).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to start without incall-manager linked natively', () => {
+    // The JS wrapper is a class instance whose methods exist either way; an
+    // app installed without a rebuild has no native module behind it.
+    const linked = (NativeModules as Record<string, unknown>).InCallManager;
+    delete (NativeModules as Record<string, unknown>).InCallManager;
+    try {
+      expect(() => new AudioRouteController()).toThrow(/react-native-incall-manager/);
+    } finally {
+      (NativeModules as Record<string, unknown>).InCallManager = linked;
+    }
   });
 
   it('emits every route change on route$', () => {
@@ -65,6 +99,24 @@ describe('AudioRouteController', () => {
     controller.setSpeakerOn(true);
     controller.setSpeakerOn(false);
     expect(seen).toEqual(['earpiece', 'earpiece', 'speaker', 'earpiece']);
+  });
+
+  it('calls incall-manager in the order the controller is asked', async () => {
+    installIncallIosRoutes();
+    const order: string[] = [];
+    choose.mockImplementation(async (route: string) => {
+      order.push(`choose:${route}`);
+      return deviceStatus(route);
+    });
+    flag.mockImplementation((on: boolean | null) => order.push(`flag:${String(on)}`));
+    controller.start('audio');
+    await flush();
+
+    controller.setSpeakerOn(true);
+    controller.setSpeakerOn(false);
+    await flush();
+
+    expect(order).toEqual(['choose:SPEAKER_PHONE', 'flag:false']);
   });
 
   it('does not restart an already-started session or reset the route', () => {
@@ -106,6 +158,64 @@ describe('AudioRouteController', () => {
       throw new Error('native module missing');
     });
     expect(() => controller.start('audio')).not.toThrow();
+  });
+
+  it('survives a route write throwing', () => {
+    controller.start('audio');
+    flag.mockImplementationOnce(() => {
+      throw new Error('native module missing');
+    });
+    expect(() => controller.setRoute('speaker')).not.toThrow();
+    expect(warn).toHaveBeenCalledWith('Failed to apply audio route "speaker":', expect.any(Error));
+  });
+
+  describe('before the session starts', () => {
+    it('holds a choice made while a CallKit call rings, and applies it when the session starts', () => {
+      controller.holdChoicesUntilStart();
+      controller.setSpeakerOn(true);
+      expect(controller.route).toBe('speaker');
+      expect(flag).not.toHaveBeenCalled();
+
+      controller.start('audio');
+
+      expect(controller.route).toBe('speaker');
+      expect(flag).toHaveBeenCalledWith(true);
+    });
+
+    it('applies a held choice through incall-manager’s iOS routes once they can take it', async () => {
+      // Before start() incall-manager refuses every choice as inactive.
+      installIncallIosRoutes();
+      controller.holdChoicesUntilStart();
+      controller.setSpeakerOn(true);
+      expect(choose).not.toHaveBeenCalled();
+
+      controller.start('audio');
+      await flush();
+
+      expect(choose).toHaveBeenCalledWith('SPEAKER_PHONE');
+      expect(controller.route).toBe('speaker');
+    });
+
+    it('writes nothing native for a call that never starts', () => {
+      // After a video call, incall-manager's speaker-off outside a session
+      // turned the proximity sensor on in the idle app.
+      controller.holdChoicesUntilStart();
+      controller.setSpeakerOn(true);
+      controller.setSpeakerOn(false);
+      controller.stop();
+      controller.start('audio');
+
+      expect(flag).not.toHaveBeenCalled();
+      expect(controller.route).toBe('earpiece');
+    });
+
+    it('still turns the speaker on and off in an app that starts no session', () => {
+      // Without CallKit nothing calls start(); speaker on/off is all
+      // incall-manager does outside a session, and it works there.
+      controller.setSpeakerOn(true);
+      controller.setSpeakerOn(false);
+      expect(flag.mock.calls).toEqual([[true], [false]]);
+    });
   });
 
   describe('the speaker toggle', () => {
@@ -169,10 +279,29 @@ describe('AudioRouteController', () => {
       expect(warn).toHaveBeenCalledTimes(1);
     });
 
-    it('warns once per process, not once per controller', () => {
+    it('warns once per process, not once per controller or bundle copy', () => {
+      // Two isolated module registries stand for two tsup bundle copies, each
+      // with its own logger.
+      const copies: jest.SpyInstance[] = [];
+      const load = (): typeof import('./AudioRouteController') => {
+        let copy: typeof import('./AudioRouteController') | undefined;
+        jest.isolateModules(() => {
+          const copyLogger = jest.requireActual<typeof import('@signalwire/react')>('@signalwire/react').logger;
+          copies.push(jest.spyOn(copyLogger, 'warn').mockImplementation(() => undefined));
+          copy = jest.requireActual<typeof import('./AudioRouteController')>('./AudioRouteController');
+        });
+        return copy!;
+      };
+      const first = load();
+      const second = load();
+
+      new first.AudioRouteController().setRoute('bluetooth');
+      new second.AudioRouteController().setRoute('bluetooth');
       controller.setRoute('bluetooth');
-      new AudioRouteController().setRoute('bluetooth');
-      expect(warn).toHaveBeenCalledTimes(1);
+
+      const warned = [warn, ...copies].reduce((sum, spy) => sum + spy.mock.calls.length, 0);
+      expect(warned).toBe(1);
+      copies.forEach((spy) => spy.mockRestore());
     });
 
     it('logs nothing at call start', () => {
@@ -190,11 +319,41 @@ describe('AudioRouteController', () => {
     afterEach(() => os.restore());
 
     it('chooses Bluetooth through incall-manager', async () => {
+      choose.mockResolvedValueOnce(deviceStatus('BLUETOOTH'));
       controller.start('audio');
       controller.setRoute('bluetooth');
       await flush();
       expect(choose).toHaveBeenCalledWith('BLUETOOTH');
       expect(controller.route).toBe('bluetooth');
+    });
+
+    it('goes back when there is no Bluetooth device: Android answers instead of refusing', async () => {
+      // incall-manager on Android logs "Can not select BLUETOOTH" and
+      // resolves with the unchanged status.
+      choose.mockResolvedValueOnce(deviceStatus('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]'));
+      controller.start('audio');
+      controller.setRoute('bluetooth');
+      await flush();
+      expect(controller.route).toBe('earpiece');
+    });
+
+    it('speaker off leaves the speaker when the Bluetooth device went away', async () => {
+      choose.mockResolvedValueOnce(deviceStatus('BLUETOOTH'));
+      controller.start('audio');
+      controller.setRoute('bluetooth');
+      await flush();
+      choose.mockResolvedValueOnce(deviceStatus('SPEAKER_PHONE', '["EARPIECE","SPEAKER_PHONE"]'));
+      controller.setSpeakerOn(true);
+      await flush();
+      // The headset drops; Android's answer to the speaker-off choice says so.
+      choose.mockResolvedValueOnce(deviceStatus('SPEAKER_PHONE', '["EARPIECE","SPEAKER_PHONE"]'));
+      flag.mockClear();
+
+      controller.setSpeakerOn(false);
+      await flush();
+
+      expect(controller.route).toBe('earpiece');
+      expect(flag).toHaveBeenLastCalledWith(false);
     });
 
     it('the earpiece only turns the speaker off', () => {
@@ -275,16 +434,114 @@ describe('AudioRouteController', () => {
       expect(choose).not.toHaveBeenCalled();
     });
 
-    it('takes a report that arrives during a choice once the choice is answered: there is no time window', async () => {
+    it("takes a choice's answer over a report sent before it", async () => {
+      // incall-manager answers on the queue it reports from, so a report that
+      // reached JS before the answer is older than it.
       controller.start('audio');
       await flush();
       controller.setSpeakerOn(true);
-      reportDevice('BLUETOOTH'); // a car connects just after the tap
+      reportDevice('BLUETOOTH'); // the car, just before incall-manager ran the choice
+      await flush();
+      expect(controller.route).toBe('speaker');
+      // ...and a report after the answer is taken at once, however soon it comes.
+      reportDevice('BLUETOOTH');
+      expect(controller.route).toBe('bluetooth');
+    });
+
+    it('takes a report that arrived during a choice when the answer names no known output', async () => {
+      // An AirPlay or HDMI output is none of the four routes ("").
+      choose.mockResolvedValueOnce(deviceStatus(''));
+      controller.start('audio');
+      await flush();
+      controller.setSpeakerOn(true);
+      reportDevice('BLUETOOTH');
       await flush();
       expect(controller.route).toBe('bluetooth');
-      // ...and a report after that is taken at once, however soon it comes.
-      reportDevice('SPEAKER_PHONE');
+    });
+
+    it('ignores the status from before the call until its own read comes back', async () => {
+      // A hook kept mounted holds the previous call's last status; the
+      // shared feed replays it to the next call's subscription.
+      installIncallIosRoutes(deviceStatus('BLUETOOTH'));
+      const held = audioDevices$.subscribe(() => undefined);
+      await flush();
+      incallIosRoutes.getAudioDeviceStatus.mockImplementation(async () => deviceStatus('EARPIECE'));
+      const seen: string[] = [];
+      controller.route$.subscribe((route) => seen.push(route));
+
+      controller.start('audio');
+      await flush();
+
+      expect(seen).not.toContain('bluetooth');
+      expect(controller.route).toBe('earpiece');
+      held.unsubscribe();
+    });
+
+    it("keeps the previous call's late answer out of the next call", async () => {
+      let answer: (status: unknown) => void = () => undefined;
+      controller.start('audio');
+      await flush();
+      choose.mockImplementationOnce(() => new Promise((done) => (answer = done)));
+      controller.setSpeakerOn(true);
+      controller.stop();
+      controller.start('audio');
+      await flush();
+
+      answer(deviceStatus('SPEAKER_PHONE'));
+      await flush();
+
+      expect(controller.route).toBe('earpiece');
+      flag.mockClear();
+      choose.mockClear();
+      controller.setSpeakerOn(true);
+      await flush();
+      expect(choose).toHaveBeenCalledWith('SPEAKER_PHONE');
+    });
+
+    it('reads where a speaker write that moved nothing left the call', async () => {
+      // An iPad has no receiver: speaker off leaves the call on the speaker,
+      // and incall-manager reports nothing because nothing changed.
+      installIncallIosRoutes(deviceStatus('SPEAKER_PHONE', '["SPEAKER_PHONE"]'));
+      controller.start('audio');
+      await flush();
       expect(controller.route).toBe('speaker');
+
+      controller.setSpeakerOn(false);
+      await flush();
+
+      expect(controller.route).toBe('speaker');
+    });
+
+    it('speaker off returns a call to the car the speaker replaced, at incall-manager’s default', async () => {
+      // false would put a video call in voice chat mode on the car, and on
+      // the receiver once the car leaves. null leaves the choice to iOS.
+      installIncallIosRoutes(deviceStatus('BLUETOOTH', undefined, 'KENWOOD'));
+      controller.start('video');
+      await flush();
+      controller.setSpeakerOn(true);
+      await flush();
+      flag.mockClear();
+      incallIosRoutes.getAudioDeviceStatus.mockImplementation(async () => deviceStatus('BLUETOOTH'));
+
+      controller.setSpeakerOn(false);
+      await flush();
+
+      expect(flag).toHaveBeenLastCalledWith(null);
+      expect(controller.route).toBe('bluetooth');
+    });
+
+    it('speaker off returns a call that was on the receiver with speaker off', async () => {
+      controller.start('video');
+      await flush();
+      reportDevice('EARPIECE');
+      controller.setSpeakerOn(true);
+      await flush();
+      flag.mockClear();
+
+      controller.setSpeakerOn(false);
+      await flush();
+
+      expect(flag).toHaveBeenLastCalledWith(false);
     });
 
     it('takes the route a choice settled on from its answer', async () => {
@@ -323,6 +580,7 @@ describe('AudioRouteController', () => {
       reportDevice('SPEAKER_PHONE', '["EARPIECE","SPEAKER_PHONE"]');
       await flush();
       choose.mockClear();
+      incallIosRoutes.getAudioDeviceStatus.mockImplementation(async () => deviceStatus('EARPIECE'));
 
       controller.setSpeakerOn(false);
       await flush();
@@ -347,8 +605,9 @@ describe('AudioRouteController', () => {
       controller.setSpeakerOn(false);
       await flush();
 
+      // Back to the headset at incall-manager's default, without the receiver pin.
       expect(choose).not.toHaveBeenCalled();
-      expect(flag).toHaveBeenLastCalledWith(false);
+      expect(flag).toHaveBeenLastCalledWith(null);
     });
 
     it('keeps a choice when iOS reports the chosen device', async () => {
@@ -367,28 +626,29 @@ describe('AudioRouteController', () => {
       expect(choose).toHaveBeenCalledWith('EARPIECE');
     });
 
-    it('stops following once the call ends: the native subscription is removed', async () => {
+    it('stops following once the call ends', async () => {
       controller.start('audio');
       await flush();
-      expect(incallIosRoutes.addListener).toHaveBeenCalledWith('onAudioDeviceChanged');
+      expect(wrapper.addListener).toHaveBeenCalledWith('onAudioDeviceChanged', expect.any(Function));
 
       controller.stop();
-      expect(incallIosRoutes.removeListeners).toHaveBeenCalledWith(1);
-
       reportDevice('SPEAKER_PHONE');
+
       expect(controller.route).toBe('earpiece');
     });
 
-    it('a status read that resolves after a change does not overwrite it', async () => {
+    it("takes the call's status read over a report that reached it first", async () => {
+      // incall-manager answers the read on the queue it reports from, so a
+      // report delivered before the answer was sent before it.
       let resolve: (status: unknown) => void = () => undefined;
-      incallIosRoutes.getAudioDeviceStatus.mockImplementationOnce(
+      incallIosRoutes.getAudioDeviceStatus.mockImplementation(
         () => new Promise((done) => (resolve = done)) as never
       );
       controller.start('audio');
       reportDevice('EARPIECE');
       resolve(deviceStatus('BLUETOOTH'));
       await flush();
-      expect(controller.route).toBe('earpiece');
+      expect(controller.route).toBe('bluetooth');
     });
   });
 });

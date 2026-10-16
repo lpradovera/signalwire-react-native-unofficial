@@ -5,6 +5,7 @@ import { EMPTY, of, Subject, switchMap, takeUntil } from 'rxjs';
 import { getAudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
+import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
 import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
 import { CallRegistry } from './CallRegistry';
 
@@ -173,6 +174,14 @@ export class CallKeepBridge {
     RNCallKeep.setAvailable(true);
     this.registerNativeListeners();
     this.isSetup = true;
+    // From now on calls start and stop the audio session, so a route chosen
+    // while a call rings waits for its session instead of reaching
+    // incall-manager outside one.
+    try {
+      getAudioRouteController().holdChoicesUntilStart();
+    } catch (error) {
+      logger.debug('Audio routing unavailable:', error);
+    }
     await this.adoptPendingNativeCall();
     logger.debug('CallKit ready');
   }
@@ -626,18 +635,13 @@ function generateUuid(): string {
  */
 const CALLKIT_GLOBAL = '__signalwireRNCallKitBridge';
 
-type CallKitHolder = { [CALLKIT_GLOBAL]?: CallKeepBridge };
-
 /** The process-wide CallKit bridge. Safe to call before React mounts. */
 export function getCallKit(): CallKeepBridge {
-  const holder = globalThis as CallKitHolder;
-  holder[CALLKIT_GLOBAL] ??= new CallKeepBridge();
-  return holder[CALLKIT_GLOBAL];
+  return processGlobal(CALLKIT_GLOBAL, () => new CallKeepBridge());
 }
 
 /** Test seam — drops the singleton. */
 export function resetCallKitForTesting(): void {
-  const holder = globalThis as CallKitHolder;
-  holder[CALLKIT_GLOBAL]?.destroy();
-  delete holder[CALLKIT_GLOBAL];
+  peekProcessGlobal<CallKeepBridge>(CALLKIT_GLOBAL)?.destroy();
+  dropProcessGlobal(CALLKIT_GLOBAL);
 }

@@ -81,7 +81,7 @@ describe('CallControls', () => {
     const call = createCall();
     await render(<CallControls call={call as never} />);
 
-    fireEvent.press(screen.getByTestId('sw-mute'));
+    await fireEvent.press(screen.getByTestId('sw-mute'));
 
     expect(call.self.mute).toHaveBeenCalled();
   });
@@ -91,7 +91,7 @@ describe('CallControls', () => {
     call._audioMuted$.next(true);
     await render(<CallControls call={call as never} />);
 
-    fireEvent.press(screen.getByTestId('sw-mute'));
+    await fireEvent.press(screen.getByTestId('sw-mute'));
 
     expect(call.self.unmute).toHaveBeenCalled();
   });
@@ -111,7 +111,7 @@ describe('CallControls', () => {
     const onHangup = jest.fn();
     await render(<CallControls call={call as never} onHangup={onHangup} />);
 
-    fireEvent.press(screen.getByTestId('sw-hangup'));
+    await fireEvent.press(screen.getByTestId('sw-hangup'));
     await Promise.resolve();
 
     expect(call.hangup).toHaveBeenCalled();
@@ -119,7 +119,7 @@ describe('CallControls', () => {
 
   it('toggles the speaker on', async () => {
     await render(<CallControls call={createCall() as never} />);
-    fireEvent.press(screen.getByTestId('sw-route'));
+    await fireEvent.press(screen.getByTestId('sw-route'));
     expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
   });
 
@@ -128,7 +128,7 @@ describe('CallControls', () => {
     // or headset; off returns to the call's own route instead.
     audio.__state.route = 'speaker';
     await render(<CallControls call={createCall() as never} />);
-    fireEvent.press(screen.getByTestId('sw-route'));
+    await fireEvent.press(screen.getByTestId('sw-route'));
     expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(false);
     expect(audio.__state.setRoute).not.toHaveBeenCalled();
   });
@@ -139,7 +139,7 @@ describe('CallControls', () => {
     audio.__state.route = 'bluetooth';
     await render(<CallControls call={createCall() as never} />);
     expect(screen.getByText('Bluetooth')).toBeTruthy();
-    fireEvent.press(screen.getByTestId('sw-route'));
+    await fireEvent.press(screen.getByTestId('sw-route'));
     expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
   });
 
@@ -174,7 +174,7 @@ describe('CallControls', () => {
     const onHangup = jest.fn();
     await render(<CallControls call={call as never} onHangup={onHangup} />);
 
-    fireEvent.press(screen.getByTestId('sw-hangup'));
+    await fireEvent.press(screen.getByTestId('sw-hangup'));
 
     expect(onHangup).toHaveBeenCalled();
   });
@@ -190,7 +190,7 @@ describe('CallControls', () => {
     const onHangup = jest.fn();
     await render(<CallControls call={call as never} onHangup={onHangup} />);
 
-    fireEvent.press(screen.getByTestId('sw-hangup'));
+    await fireEvent.press(screen.getByTestId('sw-hangup'));
     await act(async () => {
       await Promise.resolve();
     });
