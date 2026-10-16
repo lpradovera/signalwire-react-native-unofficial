@@ -28,6 +28,15 @@
 
 ### Audio routes
 
+- **New route `'headset'`** in `AudioRoute`, for a wired or USB-C headset,
+  which used to read as `'earpiece'`. The four routes match
+  incall-manager's four devices one to one (EARPIECE, SPEAKER_PHONE,
+  WIRED_HEADSET, BLUETOOTH; incall-manager reports USB audio as a wired
+  headset and a car as Bluetooth). `setRoute('headset')` chooses the headset
+  (`chooseAudioRoute('WIRED_HEADSET')`) with iOS routes and on Android, and
+  turns the speaker off with released incall-manager on iOS. A
+  `switch (route)` or a `Record<AudioRoute, ...>` needs the new case;
+  `CallControls` labels it "Headset".
 - **`setRoute('earpiece')` now means the receiver** on iOS too, when
   incall-manager has iOS routes (see below), as it already did on Android: it
   moves a call off a connected headset or car. For a speaker toggle use the
@@ -86,6 +95,14 @@
   then it renders nothing. It writes nothing to the audio session.
 - `CallControls` shows it on iOS. `showRoutePicker` defaults to
   `showAudioRoute`, so an app that hid audio routing doesn't get it.
+- `AudioRoutePickerButton` takes a background, corner radius and padding in
+  its own `style` (the padding insets the icon), so `CallControls` styles
+  the button as a pill with no wrapper view.
+- The button shows only with incall-manager's iOS routes (the upstream
+  change, or `docs/patches/`), and `isAudioRoutePickerAvailable()` says so.
+  Released incall-manager 4.3.0 neither reports a choice made there nor
+  keeps it, so on 4.3.0 it renders nothing and `CallControls` offers speaker
+  on/off.
 - VoiceOver reads the button as one element, a button with its
   `accessibilityLabel` (default "Audio output"); before, it read AVKit's
   inner "AirPlay" button and the label went unused. `activeTintColor` is
