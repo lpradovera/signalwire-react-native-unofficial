@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-incall-manager/index.d.ts b/node_modules/react-native-incall-manager/index.d.ts
-index c8ebe9d..e594891 100644
+index c8ebe9d..e72fe9f 100644
 --- a/node_modules/react-native-incall-manager/index.d.ts
 +++ b/node_modules/react-native-incall-manager/index.d.ts
 @@ -1,3 +1,15 @@
@@ -18,17 +18,22 @@ index c8ebe9d..e594891 100644
  declare class InCallManager {
    vibrate: boolean;
    audioUriMap: {
-@@ -28,7 +40,8 @@ declare class InCallManager {
+@@ -28,7 +40,13 @@ declare class InCallManager {
  
    setSpeakerphoneOn(enable: boolean): void;
  
 -  setForceSpeakerphoneOn(flag: boolean): void;
-+  /** true forces the speaker on, false off, null uses the media type's default. */
++  /**
++   * true forces the speaker on; null uses the media type's default (the speaker for video).
++   * false, on iOS: speaker off (the receiver, or a connected headset or car keeps the call).
++   * false, on Android: the earpiece, also over a connected Bluetooth or wired headset; on a device
++   * without one (no telephony) it changes nothing.
++   */
 +  setForceSpeakerphoneOn(flag: boolean | null): void;
  
    setMicrophoneMute(enable: boolean): void;
  
-@@ -53,7 +66,30 @@ declare class InCallManager {
+@@ -53,7 +71,32 @@ declare class InCallManager {
  
    getAudioUri(audioType: string, fileType: string): Promise<string | null>;
  
@@ -36,9 +41,11 @@ index c8ebe9d..e594891 100644
 +  /**
 +   * A route name; a plain string is accepted too, as before routes were typed. Resolves with an
 +   * `AudioDeviceStatus` (typed `any`, as in 4.3.0, so existing callers keep compiling).
-+   * iOS: resolves once the output is on the chosen route, or after a second with the route iOS
-+   * settled on; rejects E_AUDIO_ROUTE_UNAVAILABLE (route unchanged) for a route that isn't
-+   * there, EARPIECE included while a wired or USB headset is plugged in.
++   * iOS: rejects E_AUDIO_ROUTE_INACTIVE outside start()...stop(). Resolves once the output is on
++   * the chosen route, or after a second with the route iOS settled on. Rejects
++   * E_AUDIO_ROUTE_UNAVAILABLE (route unchanged) for a route that isn't there, EARPIECE included
++   * while a wired or USB headset is plugged in, and E_AUDIO_ROUTE when AVAudioSession refuses the
++   * choice (the speaker setting is put back as it was).
 +   */
 +  chooseAudioRoute(route: AudioRoute | (string & {})): Promise<any>;
 +
@@ -61,10 +68,10 @@ index c8ebe9d..e594891 100644
    requestAudioFocus(): Promise<any>;
  
 diff --git a/node_modules/react-native-incall-manager/index.js b/node_modules/react-native-incall-manager/index.js
-index c488a06..f85dcc1 100644
+index c488a06..3641bb5 100644
 --- a/node_modules/react-native-incall-manager/index.js
 +++ b/node_modules/react-native-incall-manager/index.js
-@@ -1,10 +1,15 @@
+@@ -1,10 +1,20 @@
  'use strict';
  var _InCallManager = require('react-native').NativeModules.InCallManager;
  import {
@@ -74,13 +81,18 @@ index c488a06..f85dcc1 100644
      Vibration,
  } from 'react-native';
  
-+// --- the events the iOS module sends (its supportedEvents).
-+const IOS_EVENTS = ['Proximity', 'WiredHeadset', 'onAudioDeviceChanged'];
++// --- the events the iOS module sends: its supportedEvents, which it exports as a constant, so
++// --- this file keeps no copy of the list. Without the constant (a mocked module), every event is
++// --- passed on and the native side decides.
++function iosSupportsEvent(eventName) {
++    const events = _InCallManager && _InCallManager.supportedEvents;
++    return !Array.isArray(events) || events.indexOf(eventName) !== -1;
++}
 +
  class InCallManager {
      constructor() {
          this.vibrate = false;
-@@ -156,6 +161,33 @@ class InCallManager {
+@@ -156,6 +166,33 @@ class InCallManager {
          }
      }
  
@@ -97,12 +109,12 @@ index c488a06..f85dcc1 100644
 +    // On iOS the native side sends events only while a NativeEventEmitter built on
 +    // this module has listeners, so DeviceEventEmitter.addListener alone hears
 +    // nothing there. Android sends through DeviceEventEmitter.
-+    // The iOS module sends only IOS_EVENTS; for the Android-only events a no-op
++    // The iOS module sends only its supportedEvents; for the Android-only events a no-op
 +    // subscription is returned, since the native addListener: reports any other
 +    // name as an error (a RedBox in a debug build).
 +    addListener(eventName, listener) {
 +        if (Platform.OS === 'ios') {
-+            if (IOS_EVENTS.indexOf(eventName) === -1) {
++            if (!iosSupportsEvent(eventName)) {
 +                return { remove() {} };
 +            }
 +            this.emitter = this.emitter || new NativeEventEmitter(_InCallManager);
@@ -115,10 +127,19 @@ index c488a06..f85dcc1 100644
          let result = await _InCallManager.chooseAudioRoute(route);
          return result;
 diff --git a/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m b/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m
-index 7c54f6e..f29865b 100644
+index 7c54f6e..124e78b 100644
 --- a/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m
 +++ b/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m
-@@ -41,6 +41,7 @@ @implementation RNInCallManager
+@@ -13,6 +13,8 @@
+ #import <React/RCTEventDispatcher.h>
+ #import <React/RCTUtils.h>
+ 
++#import <sys/sysctl.h>
++
+ //static BOOL const automatic = YES;
+ 
+ @implementation RNInCallManager
+@@ -41,6 +43,7 @@ @implementation RNInCallManager
      BOOL _isAudioSessionMediaServicesWereLostRegistered;
      BOOL _isAudioSessionMediaServicesWereResetRegistered;
      BOOL _isAudioSessionSilenceSecondaryAudioHintRegistered;
@@ -126,7 +147,7 @@ index 7c54f6e..f29865b 100644
  
      // -- notification observers
      id _proximityObserver;
-@@ -49,16 +50,37 @@ @implementation RNInCallManager
+@@ -49,16 +52,52 @@ @implementation RNInCallManager
      id _audioSessionMediaServicesWereLostObserver;
      id _audioSessionMediaServicesWereResetObserver;
      id _audioSessionSilenceSecondaryAudioHintObserver;
@@ -136,12 +157,19 @@ index 7c54f6e..f29865b 100644
      NSString *_incallAudioCategory;
      NSString *_origAudioCategory;
      NSString *_origAudioMode;
++    // --- the preferred input the app had before start() (its UID), put back by stop().
++    NSString *_origPreferredInputUID;
      BOOL _audioSessionInitialized;
 +    // --- one per call's session: start() and stop() each move it on. The observers registered
 +    // --- by start() capture it, so work they queue for an ended session is dropped, even when
 +    // --- the next session has started (and set the registered flags again) by the time it runs.
 +    // --- Read and written only on the route queue.
 +    NSUInteger _sessionGeneration;
++    // --- the call's session is interrupted (another call took the audio: a CallKit hold, a
++    // --- cellular call): route changes then are the other call's, and aren't followed. Cleared by the
++    // --- interruption's end, by a category change (the session being set up again on resume: callkeep
++    // --- on CallKit's activation, WebRTC) and by start(). Route queue only.
++    BOOL _sessionInterrupted;
      int _forceSpeakerOn;
      NSString *_media;
 +    BOOL _hasListeners;
@@ -149,6 +177,14 @@ index 7c54f6e..f29865b 100644
 +    // --- the route a chooseAudioRoute call pinned the preferred input for (EARPIECE: the built-in
 +    // --- mic), so it can be pinned again after a media services reset; nil when nothing is pinned.
 +    NSString *_chosenInputRoute;
++    // --- and the port it pinned (its UID), so the same device is pinned again, not another of the route.
++    NSString *_chosenInputUID;
++    // --- whether a wired or USB output is plugged in, as the call's routes last showed it.
++    // --- AVAudioSession lists inputs, not outputs, so mic-less headphones (or a USB headset) under a
++    // --- forced speaker show up nowhere; the routes before the override did show them. Only between
++    // --- start() and stop() (see noteWiredOutputInRoute:).
++    BOOL _wiredOutputPlugged;
++    NSArray<AVAudioSessionPortDescription *> *_lastInputs;
 +    // --- a choice whose route hasn't shown up in currentRoute yet, answered when it does.
 +    NSString *_pendingChoiceRoute;
 +    RCTPromiseResolveBlock _pendingChoiceResolve;
@@ -164,7 +200,7 @@ index 7c54f6e..f29865b 100644
  + (BOOL)requiresMainQueueSetup
  {
      return NO;
-@@ -66,6 +88,21 @@ + (BOOL)requiresMainQueueSetup
+@@ -66,6 +105,21 @@ + (BOOL)requiresMainQueueSetup
  
  RCT_EXPORT_MODULE(InCallManager)
  
@@ -186,7 +222,7 @@ index 7c54f6e..f29865b 100644
  - (instancetype)init
  {
      if (self = [super init]) {
-@@ -90,6 +127,7 @@ - (instancetype)init
+@@ -90,6 +144,7 @@ - (instancetype)init
          _isAudioSessionMediaServicesWereLostRegistered = NO;
          _isAudioSessionMediaServicesWereResetRegistered = NO;
          _isAudioSessionSilenceSecondaryAudioHintRegistered = NO;
@@ -194,7 +230,7 @@ index 7c54f6e..f29865b 100644
  
          _proximityObserver = nil;
          _audioSessionInterruptionObserver = nil;
-@@ -97,14 +135,18 @@ - (instancetype)init
+@@ -97,14 +152,18 @@ - (instancetype)init
          _audioSessionMediaServicesWereLostObserver = nil;
          _audioSessionMediaServicesWereResetObserver = nil;
          _audioSessionSilenceSecondaryAudioHintObserver = nil;
@@ -213,7 +249,7 @@ index 7c54f6e..f29865b 100644
  
          NSLog(@"RNInCallManager.init(): initialized");
      }
-@@ -113,14 +155,414 @@ - (instancetype)init
+@@ -113,14 +172,534 @@ - (instancetype)init
  
  - (void)dealloc
  {
@@ -240,6 +276,13 @@ index 7c54f6e..f29865b 100644
 -             @"WiredHeadset"];
 +             @"WiredHeadset",
 +             @"onAudioDeviceChanged"];
++}
++
++// --- the events, for index.js's addListener, which returns a silent subscription for any other
++// --- (RCTEventEmitter's addListener: reports an unsupported name as an error).
++- (NSDictionary *)constantsToExport
++{
++    return @{@"supportedEvents": [self supportedEvents]};
 +}
 +
 +// --- startObserving and stopObserving run on the method queue (RCTEventEmitter's addListener: and
@@ -299,28 +342,103 @@ index 7c54f6e..f29865b 100644
 +    return portType != nil ? routes[portType] : nil;
 +}
 +
-+- (BOOL)hasEarpiece
++/** The route an input selects: a device's own input, or the built-in mic, which selects the earpiece. */
++- (NSString *)audioRouteForInputPort:(AVAudioSessionPort)portType
 +{
-+    return _currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
++    return [portType isEqualToString:AVAudioSessionPortBuiltInMic] ? @"EARPIECE" : [self audioRouteForPortType:portType];
 +}
 +
-+- (AVAudioSessionPortDescription *)preferredInputForAudioRoute:(NSString *)audioRoute
++/** A headset or car (a device's route), as opposed to the receiver or the speaker. */
++- (BOOL)isDeviceRoute:(NSString *)audioRoute
 +{
-+    // --- the earpiece has no input of its own: the built-in mic selects it.
-+    NSString *portType = [audioRoute isEqualToString:@"EARPIECE"] ? AVAudioSessionPortBuiltInMic : nil;
-+    for (AVAudioSessionPortDescription *input in _audioSession.availableInputs) {
-+        if (portType != nil
-+                ? [input.portType isEqualToString:portType]
-+                : [[self audioRouteForPortType:input.portType] isEqualToString:audioRoute]) {
-+            return input;
++    return [audioRoute isEqualToString:@"WIRED_HEADSET"] || [audioRoute isEqualToString:@"BLUETOOTH"];
++}
++
++/**
++ * Whether a device of hardware model `model` (hw.machine, e.g. "iPhone17,1") has a receiver: an
++ * iPhone does; an iPad, an iPod touch and a Mac don't. Not the user interface idiom, which is the
++ * app's UI style: an iPhone-only app on an iPad, or on a Mac, reports the phone idiom.
++ */
+++ (BOOL)modelHasReceiver:(NSString *)model
++{
++    return [model hasPrefix:@"iPhone"];
++}
++
++/** The hardware model: hw.machine, or the simulated device's on the Simulator. */
+++ (NSString *)hardwareModel
++{
++    NSString *simulated = [NSProcessInfo processInfo].environment[@"SIMULATOR_MODEL_IDENTIFIER"];
++    if (simulated.length > 0) {
++        return simulated;
++    }
++    size_t size = 0;
++    if (sysctlbyname("hw.machine", NULL, &size, NULL, 0) != 0 || size == 0) {
++        return @"";
++    }
++    NSMutableData *machine = [NSMutableData dataWithLength:size];
++    if (sysctlbyname("hw.machine", machine.mutableBytes, &size, NULL, 0) != 0) {
++        return @"";
++    }
++    return [NSString stringWithUTF8String:machine.bytes] ?: @"";
++}
++
++/** Read once: the hardware doesn't change, and sysctl is safe off the main thread (UIDevice isn't). */
++- (BOOL)hasEarpiece
++{
++    static BOOL hasReceiver;
++    static dispatch_once_t once;
++    dispatch_once(&once, ^{
++        NSString *model = [RNInCallManager hardwareModel];
++        hasReceiver = [RNInCallManager modelHasReceiver:model];
++        NSLog(@"RNInCallManager: hardware %@, receiver: %@", model, hasReceiver ? @"YES" : @"NO");
++    });
++    return hasReceiver;
++}
++
++/**
++ * The input that puts the call on `audioRoute`, out of `inputs`. A route can have more than one
++ * (two headsets, a car and AirPods): the one with the UID `uid` if given (the device chosen before),
++ * else the one already carrying the call (`route`'s input), else the preferred one, else the first.
++ */
++- (AVAudioSessionPortDescription *)preferredInputForAudioRoute:(NSString *)audioRoute
++                                                         inputs:(NSArray<AVAudioSessionPortDescription *> *)inputs
++                                                          route:(AVAudioSessionRouteDescription *)route
++                                                            uid:(NSString *)uid
++{
++    NSMutableArray<NSString *> *wanted = [NSMutableArray array];
++    if (uid != nil) {
++        [wanted addObject:uid];
++    }
++    for (AVAudioSessionPortDescription *input in route.inputs) {
++        [wanted addObject:input.UID ?: @""];
++    }
++    [wanted addObject:_audioSession.preferredInput.UID ?: @""];
++    AVAudioSessionPortDescription *first = nil;
++    AVAudioSessionPortDescription *best = nil;
++    NSUInteger bestRank = NSNotFound;
++    for (AVAudioSessionPortDescription *input in inputs) {
++        if (![[self audioRouteForInputPort:input.portType] isEqualToString:audioRoute]) {
++            continue;
++        }
++        first = first ?: input;
++        NSUInteger rank = input.UID != nil ? [wanted indexOfObject:input.UID] : NSNotFound;
++        if (rank < bestRank) {
++            best = input;
++            bestRank = rank;
 +        }
 +    }
-+    return nil;
++    return best ?: first;
++}
++
++/** Whether one of `route`'s outputs is on `audioRoute`. */
++- (BOOL)route:(AVAudioSessionRouteDescription *)route hasOutputOnAudioRoute:(NSString *)audioRoute
++{
++    return [self route:route hasPortType:[self portTypesForAudioRoute:audioRoute] routeType:@"output"];
 +}
 +
 +- (BOOL)isCurrentOutputAudioRoute:(NSString *)audioRoute
 +{
-+    return [self checkAudioRoute:[self portTypesForAudioRoute:audioRoute] routeType:@"output"];
++    return [self route:_audioSession.currentRoute hasOutputOnAudioRoute:audioRoute];
 +}
 +
 +/** The route of an output port, or nil (AirPlay, HDMI, or no output). */
@@ -329,29 +447,34 @@ index 7c54f6e..f29865b 100644
 +    return [self audioRouteForPortType:output.portType];
 +}
 +
-+/** The route of the current output, or nil (AirPlay, HDMI, or no output). */
-+- (NSString *)currentOutputAudioRoute
++- (NSDictionary *)audioDeviceStatus
 +{
-+    return [self audioRouteForOutput:_audioSession.currentRoute.outputs.firstObject];
++    return [self audioDeviceStatusForRoute:_audioSession.currentRoute inputs:_audioSession.availableInputs];
 +}
 +
-+- (NSDictionary *)audioDeviceStatus
++/** The status of one look at the session (`route`, `inputs`), so one status can't mix two routes. */
++- (NSDictionary *)audioDeviceStatusForRoute:(AVAudioSessionRouteDescription *)route
++                                     inputs:(NSArray<AVAudioSessionPortDescription *> *)inputs
 +{
 +    NSMutableOrderedSet<NSString *> *available = [NSMutableOrderedSet orderedSet];
 +    // --- iOS has no receiver override: with a wired or USB headset plugged in the call can't
 +    // --- reach the earpiece (chooseAudioRoute refuses it).
-+    if ([self hasEarpiece] && ![self isWiredHeadsetPluggedIn]) {
++    if ([self hasEarpiece] && ![self isWiredHeadsetPluggedInRoute:route inputs:inputs]) {
 +        [available addObject:@"EARPIECE"];
 +    }
 +    [available addObject:@"SPEAKER_PHONE"];
-+    for (AVAudioSessionPortDescription *input in _audioSession.availableInputs) {
++    for (AVAudioSessionPortDescription *input in inputs) {
 +        NSString *audioRoute = [self audioRouteForPortType:input.portType];
 +        if (audioRoute != nil) {
 +            [available addObject:audioRoute];
 +        }
 +    }
++    // --- mic-less headphones (or a USB headset) hidden by a forced speaker: no port shows them.
++    if (_audioSessionInitialized && _wiredOutputPlugged) {
++        [available addObject:@"WIRED_HEADSET"];
++    }
 +    // --- output-only devices (wired headphones without a mic, A2DP) have no input to list.
-+    AVAudioSessionPortDescription *output = _audioSession.currentRoute.outputs.firstObject;
++    AVAudioSessionPortDescription *output = route.outputs.firstObject;
 +    NSString *selected = [self audioRouteForOutput:output];
 +    if (selected != nil) {
 +        [available addObject:selected];
@@ -398,7 +521,7 @@ index 7c54f6e..f29865b 100644
 + */
 +- (BOOL)output:(NSString *)output fitsFlag:(int)flag
 +{
-+    if ([output isEqualToString:@"WIRED_HEADSET"] || [output isEqualToString:@"BLUETOOTH"]) {
++    if ([self isDeviceRoute:output]) {
 +        return flag != 1;
 +    }
 +    return [output isEqualToString:@"SPEAKER_PHONE"] == [self flagPutsSpeaker:flag];
@@ -417,6 +540,7 @@ index 7c54f6e..f29865b 100644
 +- (void)clearPreferredInput:(NSString *)caller
 +{
 +    _chosenInputRoute = nil;
++    _chosenInputUID = nil;
 +    NSError *error = nil;
 +    if (![_audioSession setPreferredInput:nil error:&error]) {
 +        NSLog(@"RNInCallManager.%@: setPreferredInput(nil) failed: %@", caller, error);
@@ -430,10 +554,7 @@ index 7c54f6e..f29865b 100644
 +    if (preferred == nil) {
 +        return;
 +    }
-+    NSString *preferredRoute = [preferred.portType isEqualToString:AVAudioSessionPortBuiltInMic]
-+        ? @"EARPIECE"
-+        : [self audioRouteForPortType:preferred.portType];
-+    if (![preferredRoute isEqualToString:audioRoute]) {
++    if (![[self audioRouteForInputPort:preferred.portType] isEqualToString:audioRoute]) {
 +        NSLog(@"RNInCallManager.%@: %@ has the call: dropping the preferred input %@", caller, audioRoute, preferred.portType);
 +        [self clearPreferredInput:caller];
 +    }
@@ -457,7 +578,9 @@ index 7c54f6e..f29865b 100644
 + * Flag values: 1 forces the speaker, -1 is "speaker off" (voice chat mode for a video call),
 + * 0 is the media's default (video chat mode, on the speaker, for a video call).
 + */
-+- (void)followRouteChange:(NSUInteger)reason previousRoute:(AVAudioSessionRouteDescription *)previousRoute
++- (void)followRouteChange:(NSUInteger)reason
++             previousRoute:(AVAudioSessionRouteDescription *)previousRoute
++              currentRoute:(AVAudioSessionRouteDescription *)currentRoute
 +{
 +    BOOL deviceChange = reason == AVAudioSessionRouteChangeReasonNewDeviceAvailable
 +        || reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable;
@@ -474,9 +597,9 @@ index 7c54f6e..f29865b 100644
 +        }
 +    }
 +
-+    NSString *output = [self currentOutputAudioRoute];
++    NSString *output = [self audioRouteForOutput:currentRoute.outputs.firstObject];
 +    int flag = _forceSpeakerOn;
-+    if ([output isEqualToString:@"WIRED_HEADSET"] || [output isEqualToString:@"BLUETOOTH"]) {
++    if ([self isDeviceRoute:output]) {
 +        // --- a headset or car has the call: the media's default, so neither a forced speaker
 +        // --- nor a video call's voice chat mode and proximity sensor is put back over it, and a
 +        // --- device or receiver choice made before doesn't pin the input elsewhere.
@@ -506,14 +629,21 @@ index 7c54f6e..f29865b 100644
 +/**
 + * An output-only device (mic-less headphones, A2DP) has no input to find it by, and only a
 + * forced speaker can hide it. Looks under the override, putting it back if the device isn't there.
++ * Only while the speaker has the call (`route`): the flag can outlive the override (a device change
++ * to HDMI or AirPlay keeps flag 1), and putting the override back then would move the call.
 + */
-+- (BOOL)isOutputUnderSpeakerOverride:(NSString *)audioRoute
++- (BOOL)isOutputUnderSpeakerOverride:(NSString *)audioRoute route:(AVAudioSessionRouteDescription *)route
 +{
-+    if (_forceSpeakerOn != 1) {
++    if (_forceSpeakerOn != 1 || ![self route:route hasOutputOnAudioRoute:@"SPEAKER_PHONE"]) {
 +        return NO;
 +    }
 +    [self overrideOutputAudioPort:AVAudioSessionPortOverrideNone caller:@"chooseAudioRoute()"];
-+    if ([self isCurrentOutputAudioRoute:audioRoute]) {
++    AVAudioSessionRouteDescription *underneath = _audioSession.currentRoute;
++    [self noteWiredOutputInRoute:underneath
++                          inputs:_audioSession.availableInputs
++                          reason:AVAudioSessionRouteChangeReasonUnknown
++                   previousRoute:route];
++    if ([self route:underneath hasOutputOnAudioRoute:audioRoute]) {
 +        return YES;
 +    }
 +    [self overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker caller:@"chooseAudioRoute()"];
@@ -547,6 +677,13 @@ index 7c54f6e..f29865b 100644
 +
 +- (void)answerPendingChoice
 +{
++    if (_pendingChoiceResolve != nil) {
++        [self answerPendingChoiceWithStatus:[self audioDeviceStatus]];
++    }
++}
++
++- (void)answerPendingChoiceWithStatus:(NSDictionary *)status
++{
 +    RCTPromiseResolveBlock resolve = _pendingChoiceResolve;
 +    if (resolve == nil) {
 +        return;
@@ -556,7 +693,6 @@ index 7c54f6e..f29865b 100644
 +    _choiceSerial++;
 +    // --- the event first: a listener hears the change before the promise settles, as for a
 +    // --- report, and the dedup then drops the observer's copy of the same status.
-+    NSDictionary *status = [self audioDeviceStatus];
 +    [self sendAudioDeviceStatus:status];
 +    resolve(status);
 +}
@@ -579,6 +715,9 @@ index 7c54f6e..f29865b 100644
 +    }
 +    // --- an earlier choice still waiting for its route is answered with where the call is now.
 +    [self answerPendingChoice];
++    // --- a choice AVAudioSession refuses puts the flag (and with it the mode, the sensor and the
++    // --- override) back, as a refused choice changes nothing.
++    const int previousFlag = _forceSpeakerOn;
 +    @try {
 +        if ([audioRoute isEqualToString:@"SPEAKER_PHONE"]) {
 +            // --- the mode follows the flag (video chat for a video call), then the override.
@@ -586,18 +725,20 @@ index 7c54f6e..f29865b 100644
 +            [self answerChoice:audioRoute resolve:resolve];
 +            return;
 +        }
-+        AVAudioSessionPortDescription *input = [self preferredInputForAudioRoute:audioRoute];
++        AVAudioSessionRouteDescription *route = _audioSession.currentRoute;
++        NSArray<AVAudioSessionPortDescription *> *inputs = _audioSession.availableInputs;
++        AVAudioSessionPortDescription *input = [self preferredInputForAudioRoute:audioRoute inputs:inputs route:route uid:nil];
 +        BOOL available;
 +        if ([audioRoute isEqualToString:@"EARPIECE"]) {
 +            // --- iOS has no receiver override: a wired or USB headset keeps the output whatever
 +            // --- the input, and the call would play on the headset and record from the phone.
-+            available = [self hasEarpiece] && input != nil && ![self isWiredHeadsetPluggedIn];
++            available = [self hasEarpiece] && input != nil && ![self isWiredHeadsetPluggedInRoute:route inputs:inputs];
 +        } else {
 +            // --- a device with an input, or an output-only one: the current output, or hidden
 +            // --- under a forced speaker.
 +            available = input != nil
-+                || [self isCurrentOutputAudioRoute:audioRoute]
-+                || [self isOutputUnderSpeakerOverride:audioRoute];
++                || [self route:route hasOutputOnAudioRoute:audioRoute]
++                || [self isOutputUnderSpeakerOverride:audioRoute route:route];
 +        }
 +        if (!available) {
 +            // --- refused before anything changed: the route stays as it was.
@@ -605,21 +746,36 @@ index 7c54f6e..f29865b 100644
 +                   [NSString stringWithFormat:@"chooseAudioRoute(): %@ is not available", audioRoute], nil);
 +            return;
 +        }
-+        // --- the mode follows the flag. A video call is in video chat mode, which defaults
-+        // --- to the speaker: the earpiece needs voice chat mode, or the built-in mic stays
-+        // --- paired with the speaker. This also clears a speaker override, which an
-+        // --- output-only device needs before it can be the route.
-+        [self applyForceSpeaker:[audioRoute isEqualToString:@"EARPIECE"] ? -1 : 0 caller:@"chooseAudioRoute()"];
-+        // --- an output-only device (no input) is the route once the override is gone; nil
-+        // --- also drops an earlier pin (the built-in mic for the earpiece).
++        // --- the flag sets the mode: a video call is in video chat mode, which defaults to the
++        // --- speaker. It also clears a speaker override, which an output-only device needs
++        // --- before it can be the route. The input: an output-only device (no input) is the
++        // --- route once the override is gone, and nil also drops an earlier pin.
 +        NSError *error = nil;
-+        if (![_audioSession setPreferredInput:input error:&error]) {
++        BOOL pinned;
++        if ([audioRoute isEqualToString:@"EARPIECE"]) {
++            // --- the mode first: in video chat mode the built-in mic stays paired with the
++            // --- speaker, so the earpiece needs voice chat mode before the pin.
++            [self applyForceSpeaker:-1 caller:@"chooseAudioRoute()"];
++            pinned = [_audioSession setPreferredInput:input error:&error];
++        } else {
++            // --- the device first: a mode change then can't take the call off it. The other way
++            // --- round, video chat mode with the earpiece's built-in mic still preferred puts the
++            // --- call on the speaker until the pin moves it.
++            pinned = [_audioSession setPreferredInput:input error:&error];
++            if (pinned) {
++                [self applyForceSpeaker:0 caller:@"chooseAudioRoute()"];
++            }
++        }
++        if (!pinned) {
++            [self applyForceSpeaker:previousFlag caller:@"chooseAudioRoute()"];
 +            reject(@"E_AUDIO_ROUTE", error.localizedDescription ?: @"chooseAudioRoute() failed", error);
 +            return;
 +        }
 +        _chosenInputRoute = input != nil ? audioRoute : nil;
++        _chosenInputUID = input.UID;
 +        [self answerChoice:audioRoute resolve:resolve];
 +    } @catch (NSException *e) {
++        [self applyForceSpeaker:previousFlag caller:@"chooseAudioRoute()"];
 +        reject(@"E_AUDIO_ROUTE", [NSString stringWithFormat:@"chooseAudioRoute(): %@", e.reason ?: @"exception"], nil);
 +    }
 +}
@@ -631,16 +787,19 @@ index 7c54f6e..f29865b 100644
  }
  
  RCT_EXPORT_METHOD(start:(NSString *)mediaType
-@@ -141,6 +583,8 @@ - (void)dealloc
+@@ -140,7 +719,11 @@ - (void)dealloc
+     }
      NSLog(@"RNInCallManager.start() start InCallManager. media=%@, type=%@, mode=%@", _media, _media, _incallAudioMode);
      [self storeOriginalAudioSetup];
++    _origPreferredInputUID = _audioSession.preferredInput.UID;
      _forceSpeakerOn = 0;
 +    _lastAudioDeviceStatus = nil;
 +    _sessionGeneration += 1;
++    _sessionInterrupted = NO;
      [self startAudioSessionNotification];
      [self audioSessionSetCategory:_incallAudioCategory
                            options:0
-@@ -150,6 +594,10 @@ - (void)dealloc
+@@ -150,6 +733,17 @@ - (void)dealloc
      [self audioSessionSetActive:YES
                          options:0
                       callerMemo:NSStringFromSelector(_cmd)];
@@ -648,20 +807,29 @@ index 7c54f6e..f29865b 100644
 +    // --- puts input choices: a device chosen in an earlier call (the receiver's built-in mic, say)
 +    // --- must not keep this one off a connected headset or car.
 +    [self clearPreferredInput:@"start()"];
++    // --- what is plugged in, before a forced speaker can hide it.
++    _wiredOutputPlugged = NO;
++    _lastInputs = nil;
++    [self noteWiredOutputInRoute:_audioSession.currentRoute
++                          inputs:_audioSession.availableInputs
++                          reason:AVAudioSessionRouteChangeReasonUnknown
++                   previousRoute:nil];
  
      if (ringbackUriType.length > 0) {
          NSLog(@"RNInCallManager.start() play ringback first. type=%@", ringbackUriType);
-@@ -178,6 +626,9 @@ - (void)dealloc
+@@ -178,20 +772,46 @@ - (void)dealloc
          return;
      } else {
          NSLog(@"RNInCallManager.stop(): stop InCallManager");
 +        [self answerPendingChoice];
-+        // --- the app's own audio after the call shouldn't inherit the call's device choice.
++        // --- the app's own audio after the call shouldn't inherit the call's device choice: the
++        // --- preferred input it had before start() (if any, and still there) is put back.
 +        [self clearPreferredInput:@"stop()"];
          [self restoreOriginalAudioSetup];
++        [self restoreOriginalPreferredInput];
          [self stopBusytone];
          [self stopProximitySensor];
-@@ -185,9 +636,11 @@ - (void)dealloc
+         [self audioSessionSetActive:NO
                              options:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
                           callerMemo:NSStringFromSelector(_cmd)];
          [self setKeepScreenOn:NO];
@@ -674,7 +842,30 @@ index 7c54f6e..f29865b 100644
          _audioSessionInitialized = NO;
      }
  }
-@@ -278,9 +731,9 @@ - (void)dealloc
+ 
++- (void)restoreOriginalPreferredInput
++{
++    NSString *uid = _origPreferredInputUID;
++    _origPreferredInputUID = nil;
++    if (uid == nil) {
++        return;
++    }
++    for (AVAudioSessionPortDescription *input in _audioSession.availableInputs) {
++        if ([input.UID isEqualToString:uid]) {
++            NSError *error = nil;
++            if (![_audioSession setPreferredInput:input error:&error]) {
++                NSLog(@"RNInCallManager.stop(): setPreferredInput(%@) failed: %@", input.portType, error);
++            }
++            return;
++        }
++    }
++    NSLog(@"RNInCallManager.stop(): the preferred input from before start() is gone");
++}
++
+ RCT_EXPORT_METHOD(turnScreenOn)
+ {
+     NSLog(@"RNInCallManager.turnScreenOn(): ios doesn't support turnScreenOn()");
+@@ -278,9 +898,9 @@ - (void)dealloc
  
  RCT_EXPORT_METHOD(setForceSpeakerphoneOn:(int)flag)
  {
@@ -686,7 +877,7 @@ index 7c54f6e..f29865b 100644
  }
  
  RCT_EXPORT_METHOD(setMicrophoneMute:(BOOL)enable)
-@@ -442,19 +895,19 @@ - (void)updateAudioRoute
+@@ -442,19 +1062,19 @@ - (void)updateAudioRoute
      NSLog(@"RNInCallManager.updateAudioRoute(): [Enter] forceSpeakerOn flag=%d media=%@ category=%@ mode=%@", _forceSpeakerOn, _media, _audioSession.category, _audioSession.mode);
      //self.debugAudioSession()
  
@@ -710,7 +901,7 @@ index 7c54f6e..f29865b 100644
          if ([_media isEqualToString:@"video"]) {
              audioMode = AVAudioSessionModeVideoChat;
              [self stopProximitySensor];
-@@ -462,35 +915,23 @@ - (void)updateAudioRoute
+@@ -462,35 +1082,23 @@ - (void)updateAudioRoute
      } else if (_forceSpeakerOn == -1) {
          // --- force off
          overrideAudioPort = AVAudioSessionPortOverrideNone;
@@ -750,7 +941,7 @@ index 7c54f6e..f29865b 100644
      if (![_audioSession.category isEqualToString:_incallAudioCategory]) {
          [self audioSessionSetCategory:_incallAudioCategory
                                options:0
-@@ -507,9 +948,34 @@ - (void)updateAudioRoute
+@@ -507,14 +1115,44 @@ - (void)updateAudioRoute
      } else {
          NSLog(@"RNInCallManager.updateAudioRoute() did NOT change audio mode");
      }
@@ -785,11 +976,19 @@ index 7c54f6e..f29865b 100644
  - (BOOL)checkAudioRoute:(NSArray<NSString *> *)targetPortTypeArray
                routeType:(NSString *)routeType
  {
-@@ -580,13 +1046,20 @@ - (void)stopBusytone
-     }
- }
+-    AVAudioSessionRouteDescription *currentRoute = _audioSession.currentRoute;
++    return [self route:_audioSession.currentRoute hasPortType:targetPortTypeArray routeType:routeType];
++}
  
-+/** A wired headset (headphones, a headset with a mic, or USB audio, as for WIRED_HEADSET) is plugged in. */
++- (BOOL)route:(AVAudioSessionRouteDescription *)currentRoute
++    hasPortType:(NSArray<NSString *> *)targetPortTypeArray
++      routeType:(NSString *)routeType
++{
+     if (currentRoute != nil) {
+         NSArray<AVAudioSessionPortDescription *> *routes = [routeType isEqualToString:@"input"]
+             ? currentRoute.inputs
+@@ -582,11 +1220,72 @@ - (void)stopBusytone
+ 
  - (BOOL)isWiredHeadsetPluggedIn
  {
 -    // --- only check for a audio device plugged into headset port instead bluetooth/usb/hdmi
@@ -797,21 +996,76 @@ index 7c54f6e..f29865b 100644
 -                       routeType:@"output"]
 -        || [self checkAudioRoute:@[AVAudioSessionPortHeadsetMic]
 -                       routeType:@"input"];
-+    NSArray<AVAudioSessionPort> *wired = [self portTypesForAudioRoute:@"WIRED_HEADSET"];
-+    if ([self checkAudioRoute:wired routeType:@"output"] || [self checkAudioRoute:wired routeType:@"input"]) {
++    return [self isWiredHeadsetPluggedInRoute:_audioSession.currentRoute inputs:_audioSession.availableInputs];
++}
++
++/** Ports of a wired headset's output: headphones (with or without a mic) and USB audio. */
++static NSArray<AVAudioSessionPort> *RNInCallManagerWiredOutputPorts(void)
++{
++    return @[AVAudioSessionPortHeadphones, AVAudioSessionPortUSBAudio];
++}
++
++/**
++ * A wired headset (headphones, a headset with a mic, or a USB-C headset, as for WIRED_HEADSET) is
++ * plugged in: an output that iOS keeps the call on whatever the input, so the earpiece can't be had.
++ * A USB input alone doesn't count: an input-only USB microphone leaves the output where it was.
++ */
++- (BOOL)isWiredHeadsetPluggedInRoute:(AVAudioSessionRouteDescription *)route
++                              inputs:(NSArray<AVAudioSessionPortDescription *> *)inputs
++{
++    if ([self route:route hasPortType:RNInCallManagerWiredOutputPorts() routeType:@"output"]
++            || [self route:route hasPortType:@[AVAudioSessionPortHeadsetMic] routeType:@"input"]) {
 +        return YES;
 +    }
 +    // --- a headset mic can be available without carrying the call (under a forced speaker).
-+    for (AVAudioSessionPortDescription *input in _audioSession.availableInputs) {
-+        if ([wired containsObject:input.portType]) {
++    for (AVAudioSessionPortDescription *input in inputs) {
++        if ([input.portType isEqualToString:AVAudioSessionPortHeadsetMic]) {
 +            return YES;
 +        }
 +    }
-+    return NO;
++    // --- mic-less headphones (or a USB headset) under a forced speaker: no port shows them, the
++    // --- routes the call went through did.
++    return _audioSessionInitialized && _wiredOutputPlugged;
++}
++
++/**
++ * Keeps _wiredOutputPlugged from one look at the session (`route`, `inputs`), after a route change
++ * with `reason` from `previousRoute`: a wired output in the route is plugged in; the receiver can't
++ * have the call while one is; a device that left (OldDeviceUnavailable) was the wired one if the
++ * previous route had it, or its mic left, or nothing visible left (an output-only device hidden by
++ * the override). Anything else (the speaker, a Bluetooth device) keeps what was known.
++ */
++- (void)noteWiredOutputInRoute:(AVAudioSessionRouteDescription *)route
++                        inputs:(NSArray<AVAudioSessionPortDescription *> *)inputs
++                        reason:(NSUInteger)reason
++                 previousRoute:(AVAudioSessionRouteDescription *)previousRoute
++{
++    NSArray<AVAudioSessionPort> *wiredOutputs = RNInCallManagerWiredOutputPorts();
++    if ([self route:route hasPortType:wiredOutputs routeType:@"output"]) {
++        _wiredOutputPlugged = YES;
++    } else if ([self route:route hasOutputOnAudioRoute:@"EARPIECE"]) {
++        _wiredOutputPlugged = NO;
++    } else if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable) {
++        NSSet<NSString *> *present = [NSSet setWithArray:[inputs valueForKey:@"UID"] ?: @[]];
++        BOOL anInputLeft = NO;
++        BOOL aWiredInputLeft = NO;
++        for (AVAudioSessionPortDescription *input in _lastInputs) {
++            if (input.UID != nil && ![present containsObject:input.UID]) {
++                anInputLeft = YES;
++                aWiredInputLeft = aWiredInputLeft || [input.portType isEqualToString:AVAudioSessionPortHeadsetMic]
++                    || [input.portType isEqualToString:AVAudioSessionPortUSBAudio];
++            }
++        }
++        if ([self route:previousRoute hasPortType:wiredOutputs routeType:@"output"] || aWiredInputLeft
++                || (_lastInputs != nil && !anInputLeft)) {
++            _wiredOutputPlugged = NO;
++        }
++    }
++    _lastInputs = inputs;
  }
  
  - (void)audioSessionSetCategory:(NSString *)audioCategory
-@@ -662,8 +1135,9 @@ - (void)restoreOriginalAudioSetup
+@@ -662,8 +1361,9 @@ - (void)restoreOriginalAudioSetup
      }
  
      NSLog(@"RNInCallManager.startProximitySensor()");
@@ -822,7 +1076,7 @@ index 7c54f6e..f29865b 100644
      });
  
      // --- in case it didn't deallocate when ViewDidUnload
-@@ -671,15 +1145,20 @@ - (void)restoreOriginalAudioSetup
+@@ -671,15 +1371,20 @@ - (void)restoreOriginalAudioSetup
                   name:UIDeviceProximityStateDidChangeNotification
                 object:nil];
  
@@ -847,7 +1101,7 @@ index 7c54f6e..f29865b 100644
          }
      }];
  
-@@ -693,8 +1172,9 @@ - (void)restoreOriginalAudioSetup
+@@ -693,8 +1398,9 @@ - (void)restoreOriginalAudioSetup
      }
  
      NSLog(@"RNInCallManager.stopProximitySensor()");
@@ -858,7 +1112,7 @@ index 7c54f6e..f29865b 100644
      });
  
      // --- remove all no matter what object
-@@ -710,6 +1190,7 @@ - (void)startAudioSessionNotification
+@@ -710,6 +1416,7 @@ - (void)startAudioSessionNotification
      NSLog(@"RNInCallManager.startAudioSessionNotification() starting...");
      [self startAudioSessionInterruptionNotification];
      [self startAudioSessionRouteChangeNotification];
@@ -866,7 +1120,7 @@ index 7c54f6e..f29865b 100644
      [self startAudioSessionMediaServicesWereLostNotification];
      [self startAudioSessionMediaServicesWereResetNotification];
      [self startAudioSessionSilenceSecondaryAudioHintNotification];
-@@ -720,6 +1201,7 @@ - (void)stopAudioSessionNotification
+@@ -720,6 +1427,7 @@ - (void)stopAudioSessionNotification
      NSLog(@"RNInCallManager.startAudioSessionNotification() stopping...");
      [self stopAudioSessionInterruptionNotification];
      [self stopAudioSessionRouteChangeNotification];
@@ -874,7 +1128,45 @@ index 7c54f6e..f29865b 100644
      [self stopAudioSessionMediaServicesWereLostNotification];
      [self stopAudioSessionMediaServicesWereResetNotification];
      [self stopAudioSessionSilenceSecondaryAudioHintNotification];
-@@ -787,89 +1269,106 @@ - (void)startAudioSessionRouteChangeNotification
+@@ -737,6 +1445,8 @@ - (void)startAudioSessionInterruptionNotification
+                  name:AVAudioSessionInterruptionNotification
+                object:nil];
+ 
++    __weak RNInCallManager *weakSelf = self;
++    const NSUInteger generation = _sessionGeneration;
+     _audioSessionInterruptionObserver = [self startObserve:AVAudioSessionInterruptionNotification
+                                                     object:nil
+                                                      queue:nil
+@@ -748,14 +1458,27 @@ - (void)startAudioSessionInterruptionNotification
+ 
+         //NSUInteger rawValue = notification.userInfo[AVAudioSessionInterruptionTypeKey].unsignedIntegerValue;
+         NSNumber *interruptType = [notification.userInfo objectForKey:@"AVAudioSessionInterruptionTypeKey"];
++        BOOL interrupted;
+         if ([interruptType unsignedIntegerValue] == AVAudioSessionInterruptionTypeBegan) {
+             NSLog(@"RNInCallManager.AudioSessionInterruptionNotification: Began");
++            interrupted = YES;
+         } else if ([interruptType unsignedIntegerValue] == AVAudioSessionInterruptionTypeEnded) {
+             NSLog(@"RNInCallManager.AudioSessionInterruptionNotification: Ended");
++            interrupted = NO;
+         } else {
+             NSLog(@"RNInCallManager.AudioSessionInterruptionNotification: Unknow Value");
++            return;
++        }
++        RNInCallManager *strongSelf = weakSelf;
++        if (strongSelf == nil) {
++            return;
+         }
+-        //NSLog(@"RNInCallManager.AudioSessionInterruptionNotification: could not resolve notification");
++        // --- in order with the route changes, for this call's session only.
++        dispatch_async(strongSelf->_routeQueue, ^{
++            if (generation == strongSelf->_sessionGeneration) {
++                strongSelf->_sessionInterrupted = interrupted;
++            }
++        });
+     }];
+ 
+     _isAudioSessionInterruptionRegistered = YES;
+@@ -787,89 +1510,140 @@ - (void)startAudioSessionRouteChangeNotification
                       name: AVAudioSessionRouteChangeNotification
                     object: nil];
  
@@ -994,35 +1286,56 @@ index 7c54f6e..f29865b 100644
 +                generation:(NSUInteger)generation
 +{
 +    // --- queued by an ended call's observer (stop()'s own teardown posts route changes): that
-+    // --- call is over, whether or not the next one has started since.
-+    if (!_isAudioSessionRouteChangeRegistered || generation != _sessionGeneration) {
++    // --- call is over, whether or not the next one has started since. (start() and stop() move the
++    // --- generation on this queue, so a matching one also means the observers are registered.)
++    if (generation != _sessionGeneration) {
 +        return;
 +    }
++    // --- one look at the route the change brought, for the log, the event and the follow; the
++    // --- re-apply and the follow may change it, so the report takes a fresh one after them.
++    AVAudioSessionRouteDescription *route = _audioSession.currentRoute;
++    NSArray<AVAudioSessionPortDescription *> *inputs = _audioSession.availableInputs;
 +    NSLog(@"RNInCallManager.AudioRouteChange.Reason: %@. category=%@ mode=%@ previous output=%@ output=%@",
 +          RNInCallManagerRouteChangeReasonName(reason), _audioSession.category, _audioSession.mode,
-+          previousRoute.outputs.firstObject.portType, _audioSession.currentRoute.outputs.firstObject.portType);
-+    [self sendWiredHeadsetForRouteChange:reason previousRoute:previousRoute];
++          previousRoute.outputs.firstObject.portType, route.outputs.firstObject.portType);
++    BOOL wiredBefore = _wiredOutputPlugged;
++    [self noteWiredOutputInRoute:route inputs:inputs reason:reason previousRoute:previousRoute];
++    [self sendWiredHeadsetForRouteChange:reason previousRoute:previousRoute route:route inputs:inputs wiredBefore:wiredBefore];
 +    if (reason == AVAudioSessionRouteChangeReasonCategoryChange) {
 +        // --- someone else (WebRTC, CallKit) changed the category, which drops the speaker
-+        // --- override: put the forced route back.
++        // --- override: put the forced route back. On a resume this is the session set up again.
++        _sessionInterrupted = NO;
 +        [self updateAudioRoute];
++    } else if (_sessionInterrupted) {
++        // --- another call has the audio: its route isn't this call's choice.
++        NSLog(@"RNInCallManager.AudioRouteChange: the session is interrupted; not following");
 +    } else {
-+        [self followRouteChange:reason previousRoute:previousRoute];
++        [self followRouteChange:reason previousRoute:previousRoute currentRoute:route];
 +    }
 +    // --- reported after the re-apply, so a category change doesn't report the route it
 +    // --- momentarily fell back to.
-+    [self sendAudioDeviceChanged];
-+    if (_pendingChoiceResolve != nil && [self isCurrentOutputAudioRoute:_pendingChoiceRoute]) {
-+        [self answerPendingChoice];
++    BOOL choicePending = _pendingChoiceResolve != nil;
++    if (!choicePending && !_hasListeners) {
++        return;
++    }
++    AVAudioSessionRouteDescription *settled = _audioSession.currentRoute;
++    NSDictionary *status = [self audioDeviceStatusForRoute:settled inputs:_audioSession.availableInputs];
++    if (choicePending && [self route:settled hasOutputOnAudioRoute:_pendingChoiceRoute]) {
++        [self answerPendingChoiceWithStatus:status];
++    } else {
++        [self sendAudioDeviceStatus:status];
 +    }
 +}
 +
 +// --- 'WiredHeadset': a wired headset is what WIRED_HEADSET is (USB audio included).
-+- (void)sendWiredHeadsetForRouteChange:(NSUInteger)reason previousRoute:(AVAudioSessionRouteDescription *)previousRoute
++- (void)sendWiredHeadsetForRouteChange:(NSUInteger)reason
++                         previousRoute:(AVAudioSessionRouteDescription *)previousRoute
++                                 route:(AVAudioSessionRouteDescription *)route
++                                inputs:(NSArray<AVAudioSessionPortDescription *> *)inputs
++                           wiredBefore:(BOOL)wiredBefore
 +{
 +    NSArray<AVAudioSessionPort> *wired = [self portTypesForAudioRoute:@"WIRED_HEADSET"];
 +    if (reason == AVAudioSessionRouteChangeReasonNewDeviceAvailable) {
-+        AVAudioSessionRouteDescription *route = _audioSession.currentRoute;
 +        for (AVAudioSessionPortDescription *input in route.inputs) {
 +            if ([wired containsObject:input.portType]) {
 +                [self sendEventWithName:@"WiredHeadset"
@@ -1032,14 +1345,27 @@ index 7c54f6e..f29865b 100644
 +        }
 +        for (AVAudioSessionPortDescription *output in route.outputs) {
 +            if ([wired containsObject:output.portType]) {
++                // --- the call can keep another input (an earpiece choice's built-in mic) while the
++                // --- headset takes the output: its mic, if it has one, is in availableInputs.
++                AVAudioSessionPortDescription *mic = nil;
++                for (AVAudioSessionPortDescription *input in inputs) {
++                    if ([input.portType isEqualToString:AVAudioSessionPortHeadsetMic]
++                            || [input.portType isEqualToString:AVAudioSessionPortUSBAudio]) {
++                        mic = input;
++                        break;
++                    }
++                }
 +                [self sendEventWithName:@"WiredHeadset"
-+                                   body:@{@"isPlugged": @YES, @"hasMic": @NO, @"deviceName": output.portType}];
++                                   body:@{@"isPlugged": @YES, @"hasMic": mic != nil ? @YES : @NO,
++                                          @"deviceName": mic.portType ?: output.portType}];
 +                return;
 +            }
 +        }
-+    } else if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable && ![self isWiredHeadsetPluggedIn]) {
-+        // --- only for a wired headset that left (the previous route had one, when iOS says).
-+        BOOL hadWired = previousRoute == nil;
++    } else if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable
++            && ![self isWiredHeadsetPluggedInRoute:route inputs:inputs]) {
++        // --- only for a wired headset that left: the previous route had one (when iOS says), or
++        // --- one hidden by a forced speaker was known to be plugged in.
++        BOOL hadWired = previousRoute == nil || wiredBefore;
 +        for (AVAudioSessionPortDescription *port in [previousRoute.inputs arrayByAddingObjectsFromArray:previousRoute.outputs ?: @[]]) {
 +            hadWired = hadWired || [wired containsObject:port.portType];
 +        }
@@ -1052,18 +1378,22 @@ index 7c54f6e..f29865b 100644
  - (void)stopAudioSessionRouteChangeNotification
  {
      if (!_isAudioSessionRouteChangeRegistered) {
-@@ -884,6 +1383,55 @@ - (void)stopAudioSessionRouteChangeNotification
+@@ -884,6 +1658,61 @@ - (void)stopAudioSessionRouteChangeNotification
      _isAudioSessionRouteChangeRegistered = NO;
  }
  
 +// --- iOS 26+: a device can become available without taking the route (a headset connecting
 +// --- while the receiver is pinned), which posts no route change. Earlier iOS has no such
 +// --- notification, and the list then catches up on the next route change.
++// --- The notification is declared only by the iOS 26 SDK and later: @available is a runtime check
++// --- and doesn't declare it, so an older SDK (Xcode 16) needs the compile-time guard as well.
++// --- (260000 rather than __IPHONE_26_0, which an older SDK doesn't define.)
 +- (void)startAudioSessionAvailableInputsChangeNotification
 +{
 +    if (_isAudioSessionAvailableInputsChangeRegistered) {
 +        return;
 +    }
++#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 260000
 +    if (@available(iOS 26.0, *)) {
 +        NSLog(@"RNInCallManager.startAudioSessionAvailableInputsChangeNotification()");
 +        [self stopObserve:_audioSessionAvailableInputsChangeObserver
@@ -1081,14 +1411,14 @@ index 7c54f6e..f29865b 100644
 +            }
 +            dispatch_async(strongSelf->_routeQueue, ^{
 +                // --- queued by an ended call's observer: that call is over.
-+                if (strongSelf->_isAudioSessionAvailableInputsChangeRegistered
-+                        && generation == strongSelf->_sessionGeneration) {
++                if (generation == strongSelf->_sessionGeneration) {
 +                    [strongSelf sendAudioDeviceChanged];
 +                }
 +            });
 +        }];
 +        _isAudioSessionAvailableInputsChangeRegistered = YES;
 +    }
++#endif
 +}
 +
 +- (void)stopAudioSessionAvailableInputsChangeNotification
@@ -1096,19 +1426,21 @@ index 7c54f6e..f29865b 100644
 +    if (!_isAudioSessionAvailableInputsChangeRegistered) {
 +        return;
 +    }
++#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 260000
 +    if (@available(iOS 26.0, *)) {
 +        NSLog(@"RNInCallManager.stopAudioSessionAvailableInputsChangeNotification()");
 +        [self stopObserve:_audioSessionAvailableInputsChangeObserver
 +                     name:AVAudioSessionAvailableInputsChangeNotification
 +                   object:nil];
 +    }
++#endif
 +    _isAudioSessionAvailableInputsChangeRegistered = NO;
 +}
 +
  - (void)startAudioSessionMediaServicesWereLostNotification
  {
      if (_isAudioSessionMediaServicesWereLostRegistered) {
-@@ -937,17 +1485,58 @@ - (void)startAudioSessionMediaServicesWereResetNotification
+@@ -937,17 +1766,109 @@ - (void)startAudioSessionMediaServicesWereResetNotification
                   name:AVAudioSessionMediaServicesWereResetNotification
                 object:nil];
  
@@ -1134,14 +1466,14 @@ index 7c54f6e..f29865b 100644
  
 +/**
 + * The media server restarted, and the session is back to its defaults (Technical Q&A QA1749):
-+ * set up the call's category, mode and activation again, then its route and chosen device.
++ * set up the call's category, mode and activation again, then its chosen device and route, and
++ * re-create the ringback and busy tone players, which don't play after a reset.
 + */
 +- (void)mediaServicesWereReset:(NSUInteger)generation
 +{
 +    // --- queued by an ended call's observer: that call is over, and the next one (if it has
 +    // --- started) set its session up after the reset.
-+    if (!_audioSessionInitialized || !_isAudioSessionMediaServicesWereResetRegistered
-+            || generation != _sessionGeneration) {
++    if (generation != _sessionGeneration) {
 +        return;
 +    }
 +    [self audioSessionSetCategory:_incallAudioCategory
@@ -1152,22 +1484,73 @@ index 7c54f6e..f29865b 100644
 +    [self audioSessionSetActive:YES
 +                        options:0
 +                     callerMemo:NSStringFromSelector(_cmd)];
++    // --- the order of chooseAudioRoute: a device is pinned before the flag is applied (the route
++    // --- change a pin starts ends an output override, so a forced speaker chosen after the device
++    // --- goes on top again, as it was), the earpiece's built-in mic after it (voice chat mode first).
++    BOOL earpiecePin = [_chosenInputRoute isEqualToString:@"EARPIECE"];
++    if (!earpiecePin) {
++        [self pinChosenInputAfterMediaServicesReset];
++    }
 +    [self updateAudioRoute];
-+    if (_chosenInputRoute != nil) {
-+        AVAudioSessionPortDescription *input = [self preferredInputForAudioRoute:_chosenInputRoute];
-+        NSError *error = nil;
-+        if (input == nil || ![_audioSession setPreferredInput:input error:&error]) {
-+            NSLog(@"RNInCallManager.mediaServicesWereReset(): %@ can't be chosen again: %@", _chosenInputRoute, error);
-+            _chosenInputRoute = nil;
++    if (earpiecePin) {
++        [self pinChosenInputAfterMediaServicesReset];
++    }
++    _ringback = [self playerAfterMediaServicesReset:_ringback];
++    if (_busytone != nil) {
++        _busytone = [self playerAfterMediaServicesReset:_busytone];
++        if (_busytone == nil) {
++            // --- stop() is waiting for the busy tone to finish, which it now can't.
++            [self stop:@""];
++            return;
 +        }
 +    }
 +    [self sendAudioDeviceChanged];
 +}
 +
++- (void)pinChosenInputAfterMediaServicesReset
++{
++    if (_chosenInputRoute == nil) {
++        return;
++    }
++    // --- the device chosen, by its UID, rather than the first of its route.
++    AVAudioSessionPortDescription *input = [self preferredInputForAudioRoute:_chosenInputRoute
++                                                                      inputs:_audioSession.availableInputs
++                                                                       route:nil
++                                                                         uid:_chosenInputUID];
++    NSError *error = nil;
++    if (input == nil || ![_audioSession setPreferredInput:input error:&error]) {
++        NSLog(@"RNInCallManager.mediaServicesWereReset(): %@ can't be chosen again: %@", _chosenInputRoute, error);
++        _chosenInputRoute = nil;
++        _chosenInputUID = nil;
++    }
++}
++
++/** A new player for `player`'s sound, playing from the start; nil if there was none or it can't be made. */
++- (AVAudioPlayer *)playerAfterMediaServicesReset:(AVAudioPlayer *)player
++{
++    if (player == nil) {
++        return nil;
++    }
++    // --- the old player must not report a finish (the busy tone's ends the call: stop()).
++    player.delegate = nil;
++    [player stop];
++    NSError *error = nil;
++    AVAudioPlayer *fresh = [[AVAudioPlayer alloc] initWithContentsOfURL:player.url error:&error];
++    if (fresh == nil) {
++        NSLog(@"RNInCallManager.mediaServicesWereReset(): can't play %@ again: %@", player.url.lastPathComponent, error);
++        return nil;
++    }
++    fresh.delegate = self;
++    fresh.numberOfLoops = player.numberOfLoops;
++    [fresh prepareToPlay];
++    [fresh play];
++    return fresh;
++}
++
  - (void)stopAudioSessionMediaServicesWereResetNotification
  {
      if (!_isAudioSessionMediaServicesWereResetRegistered) {
-@@ -1188,7 +1777,10 @@ - (void)audioPlayerDidFinishPlaying:(AVAudioPlayer *)player
+@@ -1188,7 +2109,10 @@ - (void)audioPlayerDidFinishPlaying:(AVAudioPlayer *)player
              || [filename isEqualToString:_defaultBusytoneUri.URLByDeletingPathExtension.lastPathComponent]) {
          //[self stopBusytone];
          NSLog(@"RNInCallManager.audioPlayerDidFinishPlaying(): busytone finished, invoke stop()");
