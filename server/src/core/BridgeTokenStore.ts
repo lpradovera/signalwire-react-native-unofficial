@@ -25,10 +25,18 @@ export interface BridgeTokenStoreOptions {
    * worthless by the time anyone could use it.
    */
   ttlMs?: number;
+  /**
+   * How long a redeemed (bridged) token is kept for its status callback. The
+   * callback comes when the device's leg ends, so this bounds the longest call
+   * whose caller can still be hung up. It only stops a callback that never
+   * arrives from keeping the entry forever.
+   */
+  bridgedTtlMs?: number;
   now?: () => number;
 }
 
 const DEFAULT_TTL_MS = 60_000;
+const DEFAULT_BRIDGED_TTL_MS = 24 * 60 * 60_000;
 
 /**
  * Maps opaque tokens to parked calls.
@@ -45,10 +53,12 @@ const DEFAULT_TTL_MS = 60_000;
 export class BridgeTokenStore {
   private readonly byToken = new Map<string, BridgeToken>();
   private readonly ttlMs: number;
+  private readonly bridgedTtlMs: number;
   private readonly now: () => number;
 
   constructor(options: BridgeTokenStoreOptions = {}) {
     this.ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
+    this.bridgedTtlMs = options.bridgedTtlMs ?? DEFAULT_BRIDGED_TTL_MS;
     this.now = options.now ?? Date.now;
   }
 
@@ -152,29 +162,6 @@ export class BridgeTokenStore {
   }
 
   /**
-   * The call this token was minted for, whether or not it has been redeemed.
-   *
-   * Redemption is single-use so a replayed push cannot join a live call, but
-   * the device still needs to name the caller's leg when its own leg ends —
-   * otherwise the caller is stranded. Subscriber-bound, like redeem: holding
-   * a token is not permission to hang up someone else's call.
-   */
-  pairedCallSid(
-    token: string,
-    externalUserId: string
-  ): { callSid: string } | { error: 'unknown' | 'expired' | 'wrong-subscriber' } {
-    this.sweep();
-    const found = this.byToken.get(token);
-    if (!found) {
-      return { error: 'unknown' };
-    }
-    if (found.externalUserId !== externalUserId) {
-      return { error: 'wrong-subscriber' };
-    }
-    return { callSid: found.callSid };
-  }
-
-  /**
    * Claims the one end of the caller's leg that a bridged token allows.
    *
    * For SignalWire's status callback on the bridge's connect. Only a redeemed
@@ -205,14 +192,34 @@ export class BridgeTokenStore {
   }
 
   private sweep(): void {
-    const cutoff = this.now();
+    const now = this.now();
     for (const [key, value] of this.byToken) {
-      // Redeemed tokens are kept until expiry so a replay reports
-      // "already-redeemed" rather than "unknown" — the difference matters when
-      // reading logs after a failed bridge.
-      if (cutoff > value.expiresAt) {
+      if (this.isSpent(value, now)) {
         this.byToken.delete(key);
       }
     }
+  }
+
+  /**
+   * Whether an entry can be forgotten.
+   *
+   * - Never redeemed: at expiry. Nothing can use it after that.
+   * - Redeemed, caller not yet ended: when its status callback comes, which is
+   *   when the device's leg ends, however long the call ran. `bridgedTtlMs`
+   *   only bounds a callback that never arrives. Sweeping it at the 60 s
+   *   expiry instead stranded the caller of every call that ran past the
+   *   first minute after the park.
+   * - Caller ended: at expiry, or shortly after the end, whichever is later,
+   *   so a repeated callback or a replayed bridge reports "already-ended" /
+   *   "already-redeemed" rather than "unknown" in the logs.
+   */
+  private isSpent(value: BridgeToken, now: number): boolean {
+    if (value.callerEndedAt !== null) {
+      return now > Math.max(value.expiresAt, value.callerEndedAt + this.ttlMs);
+    }
+    if (value.redeemedAt !== null) {
+      return now > value.redeemedAt + this.bridgedTtlMs;
+    }
+    return now > value.expiresAt;
   }
 }
