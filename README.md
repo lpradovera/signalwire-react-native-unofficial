@@ -416,7 +416,10 @@ would report its choice, and 4.3.0 re-applies the speaker on the next audio
 category change, undoing it. There `CallControls` offers speaker on/off
 only; for full routing, apply the incall-manager patch above
 (`docs/patches/`) or wait for the upstream change. VoiceOver reads the button as
-"Audio output" (`accessibilityLabel`). Its `activeTintColor` is AVKit's
+a button, "Audio output" (`accessibilityRole`, `accessibilityLabel`). Its
+`style` (background, border, radius, padding) is drawn once, on the view around
+the native picker, the padding insets the icon, and a tap anywhere in that view
+opens the menu. Its `activeTintColor` is AVKit's
 colour for AirPlay being active; a headset or car is not AirPlay.
 
 `useDevices()` has no `refresh`-free auto-update: React Native emits no

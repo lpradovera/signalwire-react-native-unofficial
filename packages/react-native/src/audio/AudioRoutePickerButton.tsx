@@ -55,23 +55,103 @@ function getNativeView(): HostComponent<AudioRoutePickerButtonProps> | null {
  *
  * Renders nothing on Android, on iOS without incall-manager's iOS routes, or
  * when the app was built before this version of the package (native code
- * needs a rebuild). Size it with `style`;
- * the default is 44 × 44, the minimum touch target. A background, corner
- * radius and padding in `style` apply to the button itself (React Native's
- * New Architecture draws them on the view around the native picker, and the
- * padding insets the icon). VoiceOver reads it as a
- * button with `accessibilityLabel` (default "Audio output").
+ * needs a rebuild). Size it with `style`; the default is 44 × 44, the minimum
+ * touch target. `style` applies to the view around the native picker (React
+ * Native's New Architecture draws the background, border, radius, opacity,
+ * transform and shadow there, once), and its padding insets the icon; a tap
+ * anywhere in that view, padding, border and `hitSlop` included, opens the
+ * menu. VoiceOver reads it as a button (`accessibilityRole`, default
+ * `'button'`) with `accessibilityLabel` (default "Audio output"). `aria-*`
+ * and `id` work as on `View`.
  */
 export function AudioRoutePickerButton({
   style,
   accessibilityLabel = 'Audio output',
+  accessibilityRole = 'button',
   ...props
 }: AudioRoutePickerButtonProps): React.JSX.Element | null {
   const Native = getNativeView();
   if (!Native) {
     return null;
   }
-  return <Native accessibilityLabel={accessibilityLabel} style={[{ height: 44, width: 44 }, style]} {...props} />;
+  return (
+    <Native
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole={accessibilityRole}
+      style={[{ height: 44, width: 44 }, style]}
+      {...hostProps(props)}
+    />
+  );
+}
+
+/**
+ * View's own prop mapping, for the props React Native's `View` translates in
+ * JS before they reach a native host: this component renders the host
+ * directly, so without it `aria-label`, `aria-hidden`, `aria-disabled` and
+ * `id` would be dropped. Mirrors React Native 0.81's View.js.
+ */
+function hostProps(props: Omit<AudioRoutePickerButtonProps, 'style'>): Omit<AudioRoutePickerButtonProps, 'style'> {
+  const {
+    'aria-busy': ariaBusy,
+    'aria-checked': ariaChecked,
+    'aria-disabled': ariaDisabled,
+    'aria-expanded': ariaExpanded,
+    'aria-hidden': ariaHidden,
+    'aria-label': ariaLabel,
+    'aria-labelledby': ariaLabelledBy,
+    'aria-live': ariaLive,
+    'aria-selected': ariaSelected,
+    'aria-valuemax': ariaValueMax,
+    'aria-valuemin': ariaValueMin,
+    'aria-valuenow': ariaValueNow,
+    'aria-valuetext': ariaValueText,
+    id,
+    tabIndex,
+    ...rest
+  } = props;
+  const mapped: Omit<AudioRoutePickerButtonProps, 'style'> = { ...rest };
+  if (ariaLabel !== undefined) {
+    mapped.accessibilityLabel = ariaLabel;
+  }
+  const labelledBy = ariaLabelledBy?.split(/\s*,\s*/g);
+  if (labelledBy !== undefined) {
+    mapped.accessibilityLabelledBy = labelledBy;
+  }
+  if (ariaLive !== undefined) {
+    mapped.accessibilityLiveRegion = ariaLive === 'off' ? 'none' : ariaLive;
+  }
+  if (ariaHidden !== undefined) {
+    mapped.accessibilityElementsHidden = ariaHidden;
+    if (ariaHidden) {
+      mapped.importantForAccessibility = 'no-hide-descendants';
+    }
+  }
+  if (id !== undefined) {
+    mapped.nativeID = id;
+  }
+  if (tabIndex !== undefined) {
+    mapped.focusable = !tabIndex;
+  }
+  const state = rest.accessibilityState;
+  if (state != null || ariaBusy != null || ariaChecked != null || ariaDisabled != null || ariaExpanded != null || ariaSelected != null) {
+    mapped.accessibilityState = {
+      busy: ariaBusy ?? state?.busy,
+      checked: ariaChecked ?? state?.checked,
+      disabled: ariaDisabled ?? state?.disabled,
+      expanded: ariaExpanded ?? state?.expanded,
+      selected: ariaSelected ?? state?.selected
+    };
+  }
+  const value = rest.accessibilityValue;
+  if (value != null || ariaValueMax != null || ariaValueMin != null || ariaValueNow != null || ariaValueText != null) {
+    mapped.accessibilityValue = {
+      max: ariaValueMax ?? value?.max,
+      min: ariaValueMin ?? value?.min,
+      now: ariaValueNow ?? value?.now,
+      text: ariaValueText ?? value?.text
+    };
+  }
+  return mapped;
 }
 
 /** Test seam: look the native view up again. */
