@@ -45,7 +45,7 @@ export const fetchServerToken = url
  * The subscriber the server minted the current token for. The device registers
  * for push under exactly that one: the server decides whose token it is.
  */
-let serverReference: string | null = null;
+let serverReference: string | undefined;
 const listeners = new Set<() => void>();
 
 function setServerReference(reference: string): void {
@@ -58,8 +58,11 @@ function setServerReference(reference: string): void {
   }
 }
 
-/** {@link serverReference}, as React state: null until the first token. */
-export function useServerReference(): string | null {
+/**
+ * {@link serverReference}, as React state: undefined until the first token,
+ * which device registration waits for (it is not "no reference").
+ */
+export function useServerReference(): string | undefined {
   return useSyncExternalStore(
     (listener) => {
       listeners.add(listener);
