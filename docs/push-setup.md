@@ -343,10 +343,15 @@ The kit's component handles both sources, and defaults to including native
 pushes on Android and not on iOS, where CallKit already drew the call:
 
 ```tsx
-import { IncomingCallSheet } from '@signalwire/react-native-ui';
+import { CallOverlayHost, IncomingCallSheet } from '@signalwire/react-native-ui';
 
 <IncomingCallSheet onAnswered={setCall} />
+// ...and, last in your root view:
+<CallOverlayHost />
 ```
+
+Mount the `CallOverlayHost`: the sheet then draws in it instead of in a
+`Modal` (see the tutorial's step 6).
 
 Rolling your own? Use `useRingingPushes` from
 `@signalwire/react-native/ringing` — a separate entry point, because the

@@ -2,8 +2,10 @@ import { logger, useIncomingCalls } from '@signalwire/react';
 import { displayableName, useRingingPushes } from '@signalwire/react-native/ringing';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Modal, Platform, StyleSheet, Text, View } from 'react-native';
+import { initialWindowMetrics, SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useSignalWireTheme } from '../theme/ThemeProvider';
+import { ThemeContext, useSignalWireTheme } from '../theme/ThemeProvider';
+import { useCallOverlayHost } from './CallOverlayHost';
 import { ControlButton } from './ControlButton';
 
 import type { Call, MediaOptions } from '@signalwire/js';
@@ -108,73 +110,143 @@ export function IncomingCallSheet({
     displayableName(source?.from, 'IncomingCallSheet') ??
     'Unknown caller';
 
+  const sheet = (
+    <ThemeContext.Provider value={theme}>
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+        <SheetBody
+          callerName={callerName}
+          onDecline={() => {
+            if (call) {
+              markHandled(call);
+              void reject(call).then(() => onRejected?.(call));
+            } else if (push) {
+              rejectPush(push.uuid);
+            }
+          }}
+          onAnswer={() => {
+            if (call) {
+              markHandled(call);
+              answer(call, answerWith).then(
+                () => onAnswered?.(call),
+                (error: unknown) => {
+                  // Offer it again if it is still ringing.
+                  logger.warn('Answering the incoming call failed:', error);
+                  unmarkHandled(call);
+                }
+              );
+            } else if (push) {
+              // The same intent a native answer applies, so both paths
+              // converge and whatever places the call picks it up.
+              answerPush(push.uuid);
+            }
+          }}
+        />
+      </SafeAreaProvider>
+    </ThemeContext.Provider>
+  );
+
+  return <SheetPlacement sheet={sheet} testID={testID} />;
+}
+
+/**
+ * Draws the sheet in the mounted {@link CallOverlayHost}, or in a `Modal`
+ * when there is none. A Modal is a window of its own, drawn edge to edge on
+ * Android 15 and later, so the app's SafeAreaProvider does not reach it: the
+ * sheet brings its own, in both places.
+ */
+function SheetPlacement({
+  sheet,
+  testID
+}: {
+  sheet: React.ReactNode;
+  testID?: string;
+}): React.JSX.Element | null {
+  const host = useCallOverlayHost();
+
+  useEffect(() => {
+    if (!host) {
+      return;
+    }
+    host.setContent(
+      <View style={StyleSheet.absoluteFill} testID={testID}>
+        {sheet}
+      </View>
+    );
+  });
+  useEffect(() => {
+    if (!host) {
+      return;
+    }
+    return () => host.setContent(null);
+  }, [host]);
+
+  if (host) {
+    return null;
+  }
   return (
     <Modal transparent animationType="slide" visible testID={testID}>
-      <View style={[styles.backdrop, { backgroundColor: theme.colors.scrim }]}>
-        <View
-          style={[
-            styles.sheet,
-            {
-              backgroundColor: theme.colors.background,
-              borderTopLeftRadius: theme.radii.md * 2,
-              borderTopRightRadius: theme.radii.md * 2,
-              gap: theme.spacing.sm,
-              padding: theme.spacing.xl
-            }
-          ]}
-        >
-          <Text style={{ color: theme.colors.textMuted, fontSize: theme.typography.label }}>
-            Incoming call
-          </Text>
-          <Text
-            accessibilityRole="header"
-            style={{ color: theme.colors.text, fontSize: theme.typography.title, fontWeight: '700' }}
-          >
-            {callerName}
-          </Text>
+      {sheet}
+    </Modal>
+  );
+}
 
-          <View style={[styles.actions, { gap: theme.spacing.md, marginTop: theme.spacing.lg }]}>
-            <ControlButton
-              testID="sw-decline"
-              label="Decline"
-              variant="danger"
-              style={styles.action}
-              onPress={() => {
-                if (call) {
-                  markHandled(call);
-                  void reject(call).then(() => onRejected?.(call));
-                } else if (push) {
-                  rejectPush(push.uuid);
-                }
-              }}
-            />
-            <ControlButton
-              testID="sw-answer"
-              label="Answer"
-              variant="accent"
-              style={styles.action}
-              onPress={() => {
-                if (call) {
-                  markHandled(call);
-                  answer(call, answerWith).then(
-                    () => onAnswered?.(call),
-                    (error: unknown) => {
-                      // Offer it again if it is still ringing.
-                      logger.warn('Answering the incoming call failed:', error);
-                      unmarkHandled(call);
-                    }
-                  );
-                } else if (push) {
-                  // The same intent a native answer applies, so both paths
-                  // converge and whatever places the call picks it up.
-                  answerPush(push.uuid);
-                }
-              }}
-            />
-          </View>
+function SheetBody({
+  callerName,
+  onAnswer,
+  onDecline
+}: {
+  callerName: string;
+  onAnswer: () => void;
+  onDecline: () => void;
+}): React.JSX.Element {
+  const theme = useSignalWireTheme();
+  const insets = useSafeAreaInsets();
+
+  return (
+    <View style={[styles.backdrop, { backgroundColor: theme.colors.scrim }]}>
+      <View
+        testID="sw-incoming-sheet"
+        style={[
+          styles.sheet,
+          {
+            backgroundColor: theme.colors.background,
+            borderTopLeftRadius: theme.radii.md * 2,
+            borderTopRightRadius: theme.radii.md * 2,
+            gap: theme.spacing.sm,
+            padding: theme.spacing.xl,
+            // Clear the home indicator and Android's navigation bar.
+            paddingBottom: theme.spacing.xl + insets.bottom
+          }
+        ]}
+      >
+        <Text style={{ color: theme.colors.textMuted, fontSize: theme.typography.label }}>
+          Incoming call
+        </Text>
+        <Text
+          accessibilityRole="header"
+          style={{ color: theme.colors.text, fontSize: theme.typography.title, fontWeight: '700' }}
+        >
+          {callerName}
+        </Text>
+
+        <View style={[styles.actions, { gap: theme.spacing.md, marginTop: theme.spacing.lg }]}>
+          <ControlButton
+            testID="sw-decline"
+            label="Decline"
+            variant="danger"
+            style={styles.action}
+            onPress={onDecline}
+          />
+          <ControlButton
+            testID="sw-answer"
+            label="Answer"
+            variant="accent"
+            style={styles.action}
+            onPress={onAnswer}
+          />
         </View>
       </View>
-    </Modal>
+    </View>
   );
 }
 

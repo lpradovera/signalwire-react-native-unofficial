@@ -4,7 +4,8 @@ import { defaultTheme, mergeTheme } from './theme';
 
 import type { SignalWireTheme, SignalWireThemeOverride } from './theme';
 
-const ThemeContext = createContext<SignalWireTheme>(defaultTheme);
+/** Internal: lets a sheet drawn in an overlay host keep the theme it was rendered under. */
+export const ThemeContext = createContext<SignalWireTheme>(defaultTheme);
 
 export interface SignalWireThemeProviderProps {
   /** Partial overrides merged onto the default dark theme. */
