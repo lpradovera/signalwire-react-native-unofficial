@@ -46,6 +46,23 @@ export const VOIP_PUSH_SOURCE = `//
 // device with your server. Payload: @{ @"token": <hex string> }.
 NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotification";
 
+// The payload is JSON from whoever sent the push, so a field can be a number,
+// null or missing. Each one is used only when it is a non-empty string.
+static NSString *SWStringValue(id value) {
+  return [value isKindOfClass:[NSString class]] && [(NSString *)value length] > 0 ? value : nil;
+}
+
+// CallKit needs a real UUID: callkeep turns this string into an NSUUID, which
+// throws on a number and is nil for any other string, and either way no call
+// is reported and iOS terminates the app. Lowercase, because callkeep reports
+// its answer and end actions with [UUIDString lowercaseString] and JavaScript
+// matches them against this value.
+static NSString *SWCallUUID(id value) {
+  NSString *string = SWStringValue(value);
+  NSUUID *parsed = string != nil ? [[NSUUID alloc] initWithUUIDString:string] : nil;
+  return [(parsed ?: [NSUUID UUID]).UUIDString lowercaseString];
+}
+
 @interface SignalWireVoipPushDelegate : NSObject <PKPushRegistryDelegate>
 @property (nonatomic, strong) PKPushRegistry *registry;
 @end
@@ -135,10 +152,10 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
 
   // A UUID is required by CallKit. Prefer one the sender chose so the server
   // and the device agree; otherwise mint one here.
-  NSString *uuid = data[@"uuid"] ?: [[NSUUID UUID] UUIDString];
-  NSString *callId = data[@"call_id"] ?: @"";
-  NSString *handle = data[@"from"] ?: @"Unknown";
-  NSString *callerName = data[@"from_name"] ?: @"Unknown caller";
+  NSString *uuid = SWCallUUID(data[@"uuid"]);
+  NSString *callId = SWStringValue(data[@"call_id"]) ?: @"";
+  NSString *handle = SWStringValue(data[@"from"]) ?: @"Unknown";
+  NSString *callerName = SWStringValue(data[@"from_name"]) ?: @"Unknown caller";
 
   // Everything the sender added beyond the known keys is forwarded verbatim.
   // A bridge topology puts a single-use token here, and JavaScript cannot ask
