@@ -11,8 +11,11 @@ Pod::Spec.new do |s|
   s.license      = package['license']
   s.homepage     = package['homepage']
   s.author       = 'signalwire-react-native contributors'
-  s.platforms    = { :ios => '15.1' }
-  s.source       = { :git => package['repository']['url'], :tag => "v#{s.version}" }
+  # React Native's own minimum when the app's Podfile defines it (it always does
+  # through react_native_pods.rb); 15.1 for a standalone `pod spec lint`.
+  s.platforms    = { :ios => respond_to?(:min_ios_version_supported, true) ? min_ios_version_supported : '15.1' }
+  # package.json's URL is npm's "git+https://..."; git can't clone that form.
+  s.source       = { :git => package['repository']['url'].sub(/^git\+/, ''), :tag => "v#{s.version}" }
   s.source_files = 'ios/**/*.{h,m}'
   s.frameworks   = 'AVKit'
 
