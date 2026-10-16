@@ -1,3 +1,5 @@
+import { logger } from '@signalwire/react';
+
 import { CallRegistry } from './CallRegistry';
 
 import type { CallRegistryHost } from './types';
@@ -46,6 +48,23 @@ describe('CallRegistry — push path', () => {
     const registry = new CallRegistry({ host });
     registry.reportIncomingPush({ callId: 'c1' });
     expect(host.displayIncomingCall).toHaveBeenCalledWith('uuid-1', 'Unknown', 'Unknown caller');
+  });
+
+  it('shows no placeholder name from the backend, and logs that one arrived', () => {
+    const debug = jest.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    registry.reportIncomingPush({ callId: 'c1', from: '+15551234', fromName: '_undef_' });
+    expect(host.displayIncomingCall).toHaveBeenCalledWith('uuid-1', '+15551234', 'Unknown caller');
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('placeholder name "_undef_"'));
+    debug.mockRestore();
+  });
+
+  it('shows a Fabric address in the name by its readable form', () => {
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    registry.adoptNativeEntry({ uuid: 'native-1', callId: 'c1', fromName: '/private/front-desk' });
+    expect(registry.entryForUuid('native-1')?.displayName).toBe('Front Desk');
   });
 
   it('fuses an arriving call by exact id match', () => {
@@ -226,6 +245,20 @@ describe('CallRegistry — in-app inbound and outbound', () => {
 
     expect(host.displayIncomingCall).toHaveBeenCalledWith('uuid-1', 'Unknown', 'Unknown caller');
     expect(registry.entryForUuid('uuid-1')?.state).toBe('fused');
+  });
+
+  it("names an in-app inbound call without the backend's placeholder or a raw address", () => {
+    const debug = jest.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+
+    registry.attachIncomingCall({ ...createCall('c1'), from: '/public/lobby', fromName: '_undef_' } as never);
+    registry.attachIncomingCall({ ...createCall('c2'), from: '+15551234', fromName: '/private/front-desk' } as never);
+
+    expect(host.displayIncomingCall).toHaveBeenNthCalledWith(1, 'uuid-1', '/public/lobby', 'Unknown caller');
+    expect(host.displayIncomingCall).toHaveBeenNthCalledWith(2, 'uuid-2', '+15551234', 'Front Desk');
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('placeholder name "_undef_"'));
+    debug.mockRestore();
   });
 
   it('does not duplicate an already-attached call', () => {

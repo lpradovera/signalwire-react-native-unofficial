@@ -2,6 +2,8 @@ import { BehaviorSubject, Subject, concat, defer, from } from 'rxjs';
 
 import { logger } from '@signalwire/react';
 
+import { displayableName } from './displayName';
+
 import type {
   CallEntry,
   CallIntent,
@@ -40,6 +42,15 @@ const DEFAULT_FUSION_TIMEOUT_MS = 45_000;
 const ANSWERED_TIMEOUT_MS = 60_000;
 const UNKNOWN_HANDLE = 'Unknown';
 const UNKNOWN_NAME = 'Unknown caller';
+
+/**
+ * The caller's name for the native UI: never the backend's placeholder (the
+ * `_undef_` a REST-dialled call carries, logged) or a raw Fabric address
+ * (made readable); 'Unknown caller' when there is no name.
+ */
+function callerName(fromName: string | undefined, context: string): string {
+  return displayableName(fromName, context) ?? UNKNOWN_NAME;
+}
 
 /**
  * Reconciles native call UI entries with SDK calls.
@@ -169,7 +180,7 @@ export class CallRegistry {
 
     const uuid = this.host.generateUuid();
     const handle = payload.from ?? UNKNOWN_HANDLE;
-    const displayName = payload.fromName ?? UNKNOWN_NAME;
+    const displayName = callerName(payload.fromName, `push for call ${String(payload.callId)}`);
 
     this.write({
       uuid,
@@ -217,7 +228,7 @@ export class CallRegistry {
       expectedCallId: payload.callId ?? null,
       call: null,
       handle: payload.from ?? UNKNOWN_HANDLE,
-      displayName: payload.fromName ?? UNKNOWN_NAME,
+      displayName: callerName(payload.fromName, `native push entry ${payload.uuid}`),
       intent: null,
       data: payload.data,
       fuseDeadline: this.host.now() + this.fusionTimeoutMs
@@ -239,7 +250,7 @@ export class CallRegistry {
 
     const uuid = this.host.generateUuid();
     const handle = call.from ?? UNKNOWN_HANDLE;
-    const displayName = call.fromName ?? UNKNOWN_NAME;
+    const displayName = callerName(call.fromName, `inbound call ${call.id}`);
 
     this.write({
       uuid,
