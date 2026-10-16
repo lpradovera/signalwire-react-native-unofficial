@@ -150,7 +150,11 @@
   mirrors inbound calls too, and unbinds one that is replaced or removed.
   `CallObserver.bindClient` may return a function that undoes the binding;
   the provider calls it when the observer changes or goes away, the client is
-  replaced, or the provider unmounts.
+  replaced, or the provider unmounts. `bindClient` runs again for each new
+  observer object, so memoize an observer that returns an unbind. One that
+  returns nothing, as 0.1.0 observers do, is still bound once per client: its
+  binding can't be undone, so the provider doesn't bind a re-created (inline)
+  observer again on top of it.
 - Turning `callKit` off stops CallKit from showing the client's inbound
   calls (`CallKeepBridge.bindClient` returns its unbind). A client is
   subscribed to once however often it is bound, and stays bound until every
