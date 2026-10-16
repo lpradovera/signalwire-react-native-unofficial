@@ -41,4 +41,27 @@ describe('createCallEnder', () => {
     const result = await ender.end('gone');
     assert.equal(result.ok, false);
   });
+
+  it('bounds the request, and reports a stalled one as a failure', async () => {
+    // Off the park path, but a hung REST call here strands the caller just
+    // the same, and nothing else would ever end it.
+    let signal: AbortSignal | null | undefined;
+    const ender = createCallEnder({
+      space: 'example.signalwire.com',
+      projectId: 'p',
+      apiToken: 't',
+      timeoutMs: 50,
+      fetchImpl: ((_url: string, init: RequestInit) => {
+        signal = init.signal;
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+        });
+      }) as unknown as typeof fetch
+    });
+
+    const result = await ender.end('stalled');
+
+    assert.ok(signal instanceof AbortSignal);
+    assert.equal(result.ok, false);
+  });
 });
