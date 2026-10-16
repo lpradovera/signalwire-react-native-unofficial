@@ -171,7 +171,7 @@ describe('AudioRouteController', () => {
 
   describe('before the session starts', () => {
     it('holds a choice made while a CallKit call rings, and applies it when the session starts', () => {
-      controller.holdChoicesUntilStart();
+      controller.expectSession(true);
       controller.setSpeakerOn(true);
       expect(controller.route).toBe('speaker');
       expect(flag).not.toHaveBeenCalled();
@@ -185,7 +185,7 @@ describe('AudioRouteController', () => {
     it('applies a held choice through incall-manager’s iOS routes once they can take it', async () => {
       // Before start() incall-manager refuses every choice as inactive.
       installIncallIosRoutes();
-      controller.holdChoicesUntilStart();
+      controller.expectSession(true);
       controller.setSpeakerOn(true);
       expect(choose).not.toHaveBeenCalled();
 
@@ -198,7 +198,7 @@ describe('AudioRouteController', () => {
 
     it("keeps a speaker-off made before the session, so a video call doesn't start on the speaker", () => {
       // A video call rings; the user turns the speaker on, then off again.
-      controller.holdChoicesUntilStart();
+      controller.expectSession(true);
       controller.setSpeakerOn(true);
       controller.setSpeakerOn(false);
       expect(controller.route).toBe('earpiece');
@@ -212,7 +212,7 @@ describe('AudioRouteController', () => {
 
     it('keeps a speaker-off made before the session with incall-manager’s iOS routes', async () => {
       installIncallIosRoutes();
-      controller.holdChoicesUntilStart();
+      controller.expectSession(true);
       controller.setSpeakerOn(true);
       controller.setSpeakerOn(false);
 
@@ -228,7 +228,7 @@ describe('AudioRouteController', () => {
     it('writes nothing native for a call that never starts', () => {
       // After a video call, incall-manager's speaker-off outside a session
       // turned the proximity sensor on in the idle app.
-      controller.holdChoicesUntilStart();
+      controller.expectSession(true);
       controller.setSpeakerOn(true);
       controller.setSpeakerOn(false);
       controller.stop();
@@ -236,6 +236,61 @@ describe('AudioRouteController', () => {
 
       expect(flag).not.toHaveBeenCalled();
       expect(controller.route).toBe('earpiece');
+    });
+
+    it('forgets a held choice when no call that will start a session is left', () => {
+      // An outbound call rings, the user taps the speaker, nobody answers.
+      controller.expectSession(true);
+      controller.setSpeakerOn(true);
+      controller.expectSession(false);
+
+      expect(controller.route).toBe('earpiece');
+      controller.start('audio');
+      expect(flag).not.toHaveBeenCalled();
+      expect(controller.route).toBe('earpiece');
+    });
+
+    it('writes at once once no call that will start a session is left', () => {
+      controller.expectSession(true);
+      controller.expectSession(false);
+      controller.setSpeakerOn(true);
+      expect(flag).toHaveBeenCalledWith(true);
+    });
+
+    it('does not show a route it cannot write outside a session', () => {
+      // With incall-manager's iOS routes too: outside a session there is only
+      // the speaker setting, so Bluetooth was shown and never sent, and
+      // speaker-off back to it wrote nothing, leaving the speaker forced on.
+      installIncallIosRoutes();
+      const seen: string[] = [];
+      controller.route$.subscribe((route) => seen.push(route));
+      controller.setRoute('bluetooth');
+      controller.setRoute('headset');
+      expect(controller.route).toBe('earpiece');
+
+      controller.setSpeakerOn(true);
+      controller.setSpeakerOn(false);
+
+      expect(choose).not.toHaveBeenCalled();
+      expect(flag.mock.calls).toEqual([[true], [false]]);
+      expect(seen).toEqual(['earpiece', 'speaker', 'earpiece']);
+    });
+
+    it('on Android, writes nothing outside a session and says why once', () => {
+      // A never-started incall-manager has an empty device list and refuses
+      // every route, so the controller does not show one as applied.
+      const os = jest.replaceProperty(Platform, 'OS', 'android');
+      try {
+        controller.setSpeakerOn(true);
+        controller.setRoute('bluetooth');
+        expect(flag).not.toHaveBeenCalled();
+        expect(choose).not.toHaveBeenCalled();
+        expect(controller.route).toBe('earpiece');
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(warn.mock.calls[0]![0]).toMatch(/session/);
+      } finally {
+        os.restore();
+      }
     });
 
     it('still turns the speaker on and off in an app that starts no session', () => {

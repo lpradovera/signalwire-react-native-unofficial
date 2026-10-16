@@ -7,7 +7,7 @@ import InCallManager from 'react-native-incall-manager';
 import RNCallKeep from 'react-native-callkeep';
 import { Subject } from 'rxjs';
 
-import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
+import { getAudioRouteController, resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
 import { CallKeepBridge } from './CallKeepBridge';
 
 const nativeModules: { SignalWireVoipPush?: Record<string, unknown> } = {};
@@ -345,5 +345,56 @@ describe('CallKeepBridge — the fusion tick timer', () => {
 
     expect(fresh.registry.entries).toHaveLength(0);
     delete nativeModules.SignalWireVoipPush;
+  });
+});
+
+describe('CallKeepBridge on iOS — route choices with no session', () => {
+  let bridge: CallKeepBridge;
+  const speaker = InCallManager.setForceSpeakerphoneOn as jest.Mock;
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    callkeep.__reset();
+    resetAudioRouteControllerForTesting();
+    bridge = new CallKeepBridge();
+    await bridge.setup({ appName: 'Demo' });
+  });
+
+  afterEach(() => {
+    bridge.destroy();
+    jest.useRealTimers();
+  });
+
+  it('writes the speaker at once for a call the bridge does not track, after setup', () => {
+    // The provider's callKit is off: the call is in-app only and nothing
+    // will start a session for it, so a held tap would never be applied.
+    getAudioRouteController().setSpeakerOn(true);
+    expect(speaker).toHaveBeenCalledWith(true);
+    expect(getAudioRouteController().route).toBe('speaker');
+  });
+
+  it('holds a tap while a tracked call has not started its session', () => {
+    bridge.trackCall(createCall('out-1') as never, '/public/room', 'Support');
+    getAudioRouteController().setSpeakerOn(true);
+    expect(speaker).not.toHaveBeenCalled();
+    expect(getAudioRouteController().route).toBe('speaker');
+  });
+
+  it('forgets a held tap when the last call ends without a session, so the next call does not get it', async () => {
+    // A push rings, the user taps the speaker, the push never gets its call.
+    bridge.reportIncomingPush({ callId: 'never' });
+    getAudioRouteController().setSpeakerOn(true);
+    expect(getAudioRouteController().route).toBe('speaker');
+
+    await jest.advanceTimersByTimeAsync(60_000);
+
+    expect(getAudioRouteController().route).toBe('earpiece');
+    const call = createCall('out-2');
+    bridge.trackCall(call as never, '/public/room', 'Support');
+    call.status$.next('connected');
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(InCallManager.start).toHaveBeenCalled();
+    expect(speaker).not.toHaveBeenCalled();
   });
 });

@@ -50,8 +50,21 @@
   an outbound call rings) is shown at once and applied when it starts;
   nothing native is written outside a session. Turning the speaker off
   again before the session starts is held too, so a video call then starts
-  off the speaker. Without CallKit, speaker on/off still works outside a
-  session, as before.
+  off the speaker. A choice is held only while a call the CallKit bridge
+  tracks is live: when the last one ends without a session (an outbound
+  call nobody answered, a push that never got its call) the choice is
+  dropped and `route` goes back to `'earpiece'`, so the next call doesn't
+  start with it, and a call the bridge doesn't track (the provider's
+  `callKit` off) is treated as having no session.
+- With no session (an app without CallKit that doesn't call
+  `AudioRouteController.start()`, or an untracked call), only what
+  incall-manager can do without one is written and shown: on iOS speaker on
+  and off (`'earpiece'` is speaker off), while `'headset'` and
+  `'bluetooth'` are ignored with one warning instead of being shown and not
+  sent; on Android nothing, with one warning, because a never-started
+  incall-manager refuses every route (as it did on main, where the speaker
+  button changed only its label). `getAudioRouteController().start(media)`
+  and `stop()` around a call give an app without CallKit the full routing.
 - A late answer or report from an ended call no longer reaches the next one,
   and the status the next call starts from is read after its session
   starts, not taken from the previous call.

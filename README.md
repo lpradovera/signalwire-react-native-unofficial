@@ -363,7 +363,13 @@ connected headset or car. A toggle written as
 
 A route chosen before the call's audio session starts (a speaker tap while an
 outbound CallKit call still rings) shows at once and is applied when the
-session starts. A video call starts on the speaker only when nothing else is
+session starts; if the call ends first, it is dropped. The CallKit bridge
+starts and stops the session for the calls it tracks. Without CallKit (or
+for a call it doesn't track), call `getAudioRouteController().start(media)`
+when the call connects and `stop()` when it ends; with no session only the
+speaker setting can be written, and only on iOS (speaker on and off;
+`'headset'` and `'bluetooth'` are ignored with a warning), because on
+Android incall-manager refuses every route before its `start()`. A video call starts on the speaker only when nothing else is
 connected: incall-manager's own start decides, and this package doesn't force
 the speaker over a headset or car. A route that can't be chosen (no such
 device) goes back to where it was, on Android too.
