@@ -1,0 +1,135 @@
+/**
+ * The provider and hooks against the REAL @signalwire/js client, talking to
+ * an in-process fake server (see jest/realSdk.ts). The unit tests' fakes
+ * hide what these check: the real destroy() throws until connect() has built
+ * a session.
+ */
+import { act, render } from '@testing-library/react';
+import React from 'react';
+
+import { installFakeFetch, options, quietSdk, server, tick, token } from '../jest/realSdk';
+import { SignalWireProvider } from './SignalWireProvider';
+import { useSignalWire } from './useSignalWire';
+
+jest.mock('@signalwire/js', () => jest.requireActual('../jest/realSdk').sdk);
+
+let state: ReturnType<typeof useSignalWire> | undefined;
+function Status(): React.JSX.Element {
+  state = useSignalWire();
+  return <span data-testid="connected">{String(state.isConnected)}</span>;
+}
+
+async function waitUntil(condition: () => boolean, ms = 3000): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end && !condition()) {
+    await act(async () => {
+      await tick(20);
+    });
+  }
+  return condition();
+}
+
+const settle = (ms: number): Promise<void> =>
+  act(async () => {
+    await tick(ms);
+  });
+
+const credentials = () => ({ authenticate: jest.fn(async () => ({ token })) });
+
+beforeAll(() => {
+  quietSdk();
+  installFakeFetch();
+});
+beforeEach(() => {
+  server.reset();
+  state = undefined;
+});
+afterEach(() => server.reset());
+
+describe('client lifecycle', () => {
+  it('connects, registers, and closes its socket on unmount', async () => {
+    const view = render(
+      <SignalWireProvider credentialProvider={credentials()} options={options}>
+        <Status />
+      </SignalWireProvider>
+    );
+    expect(await waitUntil(() => server.count('subscriber.online') === 1)).toBe(true);
+    expect(state?.isConnected).toBe(true);
+
+    view.unmount();
+    await settle(50);
+    expect(server.open()).toHaveLength(0);
+  });
+
+  it('StrictMode: the client it discards never authenticates, connects or registers', async () => {
+    const provider = credentials();
+    const view = render(
+      <React.StrictMode>
+        <SignalWireProvider credentialProvider={provider} options={options}>
+          <Status />
+        </SignalWireProvider>
+      </React.StrictMode>
+    );
+    expect(await waitUntil(() => state?.isConnected === true)).toBe(true);
+    await settle(300);
+
+    expect(provider.authenticate).toHaveBeenCalledTimes(1);
+    expect(server.sockets).toHaveLength(1);
+    expect(server.count('subscriber.online')).toBe(1);
+
+    view.unmount();
+    await settle(50);
+    expect(server.open()).toHaveLength(0);
+  });
+
+  it('a client unmounted while it is still starting closes its socket and stays closed', async () => {
+    // Hold the profile fetch, the step between authenticate and connect.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetch = globalThis.fetch as jest.Mock;
+    const serve = fetch.getMockImplementation()!;
+    const fetched = fetch.mock.calls.length;
+    fetch.mockImplementationOnce(async (...args: unknown[]) => {
+      await held;
+      return serve(...args);
+    });
+
+    const provider = credentials();
+    const view = render(
+      <SignalWireProvider credentialProvider={provider} options={options}>
+        <Status />
+      </SignalWireProvider>
+    );
+    expect(await waitUntil(() => fetch.mock.calls.length === fetched + 1)).toBe(true);
+    view.unmount();
+    release();
+    await settle(500);
+
+    // Past authenticate it cannot be stopped short of connecting (the SDK
+    // throws for a request on a destroyed transport, so it is destroyed once
+    // its startup has registered), but it closes its socket and stays closed.
+    expect(server.sockets).toHaveLength(1);
+    expect(server.open()).toHaveLength(0);
+    await settle(1000);
+    expect(server.sockets).toHaveLength(1);
+  });
+
+  it('a new credentialProvider builds one new client and leaves no other socket open', async () => {
+    function App({ provider }: { provider: ReturnType<typeof credentials> }) {
+      return (
+        <SignalWireProvider credentialProvider={provider} options={options}>
+          <Status />
+        </SignalWireProvider>
+      );
+    }
+    const view = render(<App provider={credentials()} />);
+    expect(await waitUntil(() => server.count('subscriber.online') === 1)).toBe(true);
+    view.rerender(<App provider={credentials()} />);
+    expect(await waitUntil(() => server.count('subscriber.online') === 2)).toBe(true);
+    await settle(100);
+    expect(server.open()).toHaveLength(1);
+    view.unmount();
+  });
+});
