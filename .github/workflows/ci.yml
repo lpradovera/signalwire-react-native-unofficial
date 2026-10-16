@@ -48,3 +48,27 @@ jobs:
       # withInfoPlist, so this is what proves the plugin actually applies.
       - name: Verify the Expo config plugin
         run: npm run verify:prebuild
+
+  # The example's Swift type-check (withSceneLifecycle's generated
+  # AppDelegate.swift under Swift 5, strict concurrency, Swift 6 and Xcode
+  # 27's new-app settings) needs Xcode, so it skips on the Linux job above.
+  # This job runs it where it can run; SW_REQUIRE_SWIFTC=1 turns a missing
+  # Xcode into a failure instead of a skip. `-default-isolation` needs
+  # Swift 6.2, i.e. Xcode 26 or later.
+  example-swift:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type-check the generated AppDelegate.swift
+        working-directory: example
+        env:
+          SW_REQUIRE_SWIFTC: '1'
+        run: node --test plugins/withSceneLifecycle.swift.test.js

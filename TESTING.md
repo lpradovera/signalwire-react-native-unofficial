@@ -290,7 +290,10 @@ Expo SDK 54 needs the same; copy `generatedCode.js` along with them.
 Both plugins write Expo's tagged blocks (`@generated begin ... end`), so
 `expo prebuild` without `--clean` updates them in place and keeps anything
 else in the files. `npm test -w @signalwire/react-native-example` runs them
-through Expo's mod compiler and type-checks the generated Swift (on a Mac).
+through Expo's mod compiler and type-checks the generated Swift (on a Mac;
+elsewhere those four tests skip). CI's Linux job skips them, so CI has a
+macOS job, `example-swift`, that runs the Swift suite with
+`SW_REQUIRE_SWIFTC=1`, which makes a missing Xcode fail instead of skip.
 
 ### The application identifier is not in the repo
 
