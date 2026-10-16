@@ -1,11 +1,5 @@
-import {
-  mediaDevices as rnMediaDevices,
-  RTCPeerConnection as RNPeerConnection,
-  RTCRtpSender as RNRtpSender
-} from 'react-native-webrtc';
-
 import { logger } from '@signalwire/react';
-import { assertPeerModule } from './peers';
+import { loadReactNativeWebRTC } from './reactNativeWebRTC';
 
 import type { WebRTCApiProvider, WebRTCMediaDevices } from '@signalwire/js';
 
@@ -26,7 +20,7 @@ import type { WebRTCApiProvider, WebRTCMediaDevices } from '@signalwire/js';
  * Only installed when missing, so a react-native-webrtc release that implements
  * it wins automatically.
  */
-function installSenderSetStreamsShim(): void {
+function installSenderSetStreamsShim(RNRtpSender: unknown): void {
   const proto = (RNRtpSender as unknown as { prototype?: Record<string, unknown> })?.prototype;
   if (proto && typeof proto.setStreams !== 'function') {
     proto.setStreams = function setStreams(): void {
@@ -55,14 +49,13 @@ function warnOnceAboutDeviceEvents(): void {
  * whether screen share is supported, and React Native cannot provide it.
  */
 export function createWebRTCApiProvider(): WebRTCApiProvider {
-  assertPeerModule(
-    rnMediaDevices as object | undefined,
-    'react-native-webrtc',
-    'WebRTC support',
-    'getUserMedia'
-  );
+  const {
+    mediaDevices: rnMediaDevices,
+    RTCPeerConnection: RNPeerConnection,
+    RTCRtpSender: RNRtpSender
+  } = loadReactNativeWebRTC('WebRTC support');
 
-  installSenderSetStreamsShim();
+  installSenderSetStreamsShim(RNRtpSender);
 
   const mediaDevices: WebRTCMediaDevices = {
     getUserMedia: (constraints) =>

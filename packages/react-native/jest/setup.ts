@@ -12,3 +12,7 @@ jest.mock('@react-native-community/netinfo', () => ({
   addEventListener: jest.fn(() => jest.fn()),
   fetch: jest.fn(() => Promise.resolve({ isConnected: true, isInternetReachable: true }))
 }));
+
+// react-native-webrtc's native module, as a linked build has it. The package
+// checks for it before loading react-native-webrtc (platform/reactNativeWebRTC).
+require('react-native').NativeModules.WebRTCModule ??= {};
