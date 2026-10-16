@@ -11,9 +11,10 @@ Needs a native rebuild: the package now has an Android library (autolinked).
   `reportConnectedOutgoingCallWithUUID`, which is a no-op on Android, so every
   answered incoming call stayed RINGING and every outgoing call DIALING
   (Android 16 disconnects such a call after about two minutes).
-- `setup()` requests READ_PHONE_NUMBERS, RECORD_AUDIO, CAMERA (with
-  `supportsVideo`), POST_NOTIFICATIONS (13+) and BLUETOOTH_CONNECT (12+) at
-  runtime, once the app is on screen. callkeep requests nothing in
+- `setup()` requests READ_PHONE_NUMBERS, RECORD_AUDIO, POST_NOTIFICATIONS
+  (13+) and BLUETOOTH_CONNECT (12+) at runtime, once the app is on screen.
+  Not CAMERA: react-native-webrtc's getUserMedia asks for it when a call first
+  sends video, so an audio-only app with `supportsVideo` is never asked. callkeep requests nothing in
   self-managed mode, so `additionalPermissions` never asked, and without
   READ_PHONE_NUMBERS the first incoming call killed the app with a
   SecurityException in `VoiceConnectionService.createConnection`.
@@ -101,6 +102,36 @@ Needs a native rebuild: the package now has an Android library (autolinked).
 - `bindBridgeCall()` on a call already bound to the entry (trackCall's claim
   binds it, and the app binds it again after the dial) does nothing, so the
   call is watched once: one connected report, one audio start, one end.
+### CallKit voice and video
+
+- An outbound call's CallKit type and audio session mode follow its own
+  media (`call.mediaDirections`, the SDK's answer once preferences,
+  `?channel=`, the dial options and a disabled camera are applied). A voice
+  call starts on the receiver, or on a connected headset or car, instead of
+  the loudspeaker. This corrects the 0.1.0 known gap "A voice call forces
+  speakerphone".
+- An SDK inbound call is a voice call: the registry answers every one of them
+  audio-only (an in-app answer included, since it goes through CallKit), so
+  CallKit shows it as voice and its audio starts on the receiver, whatever the
+  caller offered. Its `mediaDirections` isn't used: @signalwire/js reports
+  video for any offer whose m=video sends.
+- A pushed call answered before its SDK call exists has no media yet. iOS
+  shows every VoIP push as a voice call, and so does a push reported from
+  JavaScript. Its audio session starts when its call (or the bridge call
+  placed for it) connects, with that call's media; on iOS a video bridge call
+  also turns the CallKit entry into a video call (callkeep's `updateDisplay`)
+  when the caller's handle is a phone number. updateDisplay always re-sends
+  the handle as a phone number, so for a `sip:` or Fabric caller the entry
+  stays shown as voice rather than turn that address into a phone number in
+  CallKit and Recents.
+- A call is reported to CallKit as video only when the provider was set up
+  with `supportsVideo: true`.
+- `CallKeepBridge.trackCall(call, handle, displayName)` keeps its signature;
+  it reads the media from the call. A call without `mediaDirections` (an
+  older SDK, a destroyed call) is a voice call: `supportsVideo` only lets
+  CallKit or Telecom show a video call as video, and never makes a call one,
+  so an app with `supportsVideo: true` no longer starts voice calls on the
+  loudspeaker or reports them to Telecom as video.
 
 ## 0.1.0
 

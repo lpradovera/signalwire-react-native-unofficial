@@ -37,6 +37,12 @@ testing the dev client, not your app.
   the app over the lock screen through its full-screen intent; the app's own
   ringing UI takes it from there. On Android 14+ the user can revoke
   full-screen intents in Settings, and then the notification only rings.
+- **A call's type is fixed when it is answered.** An outbound call's audio
+  mode and CallKit type come from its own media (`call.mediaDirections`). An
+  inbound call is answered audio-only, so it is a voice call. A pushed call
+  starts its audio when its call connects, with that call's media. A later
+  change of media during the call (adding or dropping video) re-modes
+  neither the audio session nor CallKit.
 
 ## Packages
 
@@ -361,9 +367,10 @@ void getCallKit().setup({ appName: 'My App', supportsVideo: true });
 ```
 
 `supportsVideo` lets the native UI offer video; it does not make a call a
-video call. A dial is reported as video when it sends video (`video: true`),
-and starts on the speaker; every other call, including every call answered
-from the native UI (always audio-only), is a voice call on the earpiece.
+video call. An outbound call is a video call when its own media
+(`call.mediaDirections`) sends or receives video, and starts on the speaker;
+every other call, including every inbound call (always answered audio-only),
+is a voice call on the earpiece.
 
 ```tsx
 <SignalWireProvider credentialProvider={credentials} callKit>

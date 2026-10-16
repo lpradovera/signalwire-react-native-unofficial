@@ -32,6 +32,7 @@ const RNCallKeep = {
   setCurrentCallActive: jest.fn(),
   backToForeground: jest.fn(),
   reportEndCallWithUUID: jest.fn(),
+  updateDisplay: jest.fn(),
   endCall: jest.fn(),
   addEventListener: jest.fn((event: string, handler: (payload: unknown) => void) => {
     if (!KNOWN_EVENTS.has(event)) {
