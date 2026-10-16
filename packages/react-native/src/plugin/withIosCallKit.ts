@@ -6,7 +6,11 @@ export interface IosOptions {
   microphonePermission: string;
   cameraPermission: string;
   enableVoipPush: boolean;
+  enableCallKit: boolean;
 }
+
+/** What Recents and Siri open the app with to call back. */
+const CALL_ACTIVITY_TYPES = ['INStartCallIntent', 'INStartAudioCallIntent', 'INStartVideoCallIntent'];
 
 /**
  * Adds the usage strings, background modes and push entitlement a calling app
@@ -47,6 +51,14 @@ const withInfoPlistEntries: ConfigPlugin<IosOptions> = (config, options) =>
       modes.add('voip');
     }
     plist.UIBackgroundModes = [...modes];
+
+    if (options.enableCallKit) {
+      const types = new Set<string>((plist.NSUserActivityTypes as string[] | undefined) ?? []);
+      for (const type of CALL_ACTIVITY_TYPES) {
+        types.add(type);
+      }
+      plist.NSUserActivityTypes = [...types];
+    }
 
     return plistConfig;
   });

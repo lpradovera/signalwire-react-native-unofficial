@@ -558,6 +558,11 @@ try {
 }
 ```
 
+Calls appear in the Phone app's Recents. To call back from there, or from
+Siri, dial what `getCallKit().startCallRequested$` emits (`handle`,
+`displayName`, `video`); the Expo plugin generates the native forwarder it
+needs. See [native setup](docs/native-setup.md#ios-calling-back-from-recents-and-siri).
+
 Then, from your own push handler:
 
 ```ts
@@ -583,10 +588,9 @@ same buffer again after an in-process JS reload. After that,
 `RNCallKeep.getInitialEvents()` resolves `[]`. To see the launch events
 yourself (a buffered mute, say), register your own `didLoadWithEvents`
 listener in your entry file: it receives the same dispatch. A Recents or Siri
-call-back is among them only if the AppDelegate passes the activity to
-`[RNCallKeep application:continueUserActivity:restorationHandler:]`; nothing
-in this package does that yet, and Expo's Swift AppDelegate cannot import
-RNCallKeep, so without that native hook callkeep never sees the call-back.
+call-back that launched the app is among them (the plugin's
+`continueUserActivity` forwarder hands it to callkeep), and the bridge also
+delivers it through `startCallRequested$`.
 
 A runnable support server lives in [`server/`](server/) — device-token registry,
 APNs VoIP and FCM senders, and a webhook endpoint.
