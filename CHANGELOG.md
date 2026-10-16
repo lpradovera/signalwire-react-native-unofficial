@@ -32,6 +32,16 @@
   binds it, and the app binds it again after the dial) does nothing, so the
   call is watched once: one connected report, one audio start, one end.
 
+### The relay-only ICE fallback runs on React Native
+
+- `RTCPeerConnection.getConfiguration()`, which react-native-webrtc does not
+  implement, is added to the peer connection the SDK gets. The SDK's
+  relay-only ICE fallback reads it before switching to
+  `iceTransportPolicy: 'relay'`; without it the fallback crashed the app (a
+  TypeError from a timer, fatal in a release build) instead of restarting
+  ICE through TURN. A react-native-webrtc release that has the method is
+  used unchanged.
+
 ## 0.1.0
 
 First release. React Native support for `@signalwire/js` v4 — platform
