@@ -18,7 +18,7 @@ jest.mock('@signalwire/react-native/ringing', () => ({
 
 const incomingCalls$ = new BehaviorSubject<unknown[]>([]);
 const context = {
-  client: { session: { incomingCalls$, incomingCalls: [] } },
+  client: { isConnected$: new BehaviorSubject(true), session: { incomingCalls$, incomingCalls: [] } },
   error: null,
   observer: undefined
 } as never;

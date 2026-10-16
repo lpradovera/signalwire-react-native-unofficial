@@ -15,8 +15,13 @@ see the
 ```bash
 npm install @signalwire/react-native@alpha @signalwire/js rxjs \
   react-native-webrtc @react-native-async-storage/async-storage \
-  react-native-get-random-values react-native-url-polyfill
+  react-native-get-random-values react-native-url-polyfill \
+  react-native-callkeep react-native-incall-manager @react-native-community/netinfo
 ```
+
+The main entry imports `react-native-callkeep`, `react-native-incall-manager`
+and `@react-native-community/netinfo`, so all three must be installed for the
+app to bundle.
 
 ```js
 // index.js — MUST be the first import, before anything loads @signalwire/js
@@ -43,5 +48,6 @@ https://github.com/lpradovera/signalwire-react-native-unofficial
 | `@signalwire/react-native/polyfills` | required side-effect imports |
 | `@signalwire/react-native/callkit` | native call UI (needs `react-native-callkeep`) |
 | `@signalwire/react-native/audio` | audio routing (needs `react-native-incall-manager`; iOS routes beyond speaker on/off need its iOS routes, see the repository README; the iOS output button is native code, so rebuild the app after installing) |
+| `@signalwire/react-native/ringing` | `useRingingPushes`, for drawing your own incoming-call UI; loads no native call UI module |
 
 MIT

@@ -1,7 +1,7 @@
 import { CALLKIT_ACTIVITY_SOURCE } from './callKitActivitySource';
 import { withObjcSource } from './withObjcSource';
 
-import type { ConfigPlugin } from '@expo/config-plugins';
+import type { ConfigPlugin } from 'expo/config-plugins';
 
 /**
  * Injects the Recents / Siri call-back forwarder
