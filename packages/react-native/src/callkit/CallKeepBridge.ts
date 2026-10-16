@@ -6,7 +6,7 @@ import { getAudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
 import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
-import { CallRegistry } from './CallRegistry';
+import { CallRegistry, INBOUND_ANSWER } from './CallRegistry';
 
 import type { CallRegistryHost, PushPayload } from './types';
 
@@ -89,9 +89,9 @@ export class CallKeepBridge {
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
   /**
-   * SDK inbound calls. The registry answers every one of them audio-only
-   * (`answer({ audio: true, video: false })`, an in-app answer included,
-   * since that is routed through CallKit), so they are voice calls whatever
+   * SDK inbound calls. The registry answers every one of them with
+   * INBOUND_ANSWER (audio-only today; an in-app answer included, since that
+   * is routed through CallKit), so their media is that answer's, whatever
    * their offer carried. See {@link mediaFor}.
    */
   private readonly inboundCalls = new WeakSet<Call>();
@@ -576,8 +576,8 @@ export class CallKeepBridge {
   }
 
   /**
-   * A call's media. An SDK inbound call is voice: the registry answers it
-   * audio-only. Its `mediaDirections` can't be used, because @signalwire/js
+   * A call's media. An SDK inbound call has the media the registry answers
+   * it with (INBOUND_ANSWER: voice). Its `mediaDirections` can't be used, because @signalwire/js
    * reports video for any offer whose m=video sends ('sendrecv' before the
    * answer, 'recvonly' after it), so a video caller's call would start on the
    * loudspeaker. An outbound call (the bridge call placed for a push
@@ -588,8 +588,11 @@ export class CallKeepBridge {
    * bridge call, whose type is shown once it binds.
    */
   private mediaFor(call: Call | null | undefined): 'audio' | 'video' {
-    if (!call || this.inboundCalls.has(call)) {
+    if (!call) {
       return 'audio';
+    }
+    if (this.inboundCalls.has(call)) {
+      return INBOUND_ANSWER.video ? 'video' : 'audio';
     }
     let video: string | undefined;
     try {
