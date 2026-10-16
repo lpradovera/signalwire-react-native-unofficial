@@ -6,7 +6,8 @@ import { CallInProgressError } from '../errors';
 import { CallKeepBridge, getCallKit, resetCallKitForTesting } from './CallKeepBridge';
 import { createCallKitObserver } from './observer';
 
-jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
+// callkeep linked: setup() checks for its native module.
+jest.mock('react-native', () => ({ Platform: { OS: 'ios' }, NativeModules: { RNCallKeep: { setup: () => undefined } } }));
 
 const callkeep = RNCallKeep as unknown as typeof RNCallKeep & { __reset: () => void };
 
