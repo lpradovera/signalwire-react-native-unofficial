@@ -90,9 +90,11 @@ export class CallKeepBridge {
    */
   private readonly audioSessionActive$ = new BehaviorSubject(false);
   /**
-   * What each addEventListener returned. destroy() removes these, and only
-   * these: callkeep's removeEventListener(type) with no handler removes every
-   * handler of that type in the process, the app's own included.
+   * What removes each of the bridge's callkeep handlers (see {@link listen}).
+   * destroy() removes these, and only these: callkeep's
+   * removeEventListener(type) with no handler removes every handler of that
+   * type in the process (on 4.3.0-4.3.8, whichever was added last), the app's
+   * own included.
    */
   private readonly nativeListeners: Array<{ remove(): void }> = [];
   /**
@@ -129,11 +131,7 @@ export class CallKeepBridge {
     // — before setup() has had a chance to assert it is installed. An app that
     // only wants the SDK, with no native call UI, must not crash on import.
     if (typeof RNCallKeep?.addEventListener === 'function') {
-      this.keep(
-        RNCallKeep.addEventListener('didLoadWithEvents', (events) =>
-          this.handleLoadedEvents(events as LoadedEvent[])
-        )
-      );
+      this.listen<LoadedEvent[]>('didLoadWithEvents', (events) => this.handleLoadedEvents(events));
     }
   }
 
@@ -374,10 +372,25 @@ export class CallKeepBridge {
 
   // ---------------------------------------------------------------- internals
 
-  /** Keeps an addEventListener result for destroy(); see {@link nativeListeners}. */
-  private keep(listener: unknown): void {
-    if (typeof (listener as { remove?: unknown } | undefined)?.remove === 'function') {
-      this.nativeListeners.push(listener as { remove(): void });
+  /**
+   * Adds a callkeep handler and keeps what removes it for destroy(); see
+   * {@link nativeListeners}. callkeep 4.3.9+ returns that from
+   * addEventListener. 4.3.0-4.3.8 return nothing: they put the subscription in
+   * `_callkeepEventHandlers` under its type, which a later handler of the same
+   * type overwrites, so it is read back right away, while it is still this
+   * handler's.
+   */
+  private listen<T>(type: string, handler: (event: T) => void): void {
+    const added: unknown = (
+      RNCallKeep.addEventListener as unknown as (type: string, handler: (event: T) => void) => unknown
+    )(type, handler);
+    const legacy = (RNCallKeep as unknown as { _callkeepEventHandlers?: Map<string, unknown> })
+      ._callkeepEventHandlers;
+    const listener = isRemovable(added) ? added : legacy?.get(type);
+    if (isRemovable(listener)) {
+      this.nativeListeners.push(listener);
+    } else {
+      logger.warn(`callkeep gave no way to remove the bridge's ${type} handler`);
     }
   }
 
@@ -386,19 +399,12 @@ export class CallKeepBridge {
     // This is how the registry learns about a call that is already ringing:
     // without it the entry is created only when the app happens to be running,
     // and a cold-start answer has nothing to apply an intent to.
-    this.keep(
-      RNCallKeep.addEventListener(
-        'didDisplayIncomingCall',
-        // callkeep types `payload` as bare `object`, so it is narrowed below
-        // rather than in the parameter list.
-        (event) => this.handleDidDisplayIncomingCall(event as DisplayEvent)
-      )
+    this.listen<DisplayEvent>('didDisplayIncomingCall', (event) =>
+      this.handleDidDisplayIncomingCall(event)
     );
 
-    this.keep(
-      RNCallKeep.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) =>
-        this.handleAnswerCall(callUUID)
-      )
+    this.listen<{ callUUID: string }>('answerCall', ({ callUUID }) =>
+      this.handleAnswerCall(callUUID)
     );
 
     this.registerRemainingListeners();
@@ -561,60 +567,44 @@ export class CallKeepBridge {
   }
 
   private registerRemainingListeners(): void {
-    this.keep(
-      RNCallKeep.addEventListener('endCall', ({ callUUID }: { callUUID: string }) =>
-        this.handleEndCall(callUUID)
-      )
+    this.listen<{ callUUID: string }>('endCall', ({ callUUID }) => this.handleEndCall(callUUID));
+
+    this.listen<{ callUUID: string; digits: string }>(
+      'didPerformDTMFAction',
+      ({ callUUID, digits }) => {
+        void this.registry.entryForUuid(callUUID)?.call?.sendDigits(digits);
+      }
     );
 
-    this.keep(
-      RNCallKeep.addEventListener(
-        'didPerformDTMFAction',
-        ({ callUUID, digits }: { callUUID: string; digits: string }) => {
-          void this.registry.entryForUuid(callUUID)?.call?.sendDigits(digits);
+    this.listen<{ callUUID: string }>('didToggleHoldCallAction', ({ callUUID }) => {
+      void this.registry.entryForUuid(callUUID)?.call?.toggleHold();
+    });
+
+    this.listen<{ callUUID: string; muted: boolean }>(
+      'didPerformSetMutedCallAction',
+      ({ callUUID, muted }) => {
+        const participant = this.registry.entryForUuid(callUUID)?.call?.self;
+        if (!participant) {
+          return;
         }
-      )
-    );
-
-    this.keep(
-      RNCallKeep.addEventListener('didToggleHoldCallAction', ({ callUUID }: { callUUID: string }) => {
-        void this.registry.entryForUuid(callUUID)?.call?.toggleHold();
-      })
-    );
-
-    this.keep(
-      RNCallKeep.addEventListener(
-        'didPerformSetMutedCallAction',
-        ({ callUUID, muted }: { callUUID: string; muted: boolean }) => {
-          const participant = this.registry.entryForUuid(callUUID)?.call?.self;
-          if (!participant) {
-            return;
-          }
-          void (muted ? participant.mute() : participant.unmute());
-        }
-      )
+        void (muted ? participant.mute() : participant.unmute());
+      }
     );
 
     // iOS only. Starting media before this fires yields a silent call.
-    this.keep(
-      RNCallKeep.addEventListener('didActivateAudioSession', () => {
-        logger.debug('Audio session activated');
-        this.setAudioSessionActive(true);
-      })
-    );
+    this.listen('didActivateAudioSession', () => {
+      logger.debug('Audio session activated');
+      this.setAudioSessionActive(true);
+    });
 
-    this.keep(
-      RNCallKeep.addEventListener('didDeactivateAudioSession', () => {
-        logger.debug('Audio session deactivated');
-        this.setAudioSessionActive(false);
-      })
-    );
+    this.listen('didDeactivateAudioSession', () => {
+      logger.debug('Audio session deactivated');
+      this.setAudioSessionActive(false);
+    });
 
     // A provider reset ends every call and its session, with no deactivation
     // event of its own.
-    this.keep(
-      RNCallKeep.addEventListener('didResetProvider', () => this.handleProviderReset())
-    );
+    this.listen('didResetProvider', () => this.handleProviderReset());
   }
 
   /**
@@ -743,6 +733,10 @@ export class CallKeepBridge {
     const reasons = CONSTANTS.END_CALL_REASONS;
     return reason === 'missed' ? reasons.MISSED : reasons.REMOTE_ENDED;
   }
+}
+
+function isRemovable(value: unknown): value is { remove(): void } {
+  return typeof (value as { remove?: unknown } | null | undefined)?.remove === 'function';
 }
 
 /** RFC 4122 v4 UUID. `crypto.getRandomValues` comes from the polyfills entry. */

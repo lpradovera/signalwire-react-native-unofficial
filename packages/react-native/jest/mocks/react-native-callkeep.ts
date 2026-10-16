@@ -3,6 +3,15 @@ type Handler = (payload: unknown) => void;
 /** Every handler per event, as callkeep keeps them (one Set per event type). */
 const listeners = new Map<string, Set<Handler>>();
 
+/**
+ * callkeep 4.3.0-4.3.8: addEventListener returns nothing and keeps one
+ * subscription per type in `_callkeepEventHandlers` (a later handler of the
+ * same type overwrites the slot, its predecessor stays subscribed);
+ * removeEventListener(type) removes the subscription in that slot.
+ */
+let legacyApi = false;
+const legacyHandlers = new Map<string, { remove(): void }>();
+
 const RNCallKeep = {
   setup: jest.fn(async () => undefined),
   setAvailable: jest.fn(),
@@ -19,11 +28,19 @@ const RNCallKeep = {
     const set = listeners.get(event) ?? new Set<Handler>();
     set.add(handler);
     listeners.set(event, set);
-    return { remove: jest.fn(() => void listeners.get(event)?.delete(handler)) };
+    const subscription = { remove: jest.fn(() => void listeners.get(event)?.delete(handler)) };
+    if (legacyApi) {
+      legacyHandlers.set(event, subscription);
+      return undefined;
+    }
+    return subscription;
   }),
   /** Like callkeep 4.3.16: without a listener, removes every handler of the type. */
   removeEventListener: jest.fn((event: string, handler?: Handler) => {
-    if (handler) {
+    if (legacyApi) {
+      legacyHandlers.get(event)?.remove();
+      legacyHandlers.delete(event);
+    } else if (handler) {
       listeners.get(event)?.delete(handler);
     } else {
       listeners.delete(event);
@@ -35,8 +52,22 @@ const RNCallKeep = {
       handler(payload);
     }
   },
-  __reset: () => listeners.clear()
+  /** Test helper — behave like callkeep 4.3.0-4.3.8 (see {@link legacyApi}). */
+  __useLegacyApi: (): void => {
+    legacyApi = true;
+  },
+  __reset: () => {
+    listeners.clear();
+    legacyHandlers.clear();
+    legacyApi = false;
+  }
 };
+
+/** callkeep 4.3.0-4.3.8's per-type subscription slot, on the instance as there. */
+Object.defineProperty(RNCallKeep, '_callkeepEventHandlers', {
+  get: () => legacyHandlers,
+  enumerable: false
+});
 
 export const CONSTANTS = {
   END_CALL_REASONS: {
