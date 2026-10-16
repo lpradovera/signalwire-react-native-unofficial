@@ -28,6 +28,14 @@ import type { Call, SignalWire } from '@signalwire/js';
 
 const TICK_INTERVAL_MS = 2000;
 const AUDIO_SESSION_TIMEOUT_MS = 3000;
+/**
+ * How long an ended owner's session waits for a ringing call to be answered
+ * before it is stopped. CallKit's End & Accept delivers the ended call's
+ * endCall and the accepted call's answerCall back to back, as one
+ * transaction; a call still only ringing after this is not being accepted
+ * with it.
+ */
+const HANDOVER_GRACE_MS = 1000;
 const HANDLE_TYPE = 'generic';
 
 /** Runtime permissions callkeep's ConnectionService needs on Android. */
@@ -93,6 +101,16 @@ export class CallKeepBridge {
    * ends, by whichever path. See {@link startAudio}.
    */
   private audioUuid: string | null = null;
+  /** The media the session was started with; see {@link startAudio}. */
+  private audioMedia: 'audio' | 'video' | null = null;
+  /**
+   * Calls that are taking the session: answered, placed by the user, or
+   * connected. A call that only rings is not, so it can't keep an ended
+   * owner's session up for itself.
+   */
+  private readonly audioClaims = new Set<string>();
+  /** Stops an ended owner's session if no call takes it; see {@link releaseAudioIfOwnerEnded}. */
+  private handoverTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     const host: CallRegistryHost = {
@@ -365,6 +383,7 @@ export class CallKeepBridge {
     }
 
     const uuid = this.registry.attachOutgoingCall(call, handle, displayName);
+    this.audioClaims.add(uuid);
     this.watchCallStatus(call);
     // Deliberate breadcrumb: RNCallKeep's own logs are NSLog-only, invisible in
     // Metro when launched outside Xcode, so without this line the entire
@@ -377,6 +396,7 @@ export class CallKeepBridge {
     this.destroyed$.next();
     this.destroyed$.complete();
     this.stopTicking();
+    this.clearHandoverTimer();
     if (this.audioUuid !== null) {
       this.stopAudio(this.audioUuid);
     }
@@ -475,6 +495,7 @@ export class CallKeepBridge {
     logger.debug(`Native answer for ${callUUID}`);
     // Applied synchronously — the registry buffers it when the SDK call has
     // not arrived yet. Only the audio start waits for the audio session.
+    this.claimAudio(callUUID);
     this.registry.applyIntent(callUUID, 'answer');
     void this.startAudioWhenSessionReady(callUUID);
   }
@@ -604,21 +625,50 @@ export class CallKeepBridge {
   /**
    * Starts the session for `uuid`, which then owns it. While another live
    * call owns it (a call waiting behind it was answered), the session is left
-   * as it is: `AudioRouteController.start` is first-wins either way. A
-   * session handed over by an ended owner (see
-   * {@link releaseAudioIfOwnerEnded}) is taken as it is, with the route and
-   * mode the ended call left.
+   * as it is: `AudioRouteController.start` is first-wins either way.
+   *
+   * A session handed over by an ended owner (see
+   * {@link releaseAudioIfOwnerEnded}) is taken as it is, route included,
+   * when it was started for this call's media. When it was started for other
+   * media it is restarted for this call: incall-manager's start() is
+   * first-wins, and its media fixes the session mode (VoiceChat or
+   * VideoChat), the proximity sensor and the default route, so a voice call
+   * would otherwise run in a video call's mode on the loudspeaker. The
+   * restart runs here, after this call's own activation (or the fallback),
+   * not between the ended call's endCall and this call's answerCall, where
+   * stop()'s setActive:NO would hit the session CallKit is handing over.
    */
   private startAudio(uuid: string): void {
     if (this.audioUuid !== null && this.audioUuid !== uuid && this.registry.isLive(this.audioUuid)) {
       logger.debug(`Audio session belongs to ${this.audioUuid}; not starting it for ${uuid}`);
       return;
     }
+    const media = this.sessionMedia();
+    const heldFor = this.audioUuid;
+    this.clearHandoverTimer();
     this.audioUuid = uuid;
     try {
-      getAudioRouteController().start(this.supportsVideo ? 'video' : 'audio');
+      const controller = getAudioRouteController();
+      if (heldFor !== null && heldFor !== uuid && this.audioMedia !== media) {
+        logger.debug(`Session of ${heldFor} was started for ${String(this.audioMedia)}; restarting it for ${uuid} (${media})`);
+        controller.stop();
+      }
+      controller.start(media);
+      this.audioMedia = media;
     } catch (error) {
       logger.warn('Audio routing unavailable:', error);
+    }
+  }
+
+  /** The media a call's session is started with: the app's, for every call. */
+  private sessionMedia(): 'audio' | 'video' {
+    return this.supportsVideo ? 'video' : 'audio';
+  }
+
+  /** `uuid` is taking the session; see {@link audioClaims}. */
+  private claimAudio(uuid: string): void {
+    if (this.registry.isLive(uuid)) {
+      this.audioClaims.add(uuid);
     }
   }
 
@@ -626,34 +676,72 @@ export class CallKeepBridge {
    * Releases the session the ending call owns; another call ending leaves it
    * alone.
    *
-   * While another call is live, the ended owner's session is handed over
-   * rather than stopped: the next call to start audio takes it as it is, and
-   * it is stopped once no live call is left. With End & Accept, CallKit sends
-   * the ending call's endCall before the accepted call's answerCall, while it
-   * moves the session from one to the other. incall-manager's stop() there
-   * would run setActive:NO on the session CallKit is handing to the accepted
-   * call; CallKit deactivates it itself if it has to (didDeactivateAudioSession).
+   * When the owner ends while another call is taking the session (answered,
+   * placed or connected), the session is handed over rather than stopped:
+   * that call takes it as it is when it starts its audio (see
+   * {@link startAudio}). With End & Accept, CallKit sends the ending call's
+   * endCall before the accepted call's answerCall, while it moves the session
+   * from one to the other; incall-manager's stop() there would run
+   * setActive:NO on the session CallKit is handing to the accepted call. So
+   * while a call is only ringing, the session waits {@link HANDOVER_GRACE_MS}
+   * for that answer, and is stopped if none comes: a ringing call isn't
+   * taking it, and when it is answered later it starts a session of its own.
+   * With no other live call it is stopped at once.
    */
   private releaseAudioIfOwnerEnded(): void {
+    for (const uuid of [...this.audioClaims]) {
+      if (!this.registry.isLive(uuid)) {
+        this.audioClaims.delete(uuid);
+      }
+    }
     const owner = this.audioUuid;
     if (owner === null || this.registry.isLive(owner)) {
+      this.clearHandoverTimer();
       return;
     }
-    const next = this.registry.entries.find(
+    const others = this.registry.entries.filter(
       (entry) => entry.uuid !== owner && this.registry.isLive(entry.uuid)
     );
-    if (next) {
-      logger.debug(`Call ${owner} ended while ${next.uuid} is live; leaving the session up for it`);
+    const heir = others.find((entry) => this.audioClaims.has(entry.uuid));
+    if (heir) {
+      logger.debug(`Call ${owner} ended while ${heir.uuid} is taking the session; leaving it up for it`);
+      this.clearHandoverTimer();
+      return;
+    }
+    if (others.length > 0) {
+      if (this.handoverTimer === null) {
+        logger.debug(`Call ${owner} ended while another call rings; stopping its session unless that call is accepted`);
+        this.handoverTimer = setTimeout(() => {
+          this.handoverTimer = null;
+          if (this.audioUuid === owner && !this.registry.isLive(owner)) {
+            const taken = this.registry.entries.some(
+              (entry) => this.audioClaims.has(entry.uuid) && this.registry.isLive(entry.uuid)
+            );
+            if (!taken) {
+              this.stopAudio(owner);
+            }
+          }
+        }, HANDOVER_GRACE_MS);
+      }
       return;
     }
     this.stopAudio(owner);
+  }
+
+  private clearHandoverTimer(): void {
+    if (this.handoverTimer !== null) {
+      clearTimeout(this.handoverTimer);
+      this.handoverTimer = null;
+    }
   }
 
   private stopAudio(uuid: string): void {
     if (uuid !== this.audioUuid) {
       return;
     }
+    this.clearHandoverTimer();
     this.audioUuid = null;
+    this.audioMedia = null;
     try {
       getAudioRouteController().stop();
     } catch (error) {
@@ -670,6 +758,7 @@ export class CallKeepBridge {
       if (status === 'connected') {
         logger.debug(`Call ${uuid} connected; starting the audio session`);
         this.registry.reportConnected(uuid);
+        this.claimAudio(uuid);
         // Outbound calls never pass through the native answer handler, so this
         // is the only place their audio session gets started. Without it
         // InCallManager never runs for a call the user placed, and iOS leaves

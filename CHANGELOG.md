@@ -22,12 +22,17 @@
 - With End & Accept the session is handed to the accepted call instead of
   being stopped: CallKit sends the ended call's endCall before the accepted
   call's answerCall, and incall-manager's `stop()` there deactivated the
-  session CallKit was handing over. Whenever the owner ends while another
-  call is live, the next call to start audio takes the session as it is
-  (route and mode included), and it is stopped once no live call is left.
-- A CallKit provider reset ends every live call as a native end would: its
-  SDK call is hung up, a ringing push is turned down, and the session is
-  released. CallKit sends no endCall action for the calls it drops.
+  session CallKit was handing over. A call takes over an ended owner's
+  session only when it is taking the session itself (answered, placed or
+  connected): it keeps the route when the session was started for its media,
+  and gets the session restarted for its own media otherwise, after its own
+  activation. A call that is only ringing doesn't keep the session up: when
+  the owner ends and no call is accepted within a second, the session is
+  stopped, and the ringing call gets a session of its own if it is answered
+  later.
+- A CallKit provider reset releases the session at once, with the calls it
+  drops (a ringing push included), and the next call owns a session of its
+  own.
 - `bindBridgeCall()` on a call already bound to the entry (trackCall's claim
   binds it, and the app binds it again after the dial) does nothing, so the
   call is watched once: one connected report, one audio start, one end.
