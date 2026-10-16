@@ -12,6 +12,9 @@ import type { CallRegistryHost, PushPayload } from './types';
 
 /** The `didDisplayIncomingCall` payload, which callkeep types loosely. */
 interface DisplayEvent {
+  /** Set when CallKit refused the call: Focus, the block list, no entitlement. */
+  error?: string;
+  errorCode?: string;
   callUUID: string;
   handle: string;
   localizedCallerName: string;
@@ -93,6 +96,8 @@ export class CallKeepBridge {
    * ends, by whichever path. See {@link startAudio}.
    */
   private audioUuid: string | null = null;
+  /** Calls CallKit refused to show; see {@link handleDisplayRefused}. */
+  private readonly refusedByNative = new Set<string>();
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     const host: CallRegistryHost = {
@@ -246,7 +251,7 @@ export class CallKeepBridge {
    */
   answerIncomingFromApp(call: Call): boolean {
     const uuid = this.registry.uuidForCall(call);
-    if (!uuid || !this.isSetup) {
+    if (!uuid || !this.isSetup || this.refusedByNative.has(uuid)) {
       // The fallback is the silent-call trap, so a decline must say why.
       logger.debug(
         `In-app answer NOT routed through CallKit (uuid=${String(uuid)}, setup=${this.isSetup}); answering the SDK directly`
@@ -261,7 +266,7 @@ export class CallKeepBridge {
   /** The reject twin of {@link answerIncomingFromApp}. */
   rejectIncomingFromApp(call: Call): boolean {
     const uuid = this.registry.uuidForCall(call);
-    if (!uuid || !this.isSetup) {
+    if (!uuid || !this.isSetup || this.refusedByNative.has(uuid)) {
       logger.debug(
         `In-app reject NOT routed through CallKit (uuid=${String(uuid)}, setup=${this.isSetup})`
       );
@@ -384,6 +389,7 @@ export class CallKeepBridge {
       RNCallKeep.removeEventListener(event);
     }
     this.registry.destroy();
+    this.refusedByNative.clear();
     this.isSetup = false;
   }
 
@@ -491,6 +497,11 @@ export class CallKeepBridge {
   }
 
   private handleDidDisplayIncomingCall(event: DisplayEvent): void {
+    // 'CallUUIDAlreadyExists' means the call is on screen already.
+    if (event.errorCode && event.errorCode !== 'CallUUIDAlreadyExists') {
+      this.handleDisplayRefused(event.callUUID, event.errorCode);
+      return;
+    }
     {
       const { callUUID, handle, localizedCallerName, fromPushKit, payload } = event;
         const fields = (payload ?? {}) as Record<string, unknown>;
@@ -513,6 +524,23 @@ export class CallKeepBridge {
           data: Object.keys(data).length > 0 ? data : undefined
         });
         this.ensureTicking();
+    }
+  }
+
+  /**
+   * CallKit refused to show a call (a Focus mode that does not allow the
+   * caller, the block list, no entitlement). It has no such call, so an
+   * answer or decline requested from it fails, and callkeep only NSLogs
+   * that: the app's own Accept and Decline did nothing. The call's in-app
+   * actions now go straight to the SDK. A push entry that has no SDK call is
+   * ended, rather than adopted or left as a ringing push iOS chose not to ring.
+   */
+  private handleDisplayRefused(uuid: string, errorCode: string): void {
+    logger.warn(`CallKit refused to show call ${uuid} (${errorCode})`);
+    this.refusedByNative.add(uuid);
+    const entry = this.registry.entryForUuid(uuid);
+    if (entry?.state === 'pending-push' && !entry.call) {
+      this.registry.endCall(uuid);
     }
   }
 
