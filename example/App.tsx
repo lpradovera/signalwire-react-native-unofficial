@@ -10,8 +10,8 @@ import { ConnectScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { useBridgeAnswer } from './src/useBridgeAnswer';
 import { SUBSCRIBER_REFERENCE } from './src/subscriber';
+import { fetchServerToken } from './src/serverToken';
 import { useDeviceRegistration } from './src/useDeviceRegistration';
-import { useServerToken } from './src/useServerToken';
 
 import type { Call, CredentialProvider } from '@signalwire/js';
 
@@ -52,29 +52,30 @@ function Shell(): React.JSX.Element {
 
 export default function App(): React.JSX.Element {
   const [token, setToken] = useState<string | null>(null);
-  const serverToken = useServerToken();
 
-  // The server token seeds state once; a manual entry always wins after that.
-  useEffect(() => {
-    if (serverToken.status === 'ready') {
-      setToken((current) => current ?? serverToken.token);
-    }
-  }, [serverToken]);
-
-  // Memoized: a new identity tears down the client and rebuilds it.
+  // A pasted token: a plain credentialProvider, never renewed. Memoized: a
+  // new identity tears down the client and rebuilds it.
   const credentialProvider = useMemo<CredentialProvider | null>(
     () => (token ? { authenticate: async () => ({ token }) } : null),
     [token]
   );
 
+  // With a token server the provider fetches, renews and retries the token
+  // itself, from launch: a push-woken cold start connects the same way.
+  if (fetchServerToken) {
+    return (
+      <SafeAreaView style={styles.root}>
+        <SignalWireProvider fetchToken={fetchServerToken} callKit platform={{ netInfo: true }}>
+          <Shell />
+        </SignalWireProvider>
+      </SafeAreaView>
+    );
+  }
+
   if (!credentialProvider) {
     return (
       <SafeAreaView style={styles.root}>
-        <ConnectScreen
-          onSubmitToken={setToken}
-          fetching={serverToken.status === 'loading'}
-          fetchError={serverToken.status === 'failed' ? serverToken.error : undefined}
-        />
+        <ConnectScreen onSubmitToken={setToken} />
       </SafeAreaView>
     );
   }

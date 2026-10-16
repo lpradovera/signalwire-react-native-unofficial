@@ -26,7 +26,10 @@ export interface TokenRouteOptions {
 /**
  * Subscriber token endpoint.
  *
- *   POST /token   ->  { token, reference }
+ *   POST /token   ->  { token, reference, expires_at }
+ *
+ * `expires_at` is when the token stops working, in Unix seconds
+ * (`TOKEN_TTL_SECONDS` after minting). The app renews before then.
  *
  * Mounted before the shared `API_TOKEN` guard because the mobile app calls it
  * directly, and an app cannot hold that shared secret — anyone who unzips the
@@ -49,8 +52,8 @@ export function createTokenRoutes({ minter, authenticateCaller }: TokenRouteOpti
     }
 
     try {
-      const { token } = await minter.mint(reference);
-      res.json({ token, reference });
+      const { token, expiresAt } = await minter.mint(reference);
+      res.json({ token, reference, expires_at: expiresAt });
     } catch (error) {
       if (error instanceof SubscriberTokenError) {
         // 5xx from SignalWire is not the caller's fault; surface it as a gateway
