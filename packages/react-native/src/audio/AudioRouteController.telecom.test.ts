@@ -383,6 +383,21 @@ describe('AudioRouteController on Android with Telecom', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('"bluetooth"'));
     });
 
+    it('speaker off on a phone Telecom offers only the speaker leaves it there, asking once', async () => {
+      // The Android emulator has no receiver: Telecom offers the call SPEAKER alone.
+      setTelecomState(CALL, { route: 'SPEAKER', available: ['SPEAKER'] });
+      controller.start('audio', CALL);
+      await settle();
+      expect(controller.route).toBe('speaker');
+
+      controller.setSpeakerOn(false);
+      await settle();
+
+      expect(setAudioRoute).not.toHaveBeenCalled();
+      expect(controller.route).toBe('speaker');
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
     it('goes back to the route Telecom kept when it never moves the call', async () => {
       jest.useFakeTimers();
       setTelecomState(CALL, { route: 'EARPIECE', available: WITH_BT });
