@@ -54,10 +54,10 @@ export function SignalWireProvider({
   useLayoutEffect(() => {
     callKitOptions.current = typeof callKit === 'object' ? callKit : {};
   });
+  const callKitOn = Boolean(callKit);
   const observer = useMemo<CallObserver | undefined>(
-    () => (callKit ? createCallKitObserver(() => callKitOptions.current) : undefined),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [Boolean(callKit)]
+    () => (callKitOn ? createCallKitObserver(() => callKitOptions.current) : undefined),
+    [callKitOn]
   );
 
   return (

@@ -74,7 +74,13 @@
 - `CallKitObserverOptions` is exported from `@signalwire/react-native/callkit`.
 - `@signalwire/react`'s `SignalWireProvider` now binds an observer that
   arrives after the client was built (turning `callKit` on after mount), so it
-  mirrors inbound calls too.
+  mirrors inbound calls too, and unbinds one that is replaced or removed.
+  `CallObserver.bindClient` may return a function that undoes the binding;
+  the provider calls it when the observer changes or goes away, the client is
+  replaced, or the provider unmounts.
+- Turning `callKit` off stops CallKit from showing the client's inbound
+  calls (`CallKeepBridge.bindClient` returns its unbind). Binding a client
+  that is already bound does nothing.
 
 ### CallKit audio timing
 
