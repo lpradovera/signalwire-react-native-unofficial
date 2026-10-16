@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### The incoming-call sheet clears the navigation bar, and can skip the Modal
+
+- `IncomingCallSheet` pads its bottom by the safe-area inset, so Decline and
+  Answer are clear of the home indicator and of Android 15+'s edge-to-edge
+  navigation bar. It brings its own `SafeAreaProvider`, because a `Modal` is
+  a window of its own that the app's provider does not reach (found and
+  tested on a Pixel 6 Pro by Len Graham).
+  `react-native-safe-area-context` (>=4.0.0) is a new peer dependency of
+  `@signalwire/react-native-ui`.
+- New `CallOverlayHost`: mounted as the last child of the root view, the sheet
+  draws in it instead of in a `Modal`. A host mounted inside one of the app's
+  own Modals takes over while it is open. Without a host, the sheet still uses
+  a `Modal`. The setup docs recommend mounting it, and the example does.
+
 ### Packaging
 
 - **Version 2.0.0-alpha.0, on npm's `alpha` tag.** The four packages are

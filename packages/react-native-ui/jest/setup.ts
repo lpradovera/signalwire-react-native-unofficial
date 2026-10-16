@@ -3,3 +3,9 @@
 // `@signalwire/react-native/polyfills` does in a real app.
 const { installBaseGlobals } = require('../../react-native/src/platform/baseGlobals');
 installBaseGlobals();
+
+// The native SafeAreaProvider renders nothing until it measures a frame, which
+// never happens under Jest; the library's own mock reports zero insets.
+jest.mock('react-native-safe-area-context', () =>
+  jest.requireActual('react-native-safe-area-context/jest/mock').default
+);

@@ -8,7 +8,7 @@ React Native call UI for the SignalWire SDK. The native counterpart to
 the browser — there is nothing to wrap on native, so these are built.
 
 ```bash
-npm install @signalwire/react-native-ui@alpha @signalwire/react-native@alpha
+npm install @signalwire/react-native-ui@alpha @signalwire/react-native@alpha react-native-safe-area-context
 ```
 
 ```tsx
@@ -38,7 +38,31 @@ function CallScreen({ call, onEnd }: { call: Call; onEnd: () => void }) {
 | `ParticipantList` | Participants with live talking and mute state |
 | `DeviceSelector` | Microphone or camera picker |
 | `IncomingCallSheet` | In-app inbound call sheet |
+| `CallOverlayHost` | Optional root overlay the incoming sheet draws in |
 | `ControlButton` | The shared pressable, for building your own bar |
+
+## The incoming-call sheet and `CallOverlayHost`
+
+Mount a `CallOverlayHost` once, as the last child of your root view, and
+`IncomingCallSheet` draws in it, over the app:
+
+```tsx
+<View style={{ flex: 1 }}>
+  <App />
+  <CallOverlayHost />
+</View>
+```
+
+Without a host the sheet falls back to a `Modal`. A Modal is a separate native
+window: on iOS it cannot appear while your app has a Modal of its own up, and
+on Android 15 and later it is drawn edge to edge, under the navigation bar.
+The host has neither problem. To show the sheet over one of your own Modals,
+mount another `CallOverlayHost` inside that Modal; the most recently mounted
+host is used, and the sheet moves back when it closes.
+
+Either way the sheet pads itself by the bottom safe-area inset, with its own
+`SafeAreaProvider` (the app's does not reach into a Modal's window).
+`react-native-safe-area-context` (4 or later) is a peer dependency.
 
 ## They hold no state
 
