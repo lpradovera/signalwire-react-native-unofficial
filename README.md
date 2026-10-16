@@ -17,16 +17,27 @@ legacy modules and views.
 
 ## What is verified
 
-Tested on hardware and an emulator, not just in unit tests.
+Two levels, kept apart on purpose. **Signed off** means a row of the sign-off
+table in [`docs/device-testing.md`](docs/device-testing.md), the record
+[`TESTING.md`](TESTING.md) asks testers to keep. **Observed** means it was seen
+working on a device or emulator during development (commit messages and
+`device-testing.md`'s narrative sections) but has no sign-off row yet.
 
 | | iOS | Android |
 | --- | --- | --- |
-| Outbound calls, with audio | ✅ iPad, iPadOS 17 | ✅ emulator, Android 16 |
-| Inbound push → native call UI | ✅ PushKit + CallKit | ✅ FCM + ConnectionService |
-| Answer from a **running** app | ✅ | ✅ |
-| Answer from a **killed** app | ✅ | ✅ (release build — see note) |
-| Two-way audio on a bridged call | ✅ | ✅ |
-| Hang-up propagation, both directions | ✅ | ✅ |
+| Outbound calls, with audio | ✅ signed off (iPad, iPadOS 17) | observed (emulator, Android 16) |
+| Inbound push → native call UI | ✅ signed off (PushKit + CallKit) | observed (FCM + ConnectionService) |
+| Answer from a **running** app | ✅ signed off | observed |
+| Answer from a **killed** app | observed | observed (release build — see note) |
+| Two-way audio on a bridged call | observed | observed |
+| Hang-up propagation, both directions | observed | observed |
+
+**No Android row is signed off.** The Android column of the sign-off table is
+empty; what it shows here comes from development runs on an emulator (for
+example the cold-start answer recorded in commit `7fbce1b`). On iOS the table
+signs off outbound audio, inbound with CallKit, the cold-start push reaching
+CallKit, and an unmatched push ending itself; the other iOS rows are observed
+only.
 
 These rows were verified on the old architecture. On the New Architecture the
 example app has been built and launched on the iOS 27 Simulator with every
@@ -34,9 +45,12 @@ native peer; the device rows are still to be repeated on it.
 
 Android cold start needs a **release** build to be tested meaningfully: the
 Expo dev client starts a second JS runtime for the activity, so the entry
-created by the headless push task is not in the context that draws the UI. One
-`Android call push registered` line means one runtime; two means you are
-testing the dev client, not your app.
+created by the headless push task is not in the context that draws the UI. With
+debug logging on (`EXPO_PUBLIC_SW_WIRE_LOG=1` in the example, or
+`setLogLevel('debug')` from `@signalwire/js`), one `Android call push
+registered` line means one runtime and two mean you are testing the dev
+client, not your app. At the SDK's default `warn` level the line never prints,
+so zero lines means the logging is off, not that the handler is missing.
 
 **Known gaps**
 
@@ -626,7 +640,7 @@ delivers it through `startCallRequested$`.
 A runnable support server lives in [`server/`](server/) — device-token registry,
 APNs VoIP and FCM senders, and a webhook endpoint.
 **[`docs/push-setup.md`](docs/push-setup.md) is the full end-to-end guide** —
-Apple/Firebase setup, the `AppDelegate` hook, backend senders for APNs VoIP and
+Apple/Firebase setup, the generated PushKit hook, backend senders for APNs VoIP and
 FCM, and a link-by-link verification ladder.
 [`docs/native-setup.md`](docs/native-setup.md) covers vendor choice.
 
