@@ -204,26 +204,32 @@ git clone https://github.com/lpradovera/signalwire-react-native-unofficial.git
 cd signalwire-react-native-unofficial
 npm install
 npm run build
-mkdir -p ../signalwire-tarballs
-npm pack -w @signalwire/react -w @signalwire/react-native --pack-destination ../signalwire-tarballs
-# add -w @signalwire/react-native-ui for the call-screen components
+TARBALLS="$PWD/../signalwire-tarballs"   # anywhere; an absolute path
+mkdir -p "$TARBALLS"
+npm pack -w @signalwire/react -w @signalwire/react-native --pack-destination "$TARBALLS"
+# For the call-screen components, add -w @signalwire/react-native-ui above,
+# and its tarball to the install below.
 ```
 
-Then, in your app:
+Then, in your app (any directory; `TARBALLS` as above), install every
+tarball that was packed. The names carry the version, so use a glob rather
+than writing it out:
 
 ```bash
-npm install ../signalwire-tarballs/signalwire-react-0.1.0.tgz \
-  ../signalwire-tarballs/signalwire-react-native-0.1.0.tgz \
+npm install "$TARBALLS"/signalwire-react-[0-9]*.tgz \
+  "$TARBALLS"/signalwire-react-native-[0-9]*.tgz \
   @signalwire/js rxjs \
   react-native-webrtc \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
   react-native-url-polyfill
+# with react-native-ui: also "$TARBALLS"/signalwire-react-native-ui-[0-9]*.tgz
 ```
 
-npm records a `file:` dependency for each tarball. Copying the tarballs (or
-the unpacked packages) into the app, under `vendor/` say, keeps the install
-reproducible on another machine and in CI.
+Pack from one checkout at a time: a tarball left from an older version
+matches the glob too. npm records a `file:` dependency for each tarball.
+Copying the tarballs (or the unpacked packages) into the app, under
+`vendor/` say, keeps the install reproducible on another machine and in CI.
 
 Optional, each unlocking one feature:
 
