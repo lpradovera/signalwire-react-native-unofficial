@@ -57,6 +57,13 @@ export interface SignalWireProviderProps {
   children: React.ReactNode;
 }
 
+/** The SDK's errors for a lost connection, by name: it exports none of the classes. */
+const CONNECTION_ERRORS = new Set([
+  'WebSocketConnectionError',
+  'WebSocketTimeoutError',
+  'TransportConnectionError'
+]);
+
 /**
  * Owns the SignalWire client lifecycle and publishes it through context.
  *
@@ -123,8 +130,19 @@ export function SignalWireProvider({
       setError(next);
     });
 
+    // The SDK reconnects a dropped WebSocket by itself and registers again,
+    // but its connection error would stay up for the rest of the session, so
+    // a banner showing it said "disconnected" while calls worked. Cleared on
+    // each registration; any other error stays until the next one replaces it.
+    const registered = instance.isRegistered$?.subscribe((isRegistered) => {
+      if (isRegistered) {
+        setError((current) => (current && CONNECTION_ERRORS.has(current.name) ? null : current));
+      }
+    });
+
     return () => {
       subscription.unsubscribe();
+      registered?.unsubscribe();
       tokenSubscription?.unsubscribe();
       stopWatching?.();
       source?.dispose();
