@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Android call push works from the ES-module build and with React Native Firebase 22
+
+- Android call push was off in every app that `import`s
+  `@signalwire/react-native/callkit` (the example, the docs, any Expo app):
+  that resolves to `dist/callkit.mjs`, where esbuild had turned the lazy
+  Firebase `require` into its `__require` shim. Metro does not bundle what
+  that shim names, so Firebase was never in the bundle, `registerAndroidCallPush()`
+  registered nothing, and a later `getFcmToken()`/`watchPushToken()` from a
+  React effect was a fatal JS error in a release build. The ES-module build
+  now keeps a plain `require`, and `npm run verify` checks with Metro's own
+  dependency collector that both builds hand Metro the same dependencies.
+- The Firebase loader took React Native Firebase 22.x's `default` export, the
+  namespaced `messaging()` function, which has none of the modular functions,
+  so push was off from the CommonJS build too, on the version the example pins.
+  It now reads the modular functions from the module itself.
+- Firebase's JavaScript is evaluated only when its native modules are linked,
+  so a build without them never runs it (a throw there is fatal outside an
+  entry-file load). `registerAndroidCallPush()` and `watchFcmToken()` no
+  longer throw on a build that links Firebase without a `google-services.json`.
+- `getFcmToken()` (and so `watchPushToken()`) asks for `POST_NOTIFICATIONS` on
+  Android 13 and later; React Native Firebase's `requestPermission` does not
+  ask on Android.
+- An Android push entry's `data` holds the push's extras only, as on iOS
+  (`call_id`, `from` and `from_name` are the entry's own fields), and only the
+  keys the server renamed for FCM lose their `sw_` prefix.
+- Tests run the real React Native Firebase 22.4.0 JavaScript with its native
+  side stubbed, including the headless task Android starts for a backgrounded
+  or killed app.
+
 ### CallKit audio belongs to its call
 
 - The audio session belongs to the call it was started for. Another call
