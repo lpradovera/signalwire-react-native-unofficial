@@ -62,8 +62,8 @@ interface CallObserver {
 `@signalwire/react-native` uses the first for its WebRTC/storage/AppState layer
 and the second to attach CallKit. Browser apps need neither.
 
-This boundary is enforced by lint: an import of `react-native`, `react-native-*`
-or `@react-native-*` inside this package fails the build.
+This boundary is enforced by lint: an import of `react-native`, `react-native-*`,
+`@react-native-*` or `@react-native/*` inside this package fails the build.
 
 ## Video
 
