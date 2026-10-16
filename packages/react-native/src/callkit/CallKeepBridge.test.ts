@@ -63,6 +63,13 @@ function createClient(incoming$: Subject<unknown[]>) {
   return { session: { incomingCalls$: incoming$, incomingCalls: [] } };
 }
 
+/** Lets queued promise callbacks run. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    await Promise.resolve();
+  }
+}
+
 describe('CallKeepBridge', () => {
   let bridge: CallKeepBridge;
 
@@ -150,10 +157,56 @@ describe('CallKeepBridge', () => {
     const uuid = bridge.reportIncomingPush({ callId: 'c1' });
     const call = createCall('c1');
     incoming$.next([call]);
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    call.status = 'connected';
+    call._status$.next('connected');
 
     callkeep.__emit('endCall', { callUUID: uuid });
 
     expect(call.hangup).toHaveBeenCalled();
+    expect(call.reject).not.toHaveBeenCalled();
+  });
+
+  it('declining a ringing SDK call in the native UI rejects it, as without CallKit', async () => {
+    // hangup() sends a bye with no cause; reject() sends USER_BUSY, which is
+    // what the same Decline sends when callKit is off.
+    await bridge.setup({ appName: 'Demo' });
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient(createClient(incoming$) as never);
+    const call = createCall('c1');
+    incoming$.next([call]);
+    const uuid = bridge.registry.uuidForCall(call as never)!;
+
+    callkeep.__emit('endCall', { callUUID: uuid });
+
+    expect(call.reject).toHaveBeenCalled();
+    expect(call.hangup).not.toHaveBeenCalled();
+    expect(bridge.registry.entryForUuid(uuid)?.state).toBe('ended');
+  });
+
+  it('declining a pushed call after it fused rejects it', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient(createClient(incoming$) as never);
+    const uuid = bridge.reportIncomingPush({ callId: 'c1' });
+    const call = createCall('c1');
+    incoming$.next([call]);
+
+    callkeep.__emit('endCall', { callUUID: uuid });
+
+    expect(call.reject).toHaveBeenCalled();
+    expect(call.hangup).not.toHaveBeenCalled();
+  });
+
+  it('ending an outbound call that is still ringing hangs it up', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    const call = createCall('out');
+    const uuid = bridge.trackCall(call as never, '/public/room', 'Support');
+
+    callkeep.__emit('endCall', { callUUID: uuid });
+
+    expect(call.hangup).toHaveBeenCalled();
+    expect(call.reject).not.toHaveBeenCalled();
   });
 
   it('endCall while still pending rejects instead of hanging up', async () => {
@@ -193,8 +246,73 @@ describe('CallKeepBridge', () => {
     incoming$.next([call]);
 
     callkeep.__emit('didToggleHoldCallAction', { callUUID: uuid, hold: true });
+    await flush();
 
     expect(call.toggleHold).toHaveBeenCalled();
+  });
+
+  describe('native hold carries the state CallKit wants', () => {
+    function holdableCall(id: string, held = false) {
+      // The SDK's toggleHold flips a private flag only once the hold RPC
+      // resolves; mirror that.
+      // `sent` records what reached the server (verto hold / unhold).
+      const call = Object.assign(createCall(id), { _holdState: held, sent: [] as string[] });
+      call.toggleHold = jest.fn(async (): Promise<undefined> => {
+        call.sent.push(call._holdState ? 'unhold' : 'hold');
+        await Promise.resolve();
+        call._holdState = !call._holdState;
+        return undefined;
+      });
+      return call;
+    }
+
+    async function fused(call: ReturnType<typeof createCall>) {
+      await bridge.setup({ appName: 'Demo' });
+      const incoming$ = new Subject<unknown[]>();
+      bridge.bindClient(createClient(incoming$) as never);
+      const uuid = bridge.reportIncomingPush({ callId: call.id });
+      incoming$.next([call]);
+      return uuid;
+    }
+
+    it('does not unhold a call the app already held', async () => {
+      // In-app hold (useCall().toggleHold) never reaches CallKit; a later
+      // Hold & Accept sends hold: true, which toggled the call back on.
+      const call = holdableCall('c1', true);
+      const uuid = await fused(call);
+
+      callkeep.__emit('didToggleHoldCallAction', { callUUID: uuid, hold: true });
+      await flush();
+
+      expect(call.toggleHold).not.toHaveBeenCalled();
+      expect(call._holdState).toBe(true);
+    });
+
+    it('applies hold then resume in order, ending unheld', async () => {
+      // Both used to read the flag before the first RPC settled, and both held.
+      const call = holdableCall('c1');
+      const uuid = await fused(call);
+
+      callkeep.__emit('didToggleHoldCallAction', { callUUID: uuid, hold: true });
+      callkeep.__emit('didToggleHoldCallAction', { callUUID: uuid, hold: false });
+      await flush();
+
+      expect(call.sent).toEqual(['hold', 'unhold']);
+      expect(call._holdState).toBe(false);
+    });
+
+    it('tells CallKit the real state when the hold fails', async () => {
+      const call = holdableCall('c1');
+      call.toggleHold = jest.fn(async (): Promise<undefined> => {
+        throw new Error('verto.modify failed');
+      });
+      const uuid = await fused(call);
+
+      callkeep.__emit('didToggleHoldCallAction', { callUUID: uuid, hold: true });
+      await flush();
+
+      expect(RNCallKeep.setOnHold).toHaveBeenCalledWith(uuid, false);
+    });
   });
 
   it('native mute mutes the self participant', async () => {
@@ -208,6 +326,45 @@ describe('CallKeepBridge', () => {
     callkeep.__emit('didPerformSetMutedCallAction', { callUUID: uuid, muted: true });
 
     expect(call.self.mute).toHaveBeenCalled();
+  });
+
+  it('applies a native mute made before the call has a self participant', async () => {
+    // The user answers a pushed call and taps Mute while the bridge call is
+    // being placed. The mute was dropped while CallKit showed Mute on, and
+    // the microphone went live when the call connected.
+    await bridge.setup({ appName: 'Demo' });
+    const uuid = bridge.reportIncomingPush({ data: { bridgeToken: 't' } });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    callkeep.__emit('didPerformSetMutedCallAction', { callUUID: uuid, muted: true });
+
+    const self$ = new BehaviorSubject<unknown>(null);
+    const self = { mute: jest.fn(async () => undefined), unmute: jest.fn(async () => undefined) };
+    const call = Object.assign(createCall('bridge'), { self: null as unknown, self$ });
+    expect(bridge.bindBridgeCall(uuid, call as never)).toBe(true);
+    expect(self.mute).not.toHaveBeenCalled();
+
+    call.self = self;
+    self$.next(self);
+
+    expect(self.mute).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies only the last native mute state made before the call joined', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    const uuid = bridge.reportIncomingPush({ data: { bridgeToken: 't' } });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    callkeep.__emit('didPerformSetMutedCallAction', { callUUID: uuid, muted: true });
+    callkeep.__emit('didPerformSetMutedCallAction', { callUUID: uuid, muted: false });
+
+    const self$ = new BehaviorSubject<unknown>(null);
+    const self = { mute: jest.fn(async () => undefined), unmute: jest.fn(async () => undefined) };
+    const call = Object.assign(createCall('bridge'), { self: null as unknown, self$ });
+    bridge.bindBridgeCall(uuid, call as never);
+    call.self = self;
+    self$.next(self);
+
+    expect(self.mute).not.toHaveBeenCalled();
+    expect(self.unmute).toHaveBeenCalledTimes(1);
   });
 
   it('native unmute unmutes the self participant', async () => {
@@ -241,11 +398,11 @@ describe('CallKeepBridge', () => {
     callkeep.__emit('didPerformSetMutedCallAction', { callUUID: uuid, muted: true });
     await new Promise<void>((resolve) => setImmediate(() => resolve()));
 
-    expect(warn).toHaveBeenCalledWith('Native mute failed:', refusal);
+    expect(warn).toHaveBeenCalledWith(`Could not mute call ${uuid}:`, refusal);
     warn.mockRestore();
   });
 
-  it('reports the native call ended when the SDK call disconnects', async () => {
+  it('reports the native call ended when the SDK call is destroyed', async () => {
     await bridge.setup({ appName: 'Demo' });
     const incoming$ = new Subject<unknown[]>();
     bridge.bindClient(createClient(incoming$) as never);
@@ -253,9 +410,52 @@ describe('CallKeepBridge', () => {
     const call = createCall('c1');
     incoming$.next([call]);
 
-    call._status$.next('disconnected');
+    call._status$.next('destroyed');
 
     expect(RNCallKeep.reportEndCallWithUUID).toHaveBeenCalledWith(uuid, expect.any(Number));
+  });
+
+  it('keeps the native call through a transient disconnect the SDK recovers from', async () => {
+    // 'disconnected' is the peer connection's state during an ICE blip
+    // (Wi-Fi to cellular); the SDK restores the call. Ending it there left a
+    // connected SDK call with no CallKit call and no audio session.
+    await bridge.setup({ appName: 'Demo' });
+    const call = createCall('out');
+    const uuid = bridge.trackCall(call as never, '/public/room', 'Support');
+    call._status$.next('connected');
+
+    call._status$.next('disconnected');
+    call._status$.next('connected');
+
+    expect(RNCallKeep.reportEndCallWithUUID).not.toHaveBeenCalled();
+    expect(bridge.registry.isLive(uuid)).toBe(true);
+  });
+
+  it('ends the native call as soon as the app hangs up', async () => {
+    // hangup() emits 'disconnecting' and reaches 'destroyed' only when the
+    // bye settles, up to its 5 s timeout on a bad network.
+    await bridge.setup({ appName: 'Demo' });
+    const call = createCall('out');
+    const uuid = bridge.trackCall(call as never, '/public/room', 'Support');
+    call._status$.next('connected');
+
+    call._status$.next('disconnecting');
+
+    expect(RNCallKeep.reportEndCallWithUUID).toHaveBeenCalledWith(uuid, expect.any(Number));
+    expect(bridge.registry.isLive(uuid)).toBe(false);
+  });
+
+  it('watches a call tracked twice only once', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    const call = createCall('out');
+    const first = bridge.trackCall(call as never, '/public/room', 'Support');
+    const second = bridge.trackCall(call as never, '/public/room', 'Support');
+
+    call._status$.next('connected');
+
+    expect(second).toBe(first);
+    expect(RNCallKeep.startCall).toHaveBeenCalledTimes(1);
+    expect(RNCallKeep.setCurrentCallActive).toHaveBeenCalledTimes(1);
   });
 
   it('sets an outgoing call active in Telecom when its status reaches connected', async () => {
@@ -868,7 +1068,7 @@ describe('CallKeepBridge', () => {
     const call = createCall('bridge-leg');
 
     expect(bridge.bindBridgeCall(uuid, call as never)).toBe(true);
-    call.status$.next('disconnected');
+    call.status$.next('destroyed');
 
     expect(RNCallKeep.reportEndCallWithUUID).toHaveBeenCalled();
   });
