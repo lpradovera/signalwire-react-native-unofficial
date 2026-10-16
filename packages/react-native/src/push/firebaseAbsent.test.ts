@@ -34,16 +34,24 @@ jest.mock(
   { virtual: true }
 );
 
-import { registerAndroidCallPush } from './androidCallPush';
-import { getFcmToken, watchFcmToken } from './fcmToken';
-
-beforeEach(() => {
-  mockEvaluations.length = 0;
-});
+let registerAndroidCallPush: typeof import('./androidCallPush').registerAndroidCallPush;
+let getFcmToken: typeof import('./fcmToken').getFcmToken;
+let watchFcmToken: typeof import('./fcmToken').watchFcmToken;
 
 describe.each(['ios', 'android'])('a %s build without the Firebase native module', (os) => {
   beforeEach(() => {
     mockOS = os;
+    mockEvaluations.length = 0;
+    // Firebase is resolved while the loader is evaluated, so load it per
+    // platform: a module registry from an iOS run says nothing about Android.
+    jest.resetModules();
+    ({ registerAndroidCallPush } = require('./androidCallPush'));
+    ({ getFcmToken, watchFcmToken } = require('./fcmToken'));
+  });
+
+  it('does not evaluate Firebase while the push modules load', () => {
+    // Evaluating the loader is what touches Firebase now; beforeEach did it.
+    expect(mockEvaluations).toEqual([]);
   });
 
   it('registers call push without throwing, so the entry file survives', () => {

@@ -12,13 +12,14 @@ const mockNative: RnfbNativeState & { linked: boolean; constantsThrow: boolean }
   linked: true,
   constantsThrow: false
 };
-let mockShape: 'as-installed' | 'named-only' | 'throws' = 'as-installed';
+let mockShape: 'as-installed' | 'named-only' | 'throws' | 'unbundled' = 'as-installed';
+let mockOS = 'android';
 const mockEvaluations: string[] = [];
 
 jest.mock('react-native', () => {
   const RN = jest.requireActual('react-native');
   const { installRnfbNatives } = jest.requireActual('../../jest/rnfb');
-  Object.defineProperty(RN.Platform, 'OS', { configurable: true, get: () => 'android' });
+  Object.defineProperty(RN.Platform, 'OS', { configurable: true, get: () => mockOS });
   Object.defineProperty(RN.Platform, 'Version', { configurable: true, get: () => 34 });
   if (mockNative.constantsThrow) {
     // A build that links Firebase without a google-services.json: reading the
@@ -46,6 +47,12 @@ jest.mock('@react-native-firebase/messaging', () => {
   if (mockShape === 'throws') {
     throw new Error('Native module RNFBAppModule not found.');
   }
+  if (mockShape === 'unbundled') {
+    // The JavaScript is not in the bundle while the native module is linked:
+    // what an app built from the ES-module build with esbuild's __require shim
+    // got. Metro's runtime throws this from loadModuleImplementation.
+    throw new Error('Requiring unknown module "@react-native-firebase/messaging".');
+  }
   const real = jest.requireActual('@react-native-firebase/messaging');
   if (mockShape === 'named-only') {
     // A Firebase release without the namespaced default export.
@@ -67,7 +74,97 @@ beforeEach(() => {
   mockNative.linked = true;
   mockNative.constantsThrow = false;
   mockShape = 'as-installed';
+  mockOS = 'android';
   mockEvaluations.length = 0;
+});
+
+/** The logger of the module registry `load()` just created. */
+function spyOnLogger(): Record<'debug' | 'info' | 'warn' | 'error', jest.SpyInstance> {
+  const { logger } = require('@signalwire/react');
+  return {
+    debug: jest.spyOn(logger, 'debug').mockImplementation(() => undefined),
+    info: jest.spyOn(logger, 'info').mockImplementation(() => undefined),
+    warn: jest.spyOn(logger, 'warn').mockImplementation(() => undefined),
+    error: jest.spyOn(logger, 'error').mockImplementation(() => undefined)
+  };
+}
+
+describe('when Firebase is resolved', () => {
+  // Metro reports a throw from a module that is loaded outside another
+  // module's load as a fatal error, before the caller's catch runs: a release
+  // build dies (seen on a Pixel 6 Pro, from watchPushToken's effect). Inside a
+  // module's own evaluation the same throw reaches the catch. So Firebase is
+  // required while this module is evaluated, and never from a later call.
+  it('requires Firebase while this module is evaluated, never on a later call', () => {
+    const { loadFirebaseMessaging } = load();
+    expect(mockEvaluations).toEqual(['as-installed']);
+
+    loadFirebaseMessaging();
+    loadFirebaseMessaging();
+    expect(mockEvaluations).toEqual(['as-installed']);
+  });
+
+  it('contains a throw from Firebase during this module\'s evaluation', () => {
+    mockShape = 'throws';
+    let loaded: typeof import('./firebaseMessaging') | undefined;
+    expect(() => {
+      loaded = load();
+    }).not.toThrow();
+    expect(mockEvaluations).toEqual(['throws']);
+    expect(loaded?.loadFirebaseMessaging()).toBeUndefined();
+    expect(mockEvaluations).toEqual(['throws']);
+  });
+
+  it('turns push off when the JavaScript was not bundled but the native module is linked', () => {
+    mockShape = 'unbundled';
+    const { loadFirebaseMessaging } = load();
+    expect(mockEvaluations).toEqual(['unbundled']);
+    expect(loadFirebaseMessaging()).toBeUndefined();
+  });
+
+  it('does not touch Firebase on iOS, where PushKit owns push', () => {
+    mockOS = 'ios';
+    const { loadFirebaseMessaging } = load();
+    const log = spyOnLogger();
+    expect(loadFirebaseMessaging()).toBeUndefined();
+    expect(mockEvaluations).toEqual([]);
+    expect(log.info).not.toHaveBeenCalled();
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('reporting that push is off', () => {
+  it.each([
+    ['not linked', () => (mockNative.linked = false)],
+    ['linked without a google-services.json', () => (mockNative.constantsThrow = true)]
+  ])('says so once, in one info line, when Firebase is %s', (_case, arrange) => {
+    arrange();
+    const { loadFirebaseMessaging } = load();
+    const log = spyOnLogger();
+
+    // registerAndroidCallPush, getFcmToken and watchFcmToken each ask.
+    loadFirebaseMessaging();
+    loadFirebaseMessaging();
+    loadFirebaseMessaging();
+
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.error).not.toHaveBeenCalled();
+    expect(log.info).toHaveBeenCalledTimes(1);
+    const line = log.info.mock.calls[0].join(' ');
+    expect(line).toMatch(/Android push is off/);
+    // Not the Java stack the native module's getConstants() throws with.
+    expect(line).not.toMatch(/\n/);
+  });
+
+  it('warns once when Firebase is linked but fails to load', () => {
+    mockShape = 'unbundled';
+    const { loadFirebaseMessaging } = load();
+    const log = spyOnLogger();
+    loadFirebaseMessaging();
+    loadFirebaseMessaging();
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(log.warn.mock.calls[0].join(' ')).toMatch(/Requiring unknown module/);
+  });
 });
 
 describe('loadFirebaseMessaging', () => {

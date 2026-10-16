@@ -5,15 +5,16 @@ import type { Options } from 'tsup';
 type Plugin = NonNullable<Options['plugins']>[number];
 
 /**
- * Keeps a lazy `require('peer')` a plain `require` in the ES-module build.
+ * Keeps an optional `require('peer')` a plain `require` in the ES-module build.
  *
  * esbuild has no `require` in ESM output, so it rewrites one into its own
  * `__require("peer")` shim. Metro collects dependencies from literal
  * `require`/`import` calls only, so the peer was never bundled, and the shim,
  * bound to Metro's require at runtime, threw "Requiring unknown module". Every
  * app that `import`s `@signalwire/react-native/callkit` resolves to the `.mjs`,
- * so Android call push was off for all of them (Firebase messaging is the lazy
- * peer; see `push/firebaseMessaging.ts` for why it is lazy).
+ * so Android call push was off for all of them, and an app whose push effect
+ * ran died in a release build (Firebase messaging is the optional peer,
+ * required inside a try; see `push/firebaseMessaging.ts`).
  *
  * Under Metro every module, ESM included, runs inside a function that is
  * handed `require`, so a plain call is both what Metro bundles and what works.
