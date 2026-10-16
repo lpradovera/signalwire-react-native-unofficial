@@ -1,4 +1,4 @@
-import { isPlaceholderName, readableAddress } from './displayName';
+import { displayableName, isPlaceholderName, readableAddress } from './displayName';
 
 describe('readableAddress', () => {
   it.each([
@@ -16,8 +16,29 @@ describe('readableAddress', () => {
     expect(readableAddress(value)).toBe(value);
   });
 
-  it.each(['/private/', '/public/---', 'sip:@example.com'])('has no name for %s', (address) => {
+  it.each(['/private/', '/public/---', 'sip:@example.com', 'sip:', 'sips: '])('has no name for %s', (address) => {
     expect(readableAddress(address)).toBeNull();
+  });
+
+  // A caller name the backend prefixed with a scheme, although what follows is
+  // not a URI user part: REST caller_id "Android Test" arrived as
+  // fromName "sip:Android Test", and was shown as that.
+  it.each([
+    ['sip:Android Test', 'Android Test'],
+    ['SIP:Android Test', 'Android Test'],
+    ['sips:Front Desk', 'Front Desk'],
+    ['sip:Android%20Test', 'Android Test'],
+    ['sip:Front Desk;transport=tls', 'Front Desk'],
+    ['sip:+15551234567', '+15551234567'],
+    [' sip: Ada Lovelace ', 'Ada Lovelace']
+  ])('drops the scheme from %p, keeping the rest as it is: %p', (value, name) => {
+    expect(readableAddress(value)).toBe(name);
+  });
+});
+
+describe('displayableName', () => {
+  it('shows "sip:Android Test" as "Android Test"', () => {
+    expect(displayableName('sip:Android Test', 'test')).toBe('Android Test');
   });
 });
 

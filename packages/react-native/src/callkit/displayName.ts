@@ -35,8 +35,10 @@ function humanise(segment: string): string | null {
  * native call UI and Recents: the address's last segment, humanised
  * (`/private/rn-device-test` -> `Rn Device Test`; a SIP URI's user part, so
  * `sip:rn-example@<project-id>.call.signalwire.com;context=private` -> `Rn Example`,
- * without the project id). Anything else (a number, a name) is returned as it
- * is. Null when the address has no readable part (`/private/`).
+ * without the project id). A scheme in front of something that is not a URI
+ * (`sip:Android Test`) is dropped and the rest kept as it is. Anything else (a
+ * number, a name) is returned as it is. Null when the address has no readable
+ * part (`/private/`, `sip:`).
  */
 export function readableAddress(value: string): string | null {
   const trimmed = value.trim();
@@ -49,6 +51,20 @@ export function readableAddress(value: string): string | null {
   const sip = /^sips?:([^@;?]*)@/i.exec(trimmed);
   if (sip) {
     return humanise(sip[1] ?? '');
+  }
+  // A scheme in front of something that is not a URI user part: REST
+  // `caller_id: "Android Test"` arrives as `fromName: "sip:Android Test"`.
+  // The scheme (and any URI parameters) go; the name stays as it was given.
+  const scheme = /^sips?:([^;?]*)/i.exec(trimmed);
+  if (scheme) {
+    let rest = scheme[1] ?? '';
+    try {
+      rest = decodeURIComponent(rest);
+    } catch {
+      // A stray '%': the name as it is.
+    }
+    rest = rest.trim();
+    return rest === '' ? null : rest;
   }
   return trimmed;
 }

@@ -26,6 +26,14 @@
   binder has unbound it: two providers, or a provider and the app's own
   `getCallKit().bindClient(client)`, no longer unbind each other.
 
+### Caller names with a SIP scheme
+
+- `displayableName` (and so CallKit, Telecom and the incoming-call sheet)
+  drops a leading `sip:` / `sips:` even when what follows is not a URI user
+  part. A REST `caller_id` of `Android Test` reached the app as
+  `fromName: "sip:Android Test"` and was shown that way; it now shows
+  `Android Test`. A SIP URI with a user part is still shown by its user part.
+
 ## 0.1.0
 
 First release. React Native support for `@signalwire/js` v4 — platform
