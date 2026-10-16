@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 
 import { useObservable } from './useObservable';
 
@@ -9,6 +9,7 @@ import type {
   CallSelfParticipant,
   CallStatus
 } from '@signalwire/js';
+import type { Observable } from 'rxjs';
 
 const NO_PARTICIPANTS: CallParticipant[] = [];
 
@@ -50,40 +51,63 @@ function guard<T>(read: () => T): T | undefined {
   }
 }
 
+/**
+ * `owner`'s observable, read until a read succeeds and then kept for as long
+ * as `owner` is the same object. useObservable starts over when its source
+ * changes, and a torn-down call's getters throw: re-reading them every
+ * render handed it `undefined` and wiped the call's last-known state. A read
+ * that fails before the call is set up is retried on the next render.
+ */
+function useSource<O extends object, T>(
+  owner: O | null | undefined,
+  read: (owner: O) => Observable<T>
+): Observable<T> | undefined {
+  const cache = useRef<{ owner: O | null | undefined; source: Observable<T> | undefined }>(
+    undefined
+  );
+  const cached = cache.current;
+  if (cached && cached.owner === owner && cached.source !== undefined) {
+    return cached.source;
+  }
+  const source = owner ? guard(() => read(owner)) : undefined;
+  cache.current = { owner, source };
+  return source;
+}
+
 /** Reactive state and actions for a single call. Safe with a null call. */
 export function useCall(call: Call | null | undefined): UseCallResult {
   const status = useObservable<CallStatus>(
-    guard(() => call?.status$),
+    useSource(call, (c) => c.status$),
     guard(() => call?.status) ?? ('new' as CallStatus)
   );
   const participants = useObservable(
-    guard(() => call?.participants$),
+    useSource(call, (c) => c.participants$),
     guard(() => call?.participants) ?? NO_PARTICIPANTS
   );
   const self = useObservable(
-    guard(() => call?.self$),
+    useSource(call, (c) => c.self$),
     guard(() => call?.self) ?? null
   );
   const localStream = useObservable<MediaStream | null>(
-    guard(() => call?.localStream$),
+    useSource(call, (c) => c.localStream$),
     guard(() => call?.localStream) ?? null
   );
   const remoteStream = useObservable<MediaStream | null>(
-    guard(() => call?.remoteStream$),
+    useSource(call, (c) => c.remoteStream$),
     guard(() => call?.remoteStream) ?? null
   );
   const error = useObservable<CallError | null>(
-    guard(() => call?.errors$),
+    useSource(call, (c) => c.errors$),
     null
   );
 
   // audioMuted$ / videoMuted$ emit `undefined` until server data arrives.
   const audioMuted = useObservable<boolean | undefined>(
-    guard(() => self?.audioMuted$),
+    useSource(self, (s) => s.audioMuted$),
     guard(() => self?.audioMuted)
   );
   const videoMuted = useObservable<boolean | undefined>(
-    guard(() => self?.videoMuted$),
+    useSource(self, (s) => s.videoMuted$),
     guard(() => self?.videoMuted)
   );
 
