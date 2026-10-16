@@ -611,7 +611,8 @@ describe('CallKeepBridge on iOS — a CallKit provider reset', () => {
     callkeep.__emit('didResetProvider', {});
 
     expect(a.hangup).toHaveBeenCalledTimes(1);
-    expect(b.hangup).toHaveBeenCalledTimes(1);
+    // b is still ringing, so ending it declines it.
+    expect(b.reject).toHaveBeenCalledTimes(1);
     expect(bridge.registry.isLive(uuidA)).toBe(false);
     expect(bridge.registry.isLive(uuidB)).toBe(false);
     expect(stop).toHaveBeenCalledTimes(1);

@@ -10,6 +10,7 @@ const RNCallKeep = {
   reportConnectedOutgoingCallWithUUID: jest.fn(),
   reportEndCallWithUUID: jest.fn(),
   endCall: jest.fn(),
+  setOnHold: jest.fn(),
   addEventListener: jest.fn((event: string, handler: (payload: unknown) => void) => {
     listeners.set(event, handler);
   }),

@@ -5,7 +5,10 @@ import { StyleSheet, View } from 'react-native';
 
 import type { Call } from '@signalwire/js';
 
-const TERMINAL = new Set(['disconnected', 'destroyed', 'failed']);
+// Not 'disconnected': that is an ICE blip the SDK recovers from, and leaving
+// the screen there left a live call nothing in the app could hang up. A call
+// that does not recover ends 'failed'.
+const TERMINAL = new Set(['destroyed', 'failed']);
 
 export function CallScreen({
   call,
