@@ -39,6 +39,12 @@ const DEFAULT_FUSION_TIMEOUT_MS = 45_000;
  * had already accepted was reported as missed.
  */
 const ANSWERED_TIMEOUT_MS = 60_000;
+/**
+ * How many finished calls the registry keeps. An ended entry is kept for a
+ * while so a late status or native action for it finds it ended rather than
+ * unknown, but not for the life of the process: each one holds its SDK call.
+ */
+const MAX_ENDED_ENTRIES = 10;
 const UNKNOWN_HANDLE = 'Unknown';
 /**
  * The one spelling of a UUID the registry keys on.
@@ -95,6 +101,8 @@ export class CallRegistry {
    */
   private readonly deliveredAnswers = new Set<string>();
   private readonly deliveredRejects = new Set<string>();
+  /** Calls answered in the native UI while nobody was subscribed to answered$. */
+  private unclaimedAnswers: Call[] = [];
 
   constructor(options: CallRegistryOptions) {
     this.host = options.host;
@@ -126,9 +134,21 @@ export class CallRegistry {
    * tapping CallKit's Accept connects the call — audio and all — while the
    * React tree never learns: `activeCall` stays null, no call screen appears,
    * and the accept button looks like it did nothing.
+   *
+   * A call answered while nobody is subscribed is handed to the first
+   * subscriber, if it is still live by then. On a cold start the buffered
+   * answer runs as soon as the SDK call fuses, which can be before the app's
+   * call screen has mounted.
    */
   get answered$(): Observable<Call> {
-    return this._answered$.asObservable();
+    return defer(() => {
+      const unclaimed = this.unclaimedAnswers.filter((call) => {
+        const uuid = this.uuidForCall(call);
+        return uuid !== undefined && this.isLive(uuid);
+      });
+      this.unclaimedAnswers = [];
+      return concat(from(unclaimed), this._answered$);
+    });
   }
 
   /**
@@ -465,8 +485,11 @@ export class CallRegistry {
       return;
     }
 
-    this.runIntent(entry.call, intent);
+    // Written before the intent runs: answered$ subscribers run inside
+    // runIntent, and a write made after it from a stale copy would undo
+    // anything they did to this entry, such as ending it.
     this.write({ ...entry, intent: null });
+    this.runIntent(entry.call, intent);
   }
 
   /** Marks an outgoing call as connected in the native UI. */
@@ -542,6 +565,7 @@ export class CallRegistry {
 
   destroy(): void {
     this.byUuid.clear();
+    this.unclaimedAnswers = [];
     this._entries$.complete();
     this._answered$.complete();
     this._answerRequested$.complete();
@@ -611,26 +635,31 @@ export class CallRegistry {
   }
 
   private fuse(entry: CallEntry, call: Call): void {
-    const fused: CallEntry = {
+    // The buffered intent is cleared in the same write, before it runs; see
+    // applyIntent.
+    this.write({
       ...entry,
       state: 'fused',
       call,
       expectedCallId: call.id,
+      intent: null,
       fuseDeadline: null
-    };
-    this.write(fused);
+    });
     logger.debug(`Fused call ${call.id} into ${entry.uuid}`);
 
     if (entry.intent) {
       this.runIntent(call, entry.intent);
-      this.write({ ...fused, intent: null });
     }
   }
 
   private runIntent(call: Call, intent: CallIntent): void {
     try {
       if (intent === 'answer') {
-        this._answered$.next(call);
+        if (this._answered$.observed) {
+          this._answered$.next(call);
+        } else {
+          this.unclaimedAnswers.push(call);
+        }
         // Audio-only, explicitly. A bare answer() lets the SDK's defaults
         // request video, and an SDP answer cannot introduce an m-line the
         // offer lacks — so answering an audio-only call that way fails with
@@ -650,6 +679,20 @@ export class CallRegistry {
 
   private write(entry: CallEntry): void {
     this.byUuid.set(entry.uuid, entry);
+    if (entry.state === 'ended') {
+      this.pruneEnded();
+    }
     this._entries$.next([...this.byUuid.values()]);
+  }
+
+  /** Drops the oldest ended entries beyond {@link MAX_ENDED_ENTRIES}. */
+  private pruneEnded(): void {
+    const ended = [...this.byUuid.values()].filter((entry) => entry.state === 'ended');
+    for (const entry of ended.slice(0, Math.max(0, ended.length - MAX_ENDED_ENTRIES))) {
+      this.byUuid.delete(entry.uuid);
+      this.deliveredAnswers.delete(entry.uuid);
+      this.deliveredRejects.delete(entry.uuid);
+      this.unclaimedAnswers = this.unclaimedAnswers.filter((call) => call !== entry.call);
+    }
   }
 }

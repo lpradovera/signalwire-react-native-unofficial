@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### answered$ and finished calls
+
+- `answered$` hands a call answered in the native UI while nobody was
+  subscribed to the first subscriber, if the call is still live. On a cold
+  start the buffered answer runs as soon as the SDK call fuses, which can be
+  before the app's call screen subscribes.
+- An `answered$` subscriber that ends the call it was handed (with
+  `registry.endCall()`) is no longer undone: the registry wrote back a stale
+  copy of the entry after the emission, which made the ended call live again
+  and started its audio.
+- The registry keeps the last 10 ended entries instead of every call the
+  process ever handled, each holding its SDK call.
+
 ### Pushed calls: UUID case, duplicates, one dial per answer, declines, end reasons
 
 - A pushed call whose UUID is upper-case (the native hook's own

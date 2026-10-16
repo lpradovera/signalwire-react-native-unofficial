@@ -944,3 +944,90 @@ describe('CallRegistry — empty caller names', () => {
     expect(registry.entries[0]).toMatchObject({ handle: 'Unknown', displayName: 'Unknown caller' });
   });
 });
+
+describe('CallRegistry — answered$', () => {
+  it('hands a native answer that fused before anyone listened to the first subscriber', () => {
+    // A cold start: the answer is buffered, the SDK call fuses once the
+    // session is up, and the call screen subscribes after that. A plain
+    // Subject left the app on its home screen with a live, answered call.
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.applyIntent(uuid, 'answer');
+    const call = createCall('c1');
+    registry.attachIncomingCall(call as never);
+    expect(call.answer).toHaveBeenCalled();
+
+    const first: unknown[] = [];
+    const second: unknown[] = [];
+    registry.answered$.subscribe((c) => first.push(c));
+    registry.answered$.subscribe((c) => second.push(c));
+
+    expect(first).toEqual([call]);
+    expect(second).toEqual([]);
+  });
+
+  it('does not hand over an answered call that has since ended', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.applyIntent(uuid, 'answer');
+    registry.attachIncomingCall(createCall('c1') as never);
+    registry.reportRemoteEnded(uuid);
+
+    const seen: unknown[] = [];
+    registry.answered$.subscribe((c) => seen.push(c));
+
+    expect(seen).toEqual([]);
+  });
+
+  it('keeps an end made from an answered$ subscriber (fused answer)', () => {
+    // The intent was cleared by writing back the copy read before runIntent,
+    // which resurrected an entry the subscriber had just ended.
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.answered$.subscribe(() => registry.endCall(uuid));
+    const call = createCall('c1');
+    registry.attachIncomingCall(call as never);
+
+    registry.applyIntent(uuid, 'answer');
+
+    expect(registry.entryForUuid(uuid)?.state).toBe('ended');
+    expect(registry.isLive(uuid)).toBe(false);
+  });
+
+  it('keeps an end made from an answered$ subscriber (buffered answer, then fusion)', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.applyIntent(uuid, 'answer');
+    registry.answered$.subscribe(() => registry.endCall(uuid));
+
+    registry.attachIncomingCall(createCall('c1') as never);
+
+    expect(registry.entryForUuid(uuid)?.state).toBe('ended');
+  });
+});
+
+describe('CallRegistry — finished calls', () => {
+  it('keeps only a bounded number of ended entries', () => {
+    // Every finished call stayed in the registry, with its SDK Call, for the
+    // life of the process.
+    const registry = new CallRegistry({ host: createHost() });
+    for (let i = 0; i < 100; i++) {
+      const call = createCall(`c${i}`);
+      const uuid = registry.attachOutgoingCall(call as never, '+1', 'x');
+      registry.reportRemoteEnded(uuid);
+    }
+
+    expect(registry.entries.length).toBeLessThanOrEqual(20);
+    expect(registry.entries.every((entry) => entry.state === 'ended')).toBe(true);
+  });
+
+  it('never drops a live entry', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const live = registry.attachOutgoingCall(createCall('live') as never, '+1', 'x');
+    for (let i = 0; i < 100; i++) {
+      registry.reportRemoteEnded(registry.attachOutgoingCall(createCall(`c${i}`) as never, '+1', 'x'));
+    }
+
+    expect(registry.isLive(live)).toBe(true);
+  });
+});
