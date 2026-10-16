@@ -90,18 +90,24 @@ The four packages are `@signalwire/react` (universal core), `@signalwire/react-u
 (browser Lit wrappers), `@signalwire/react-native` (platform layer) and
 `@signalwire/react-native-ui` (native components). Build order matters — see below.
 
-Two more, run separately because they hit the network:
+Two more, run separately (CI runs both):
 
 ```bash
-npm run verify:package    # publint + are-the-types-wrong on the built tarball
+npm run verify:package    # publint + are-the-types-wrong on each package's tarball
 npm run verify:prebuild   # real `expo prebuild`; asserts the config plugin applied
 ```
 
-`verify:package` expects `All good!` from publint and **every row green** from
-attw, including `node10` — `typesVersions` covers classic resolution. The
-`./app.plugin.js` entrypoint is excluded from attw on purpose: it is an Expo
-build-time entry consumed by the config-plugin loader, not by TypeScript, so it
-legitimately ships no declarations.
+`verify:package` runs each package's `lint:package` script for all four
+packages, with the publint and `@arethetypeswrong/cli` versions pinned in the
+root `devDependencies`. It expects `All good!` from publint and **every row
+green** from attw, including `node10` — `typesVersions` covers classic
+resolution. Two entrypoints are excluded from attw on purpose:
+`@signalwire/react-native`'s `./app.plugin.js` is an Expo build-time entry
+consumed by the config-plugin loader, not by TypeScript, so it legitimately
+ships no declarations; `@signalwire/react-ui`'s `./theme.css` is a stylesheet.
+`@signalwire/react-ui` is ES modules only (its `@signalwire/web-components`
+dependency cannot be `require()`d), so its attw run ignores the
+`cjs-resolves-to-esm` rule, which reports exactly that.
 
 `verify:prebuild` expects:
 `✓ 10 Android permissions and 4 iOS Info.plist entries applied by the plugin.`
