@@ -407,9 +407,12 @@ itself). `CallControls` in `@signalwire/react-native-ui` shows it on iOS next
 to the speaker toggle; `showRoutePicker` defaults to `showAudioRoute`. With
 incall-manager's iOS routes, a choice there is followed by `route` and kept
 by incall-manager. With released incall-manager it still switches the call,
-but nothing reports it, and after the speaker was turned on from the app,
-incall-manager's re-apply on the next audio category change can put the
-speaker back.
+but nothing reports it (`route` keeps what the app last asked for), and once
+the speaker was turned on from the app, incall-manager 4.3.0 re-applies the
+speaker on the next audio category change (a CallKit re-activation, say), so
+a choice made there holds only until then. VoiceOver reads the button as
+"Audio output" (`accessibilityLabel`). Its `activeTintColor` is AVKit's
+colour for AirPlay being active; a headset or car is not AirPlay.
 
 `useDevices()` has no `refresh`-free auto-update: React Native emits no
 `devicechange` event, so the platform sets `skipDeviceMonitoring: true` and you

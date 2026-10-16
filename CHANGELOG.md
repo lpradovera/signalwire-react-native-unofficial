@@ -62,6 +62,11 @@
   then it renders nothing. It writes nothing to the audio session.
 - `CallControls` shows it on iOS. `showRoutePicker` defaults to
   `showAudioRoute`, so an app that hid audio routing doesn't get it.
+- VoiceOver reads the button as one element, a button with its
+  `accessibilityLabel` (default "Audio output"); before, it read AVKit's
+  inner "AirPlay" button and the label went unused. `activeTintColor` is
+  AVKit's AirPlay-active colour, which a headset or car doesn't trigger, so
+  `CallControls` no longer passes one.
 
 ## 0.1.0
 

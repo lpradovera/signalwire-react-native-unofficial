@@ -48,8 +48,11 @@ describe('AudioRoutePickerButton', () => {
     // A second requireNativeComponent of the same name throws "Tried to
     // register two views with the same name" during render.
     const registrations: string[] = [];
-    const load = (): typeof import('./AudioRoutePickerButton') => {
-      let copy: typeof import('./AudioRoutePickerButton') | undefined;
+    const available: boolean[] = [];
+    const loadAndCheck = (): void => {
+      // Each copy is used inside its own registry: React Native exposes
+      // UIManager through a lazy getter, so a spy taken here and a call made
+      // after isolateModules returns would reach different UIManager mocks.
       jest.isolateModules(() => {
         const RN = require('react-native') as typeof import('react-native');
         jest.spyOn(RN.UIManager, 'hasViewManagerConfig').mockReturnValue(true);
@@ -57,13 +60,15 @@ describe('AudioRoutePickerButton', () => {
           registrations.push(name);
           return name;
         }) as never);
-        copy = require('./AudioRoutePickerButton') as typeof import('./AudioRoutePickerButton');
+        const copy = require('./AudioRoutePickerButton') as typeof import('./AudioRoutePickerButton');
+        available.push(copy.isAudioRoutePickerAvailable());
       });
-      return copy!;
     };
 
-    expect(load().isAudioRoutePickerAvailable()).toBe(true);
-    expect(load().isAudioRoutePickerAvailable()).toBe(true);
+    loadAndCheck();
+    loadAndCheck();
+
+    expect(available).toEqual([true, true]);
     expect(registrations).toEqual(['SWAudioRoutePicker']);
   });
 });
