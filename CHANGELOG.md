@@ -4,6 +4,15 @@
 
 ### Audio routes
 
+- **New route `'headset'`** in `AudioRoute`, for a wired or USB-C headset,
+  which used to read as `'earpiece'`. The four routes match
+  incall-manager's four devices one to one (EARPIECE, SPEAKER_PHONE,
+  WIRED_HEADSET, BLUETOOTH; incall-manager reports USB audio as a wired
+  headset and a car as Bluetooth). `setRoute('headset')` chooses the headset
+  (`chooseAudioRoute('WIRED_HEADSET')`) with iOS routes and on Android, and
+  turns the speaker off with released incall-manager on iOS. A
+  `switch (route)` or a `Record<AudioRoute, ...>` needs the new case;
+  `CallControls` labels it "Headset".
 - **`setRoute('earpiece')` now means the receiver** on iOS too, when
   incall-manager has iOS routes (see below), as it already did on Android: it
   moves a call off a connected headset or car. For a speaker toggle use the

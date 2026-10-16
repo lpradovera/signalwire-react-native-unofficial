@@ -150,6 +150,14 @@ describe('CallControls', () => {
     expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
   });
 
+  it('names a wired or USB-C headset "Headset", not "Earpiece"', async () => {
+    audio.__state.route = 'headset';
+    await render(<CallControls call={createCall() as never} />);
+    expect(screen.getByText('Headset')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('sw-route'));
+    expect(audio.__state.setSpeakerOn).toHaveBeenCalledWith(true);
+  });
+
   it('hides the camera toggle when asked', async () => {
     await render(<CallControls call={createCall() as never} showVideo={false} />);
     expect(screen.queryByTestId('sw-video')).toBeNull();
