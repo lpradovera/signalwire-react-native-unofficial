@@ -452,6 +452,55 @@ describe('CallKeepBridge on iOS — the audio session belongs to the call that s
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
+  it('stops the session when its owner ends and the other call only rings', async () => {
+    // A's far end hangs up while B is still ringing. B is not taking the
+    // session, so A's (keep-screen-on, proximity, route) goes once the
+    // End & Accept window has passed, and B gets a session of its own when
+    // the user answers it.
+    const a = await liveOutboundCall();
+    const b = createCall('B');
+    incoming$.next([b]);
+    const bUuid = lastDisplayedUuid();
+
+    a.call.status$.next('destroyed');
+    await jest.advanceTimersByTimeAsync(1100);
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(10_000);
+    callkeep.__emit('answerCall', { callUUID: bUuid });
+    callkeep.__emit('didActivateAudioSession', {});
+    await jest.advanceTimersByTimeAsync(0);
+    expect(start).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives the accepted call a session of its own when the ended one was started for other media', async () => {
+    // incall-manager's media fixes the mode (VoiceChat or VideoChat), the
+    // proximity sensor and the default route; B handed A's session as it is
+    // would run in A's mode (a voice call on the loudspeaker after a video
+    // call). Restarted after B's own
+    // activation, not between A's end and B's answer, where stopping
+    // deactivates the session CallKit is handing over.
+    const a = await liveOutboundCall();
+    const b = createCall('B');
+    incoming$.next([b]);
+    const bUuid = lastDisplayedUuid();
+    // Every call here has the app's media, so B's differs only through this
+    // stub; with a call's media taken from the call, a real one does.
+    jest
+      .spyOn(bridge as unknown as { sessionMedia(): string }, 'sessionMedia')
+      .mockReturnValue('video');
+
+    callkeep.__emit('endCall', { callUUID: a.uuid });
+    callkeep.__emit('answerCall', { callUUID: bUuid });
+    expect(stop).not.toHaveBeenCalled();
+    callkeep.__emit('didActivateAudioSession', {});
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenLastCalledWith({ media: 'video' });
+    expect(stop.mock.invocationCallOrder[0]).toBeLessThan(start.mock.invocationCallOrder[1]!);
+  });
+
   it('stops the session at once when the ending call is the only one', async () => {
     const a = await liveOutboundCall();
 
