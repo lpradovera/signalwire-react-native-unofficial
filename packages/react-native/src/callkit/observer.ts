@@ -1,13 +1,16 @@
 import { logger } from '@signalwire/react';
 import { getCallKit } from './CallKeepBridge';
+import { displayableName } from './displayName';
 
 import type { CallObserver } from '@signalwire/react';
 
 export interface CallKitObserverOptions {
   /**
    * The name the native call UI and Recents show for an outbound call. Default:
-   * the destination itself, which for a Fabric address reads like
-   * `/private/support-agent`.
+   * a readable form of the destination: a Fabric address's last segment,
+   * humanised (`/private/support-agent` shows as `Support Agent`), a SIP URI's
+   * user part, or a number as it is. A Fabric address returned here is made
+   * readable the same way; an empty name falls back to the default.
    */
   displayName?: (destination: string) => string;
 }
@@ -36,16 +39,19 @@ export function createCallKitObserver(
 }
 
 /**
- * The app's name for a call, or the destination. Never throws: dial() has
- * already placed the call when this runs, and a throw would reject dial() and
- * keep the live call from the app, which could then never hang it up.
+ * The app's name for a call, or a readable form of the destination, never a
+ * raw Fabric address or a placeholder. Never throws: dial() has already placed
+ * the call when this runs, and a throw would reject dial() and keep the live
+ * call from the app, which could then never hang it up.
  */
 function nameFor(destination: string, options: CallKitObserverOptions): string {
+  let chosen: string | undefined;
   try {
-    // `||`, not `??`: an empty name would show as a blank caller in CallKit.
-    return options.displayName?.(destination) || destination;
+    chosen = options.displayName?.(destination);
   } catch (error) {
     logger.warn(`callKit displayName threw for ${destination}; showing the destination:`, error);
-    return destination;
   }
+  // An empty name would show as a blank caller in CallKit: the destination's name instead.
+  const context = `callKit displayName for ${destination}`;
+  return displayableName(chosen, context) ?? displayableName(destination, context) ?? destination;
 }
