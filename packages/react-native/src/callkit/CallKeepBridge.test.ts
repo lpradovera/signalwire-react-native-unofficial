@@ -2,10 +2,14 @@ import RNCallKeep from 'react-native-callkeep';
 import InCallManager from 'react-native-incall-manager';
 import { BehaviorSubject, Subject } from 'rxjs';
 
-import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
+import { getAudioRouteController, resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
 import { CallKeepBridge } from './CallKeepBridge';
 
-jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
+// The audio controller checks that incall-manager's native module is linked.
+jest.mock('react-native', () => ({
+  Platform: { OS: 'android' },
+  NativeModules: { InCallManager: { start: jest.fn() } }
+}));
 
 const callkeep = RNCallKeep as unknown as typeof RNCallKeep & {
   __emit: (event: string, payload: unknown) => void;
@@ -296,6 +300,24 @@ describe('CallKeepBridge', () => {
     second$.next([createCall('c2')]);
 
     expect(RNCallKeep.displayIncomingCall).toHaveBeenCalled();
+  });
+
+  it('holds a speaker tap made while an outbound call rings until its session starts', async () => {
+    // A tap applied outside the session was undone at connect, or, for a
+    // call cancelled while ringing, left incall-manager reconfigured in the
+    // idle app.
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo' });
+    const call = createCall('out-ring');
+    bridge.trackCall(call as never, '/public/room', 'Support');
+
+    getAudioRouteController().setSpeakerOn(true);
+    expect(InCallManager.setForceSpeakerphoneOn).not.toHaveBeenCalled();
+
+    call.status$.next('connected');
+    await Promise.resolve();
+    expect(InCallManager.start).toHaveBeenCalled();
+    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(true);
   });
 
   it('starts the audio session when an outbound call connects', async () => {
