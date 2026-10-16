@@ -33,7 +33,8 @@
   the one iOS is playing through, by name. iOS with iOS routes only. They
   follow headsets and cars while a call's session runs; outside a call they
   hold the last status read. One native subscription serves every hook and
-  the controller, in every bundle copy of the package.
+  the controller, in every bundle copy of the package; it is released when
+  the last of them unsubscribes, and a call's start reads the status once.
 - A refused route (no such device) leaves `route` where it was. On Android,
   where incall-manager answers a Bluetooth choice it can't make instead of
   refusing it, the answer's device list decides, and speaker-off falls back
