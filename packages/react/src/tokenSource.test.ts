@@ -301,3 +301,140 @@ describe('TokenSource', () => {
     expect(fetchToken).toHaveBeenCalledTimes(1);
   });
 });
+
+/*
+ * Resume with an expired token (Len, step 10 F): the SDK reconnected a socket
+ * that died while the app was suspended using the token it still held, the
+ * server refused it ("Authentication failed, expired token" / -32003
+ * "Requester validation failed"), and only then did a refresh() fetch a new
+ * one. whenTokenFresh() is what the provider holds a reconnect on.
+ */
+describe('TokenSource.whenTokenFresh', () => {
+  async function settled(promise: Promise<void>): Promise<boolean> {
+    let done = false;
+    void promise.then(() => {
+      done = true;
+    });
+    await flush();
+    return done;
+  }
+
+  it('lets a connect through at once before any token was handed out, and while it is fresh', async () => {
+    const fetchToken = jest.fn(async () => ({ token: 'jwt', expiresAt: Date.now() + 120_000 }));
+    const source = new TokenSource(fetchToken);
+    expect(await settled(source.whenTokenFresh())).toBe(true);
+
+    await source.credentialProvider.authenticate();
+    jest.setSystemTime(NOW + 100_000);
+    expect(await settled(source.whenTokenFresh())).toBe(true);
+    expect(fetchToken).toHaveBeenCalledTimes(1);
+    source.dispose();
+  });
+
+  it.each([
+    ['past its expiry', 130_000],
+    ['within 5 s of it', 116_000]
+  ])('holds a reconnect while the token the SDK holds is %s, fetching a new one first', async (_case, at) => {
+    const { fetchToken, resolveNext } = queuedFetch();
+    const source = new TokenSource(fetchToken);
+    const first = source.credentialProvider.authenticate();
+    await flush();
+    resolveNext({ token: 'jwt-1', expiresAt: NOW + 120_000 });
+    await first;
+
+    // Suspended: no timer ran, the clock moved on.
+    jest.setSystemTime(NOW + at);
+    const fresh = source.whenTokenFresh();
+    expect(await settled(fresh)).toBe(false);
+    expect(fetchToken).toHaveBeenCalledTimes(2);
+
+    // Fetched, but the SDK still holds jwt-1: still held.
+    resolveNext({ token: 'jwt-2', expiresAt: Date.now() + 120_000 });
+    await flush();
+    expect(await settled(fresh)).toBe(false);
+
+    // The SDK takes it (its resume refresh), then the reconnect may go.
+    await expect(source.credentialProvider.refresh!()).resolves.toMatchObject({ token: 'jwt-2' });
+    jest.advanceTimersByTime(0);
+    expect(await settled(fresh)).toBe(true);
+    expect(fetchToken).toHaveBeenCalledTimes(2);
+    source.dispose();
+  });
+
+  it('does not fetch again for a token renewed ahead that the SDK has not taken yet', async () => {
+    const { fetchToken, resolveNext } = queuedFetch();
+    const source = new TokenSource(fetchToken);
+    const first = source.credentialProvider.authenticate();
+    await flush();
+    resolveNext({ token: 'jwt-1', expiresAt: NOW + 120_000 });
+    await first;
+    jest.advanceTimersByTime(96_000); // the renewal ahead
+    await flush();
+    resolveNext({ token: 'jwt-2', expiresAt: Date.now() + 120_000 });
+    await flush();
+    expect(fetchToken).toHaveBeenCalledTimes(2);
+
+    jest.setSystemTime(NOW + 118_000);
+    const fresh = source.whenTokenFresh();
+    await flush();
+    expect(fetchToken).toHaveBeenCalledTimes(2);
+    await source.credentialProvider.refresh!();
+    jest.advanceTimersByTime(0);
+    expect(await settled(fresh)).toBe(true);
+    source.dispose();
+  });
+
+  it('gives up holding after 5 s, so a reconnect is never stuck on it', async () => {
+    const { fetchToken, resolveNext } = queuedFetch();
+    const source = new TokenSource(fetchToken);
+    const first = source.credentialProvider.authenticate();
+    await flush();
+    resolveNext({ token: 'jwt-1', expiresAt: NOW + 120_000 });
+    await first;
+
+    jest.setSystemTime(NOW + 200_000);
+    const fresh = source.whenTokenFresh();
+    jest.advanceTimersByTime(4_999);
+    expect(await settled(fresh)).toBe(false);
+    jest.advanceTimersByTime(1);
+    expect(await settled(fresh)).toBe(true);
+    source.dispose();
+  });
+
+  it('lets a held reconnect go when disposed', async () => {
+    const { fetchToken, resolveNext } = queuedFetch();
+    const source = new TokenSource(fetchToken);
+    const first = source.credentialProvider.authenticate();
+    await flush();
+    resolveNext({ token: 'jwt-1', expiresAt: NOW + 120_000 });
+    await first;
+    jest.setSystemTime(NOW + 200_000);
+    const fresh = source.whenTokenFresh();
+    source.dispose();
+    expect(await settled(fresh)).toBe(true);
+  });
+});
+
+describe('TokenSource renewal log', () => {
+  it('logs each renewal at info, without the token, and not the first fetch', async () => {
+    const { logger } = require('./logger');
+    const info = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    let n = 0;
+    const source = new TokenSource(async () => {
+      n += 1;
+      return { token: `secret-jwt-${n}`, expiresAt: Date.now() + 120_000 };
+    });
+    await source.credentialProvider.authenticate();
+    expect(info).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(96_000);
+    await flush();
+    expect(info).toHaveBeenCalledTimes(1);
+    const line = (info.mock.calls[0] ?? []).join(' ');
+    expect(line).toMatch(/renewed/i);
+    expect(line).toContain(new Date(NOW + 96_000 + 120_000).toISOString());
+    expect(line).not.toContain('secret-jwt');
+    source.dispose();
+    info.mockRestore();
+  });
+});
