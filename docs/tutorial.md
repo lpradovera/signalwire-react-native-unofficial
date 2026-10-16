@@ -202,13 +202,29 @@ Both go in the entry file, outside React: a VoIP push can wake a killed app
 before any component mounts, and the call has to be reported to the OS before
 that happens.
 
-Then mount the incoming-call sheet:
+Then mount the incoming-call sheet, and a `CallOverlayHost` as the last child
+of your root view:
 
 ```tsx
-import { IncomingCallSheet } from '@signalwire/react-native-ui';
+import { CallOverlayHost, IncomingCallSheet } from '@signalwire/react-native-ui';
 
-<IncomingCallSheet onAnswered={setCall} />
+<View style={{ flex: 1 }}>
+  <SignalWireProvider credentialProvider={credentials} callKit>
+    {/* ...your screens... */}
+    <IncomingCallSheet onAnswered={setCall} />
+  </SignalWireProvider>
+  <CallOverlayHost />
+</View>
 ```
+
+With the host mounted the sheet draws there, over the app, rather than in a
+`Modal`: it is not a second native window, so it does not fight a Modal your
+app already has open, and it is padded clear of the home indicator and
+Android's navigation bar. To draw over one of your own Modals, mount another
+`CallOverlayHost` inside it; the most recently mounted host is used. Without a
+host the sheet falls back to a `Modal`, which works but is the less reliable
+path. The sheet needs `react-native-safe-area-context` (a peer of
+`@signalwire/react-native-ui`; Expo apps already have it).
 
 On iOS, CallKit draws the call itself — on the lock screen, over other apps —
 and this sheet covers the foreground case. **On Android nothing is drawn for
