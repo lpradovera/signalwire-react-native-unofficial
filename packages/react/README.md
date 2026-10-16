@@ -1,7 +1,7 @@
 # `@signalwire/react`
 
-> **Alpha.** On its way to becoming SignalWire's supported React Native SDK;
-> APIs may change between alpha releases.
+> **Alpha.** The core of an SDK on its way to becoming SignalWire's supported
+> React and React Native SDK; APIs may change between alpha releases.
 
 Universal React bindings for [`@signalwire/js`](https://www.npmjs.com/package/@signalwire/js) v4.
 
