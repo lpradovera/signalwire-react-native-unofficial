@@ -514,6 +514,13 @@ Needs a native rebuild: the package now has an Android library (autolinked).
   `caller_id_name`) is no name: the call is shown by its number, and a call
   with no name at all is too, instead of 'Unknown caller'.
 
+### Config plugin keeps the app's usage strings
+
+- The iOS plugin no longer overwrites `NSMicrophoneUsageDescription` and
+  `NSCameraUsageDescription`. The plugin's option wins, then a string the app
+  already sets (`ios.infoPlist`, or a plugin whose mod ran first, such as
+  `@config-plugins/react-native-webrtc`), then the generic default.
+
 ### CallKit audio belongs to its call
 
 - The audio session belongs to the call it was started for. Another call

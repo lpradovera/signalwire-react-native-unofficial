@@ -85,6 +85,35 @@ describe('withSignalWire', () => {
     expect(config.ios?.infoPlist?.NSMicrophoneUsageDescription).toBe('Mic for calls');
   });
 
+  it("keeps the app's own usage strings when no option is given", () => {
+    // Overwriting them replaced the text from ios.infoPlist (or from a plugin
+    // whose mod ran earlier) with the generic default.
+    const config = withSignalWire(
+      {
+        ...baseConfig(),
+        ios: {
+          infoPlist: {
+            NSMicrophoneUsageDescription: 'Custom mic text',
+            NSCameraUsageDescription: 'Custom camera text'
+          }
+        }
+      } as never,
+      undefined
+    ) as unknown as TestConfig;
+
+    expect(config.ios?.infoPlist?.NSMicrophoneUsageDescription).toBe('Custom mic text');
+    expect(config.ios?.infoPlist?.NSCameraUsageDescription).toBe('Custom camera text');
+  });
+
+  it('lets a plugin option win over an existing usage string', () => {
+    const config = withSignalWire(
+      { ...baseConfig(), ios: { infoPlist: { NSMicrophoneUsageDescription: 'Old' } } } as never,
+      { microphonePermission: 'Mic for calls' }
+    ) as unknown as TestConfig;
+
+    expect(config.ios?.infoPlist?.NSMicrophoneUsageDescription).toBe('Mic for calls');
+  });
+
   it('adds the audio background mode', () => {
     expect(applyPlugin().ios?.infoPlist?.UIBackgroundModes).toContain('audio');
   });
