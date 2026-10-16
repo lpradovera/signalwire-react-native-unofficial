@@ -615,3 +615,199 @@ describe('CallKeepBridge — the fusion tick timer', () => {
     delete nativeModules.SignalWireVoipPush;
   });
 });
+
+describe('CallKeepBridge on iOS — the audio session belongs to the call that started it', () => {
+  let bridge: CallKeepBridge;
+  let incoming$: Subject<unknown[]>;
+  const start = InCallManager.start as jest.Mock;
+  const stop = InCallManager.stop as jest.Mock;
+
+  beforeEach(async () => {
+    resetAudioRouteControllerForTesting();
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    callkeep.__reset();
+    bridge = new CallKeepBridge();
+    await bridge.setup({ appName: 'Demo' });
+    incoming$ = new Subject<unknown[]>();
+    bridge.bindClient({ session: { incomingCalls$: incoming$ } } as never);
+  });
+
+  afterEach(() => {
+    bridge.destroy();
+    jest.useRealTimers();
+  });
+
+  /** An outbound call A, connected, with its audio running. */
+  async function liveOutboundCall() {
+    const call = createCall('A');
+    const uuid = bridge.trackCall(call as never, '/public/agent', 'Agent');
+    call.status$.next('connected');
+    callkeep.__emit('didActivateAudioSession', {});
+    await jest.advanceTimersByTimeAsync(3100);
+    expect(start).toHaveBeenCalledTimes(1);
+    return { call, uuid };
+  }
+
+  /** The uuid CallKit was last asked to show as incoming. */
+  function lastDisplayedUuid(): string {
+    const calls = (RNCallKeep.displayIncomingCall as jest.Mock).mock.calls;
+    return calls[calls.length - 1]?.[0] as string;
+  }
+
+  it('keeps the live call’s audio when a waiting call’s caller gives up', async () => {
+    await liveOutboundCall();
+    const waiting = createCall('B');
+    incoming$.next([waiting]);
+
+    waiting.status$.next('destroyed');
+
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it('keeps the live call’s audio when the user declines a waiting call', async () => {
+    await liveOutboundCall();
+    incoming$.next([createCall('B')]);
+
+    callkeep.__emit('endCall', { callUUID: lastDisplayedUuid() });
+
+    expect(stop).not.toHaveBeenCalled();
+  });
+
+  it('keeps the next call’s audio when the ended call’s teardown finishes late (End & Accept)', async () => {
+    const a = await liveOutboundCall();
+    const b = createCall('B');
+    incoming$.next([b]);
+    const bUuid = lastDisplayedUuid();
+
+    callkeep.__emit('endCall', { callUUID: a.uuid });
+    callkeep.__emit('answerCall', { callUUID: bUuid });
+    callkeep.__emit('didActivateAudioSession', {});
+    await jest.advanceTimersByTimeAsync(3100);
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledTimes(2);
+
+    // A's hangup completes asynchronously; its 'destroyed' arrives after B's audio is up.
+    a.call.status$.next('destroyed');
+
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts no audio for a push the user answered and ended before the session came up', async () => {
+    const uuid = bridge.reportIncomingPush({ callId: 'p1', data: { bridgeToken: 't' } });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    callkeep.__emit('endCall', { callUUID: uuid });
+
+    await jest.advanceTimersByTimeAsync(3100);
+
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('leaves no audio running for a push the user ends before its call exists', async () => {
+    // Combined with #3: a push's audio starts only when its call connects, so
+    // there is nothing to stop here, and nothing left behind.
+    const uuid = bridge.reportIncomingPush({ callId: 'p1', data: { bridgeToken: 't' } });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    callkeep.__emit('didActivateAudioSession', {});
+    await jest.advanceTimersByTimeAsync(0);
+
+    callkeep.__emit('endCall', { callUUID: uuid });
+    await jest.advanceTimersByTimeAsync(3100);
+
+    // Still 'pending-push' with a buffered reject, but the call is over.
+    expect(bridge.registry.entryForUuid(uuid)?.intent).toBe('reject');
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('starts no audio for a cold start whose replay ends the call it answered', async () => {
+    callkeep.__emit('didLoadWithEvents', [
+      {
+        name: 'RNCallKeepDidDisplayIncomingCall',
+        data: {
+          callUUID: 'cold-1',
+          handle: '+1555',
+          localizedCallerName: 'Ada',
+          fromPushKit: '1',
+          payload: { callId: 'c-cold', bridgeToken: 't' }
+        }
+      },
+      { name: 'RNCallKeepPerformAnswerCallAction', data: { callUUID: 'cold-1' } },
+      { name: 'RNCallKeepPerformEndCallAction', data: { callUUID: 'cold-1' } }
+    ]);
+
+    await jest.advanceTimersByTimeAsync(3100);
+
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('does not bridge a push the user ended while its call was being placed', async () => {
+    const uuid = bridge.reportIncomingPush({ callId: 'p3', data: { bridgeToken: 't' } });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    callkeep.__emit('endCall', { callUUID: uuid });
+
+    // useBridgeAnswer: claim, dial (the observer's trackCall), release, bind.
+    bridge.beginBridgeDial(uuid);
+    const call = createCall('bridge-p3');
+    bridge.trackCall(call as never, '/private/bridge', 'Ada');
+    bridge.endBridgeDial();
+
+    expect(bridge.bindBridgeCall(uuid, call as never)).toBe(false);
+    // No second CallKit call for it, and it is hung up rather than left live.
+    expect(RNCallKeep.startCall).not.toHaveBeenCalled();
+    expect(call.hangup).toHaveBeenCalled();
+  });
+
+  it('stops the audio when the app ends an answered push through the registry', async () => {
+    // The example does this when its bridge dial fails. reportEndCallWithUUID
+    // gets no endCall action back from CallKit, so the bridge has to notice.
+    const uuid = bridge.reportIncomingPush({ callId: 'p5', data: { bridgeToken: 't' } });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    callkeep.__emit('didActivateAudioSession', {});
+    const bridgeCall = createCall('bridge-p5');
+    bridge.bindBridgeCall(uuid, bridgeCall as never);
+    bridgeCall.status$.next('connected');
+    await jest.advanceTimersByTimeAsync(0);
+    expect(start).toHaveBeenCalledTimes(1);
+
+    bridge.registry.endCall(uuid);
+
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves no audio running when an answered push expires without its call', async () => {
+    const uuid = bridge.reportIncomingPush({ callId: 'p6' });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    callkeep.__emit('didActivateAudioSession', {});
+    await jest.advanceTimersByTimeAsync(62_000);
+
+    expect(bridge.registry.entryForUuid(uuid)?.state).toBe('ended');
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('lets the next call start its own session after a registry-ended one', async () => {
+    const uuid = bridge.reportIncomingPush({ callId: 'p7', data: { bridgeToken: 't' } });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    callkeep.__emit('didActivateAudioSession', {});
+    const bridgeCall = createCall('bridge-p7');
+    bridge.bindBridgeCall(uuid, bridgeCall as never);
+    bridgeCall.status$.next('connected');
+    await jest.advanceTimersByTimeAsync(0);
+    bridge.registry.endCall(uuid);
+
+    const next = createCall('next');
+    bridge.trackCall(next as never, '/public/agent', 'Agent');
+    next.status$.next('connected');
+    callkeep.__emit('didActivateAudioSession', {});
+    await jest.advanceTimersByTimeAsync(3100);
+
+    expect(start).toHaveBeenCalledTimes(2);
+  });
+
+  it('releases the session it owns when the bridge is destroyed', async () => {
+    await liveOutboundCall();
+
+    bridge.destroy();
+
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+});

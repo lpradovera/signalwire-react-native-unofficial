@@ -119,6 +119,23 @@ export class CallRegistry {
     return this.byUuid.get(uuid);
   }
 
+  /**
+   * Whether the entry's call is still going on.
+   *
+   * An ended entry is over, and so is a push the user ended in the native UI
+   * before its SDK call existed: that entry stays `'pending-push'`, holding a
+   * buffered `'reject'` so an inbound call that still arrives is turned down
+   * rather than ringing again, but nothing may bind to it, start audio for it
+   * or keep audio running for it.
+   */
+  isLive(uuid: string): boolean {
+    const entry = this.byUuid.get(uuid);
+    if (!entry || entry.state === 'ended') {
+      return false;
+    }
+    return !(entry.state === 'pending-push' && entry.intent === 'reject');
+  }
+
   uuidForCall(call: Call): string | undefined {
     for (const entry of this.byUuid.values()) {
       if (entry.call === call) {
@@ -271,12 +288,12 @@ export class CallRegistry {
    * the failure iOS penalises hardest.
    *
    * Returns `false` when the entry is gone (the caller hung up, or the user
-   * declined, while the call was being placed), which is the signal to hang
-   * that call straight back up.
+   * declined or ended it, while the call was being placed), which is the
+   * signal to hang that call straight back up.
    */
   bindCall(uuid: string, call: Call): boolean {
     const entry = this.byUuid.get(uuid);
-    if (!entry || entry.state === 'ended') {
+    if (!entry || !this.isLive(uuid)) {
       logger.debug(`No live entry for ${uuid}; the bridge call has nothing to attach to`);
       return false;
     }
