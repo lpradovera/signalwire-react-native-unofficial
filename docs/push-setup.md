@@ -26,7 +26,7 @@ it will not send a push when a call arrives. Every link below is yours:
                                             ▼
   ┌──────────────────────────────────────────────────────────┐
   │  device                                                  │
-  │   iOS:     PushKit → AppDelegate → reportNewIncomingCall  │  ← native, before JS
+  │   iOS:     PushKit → SignalWireVoipPush → CallKit         │  ← native, before JS
   │   Android: FCM data → headless task                       │
   │              │                                            │
   │              ▼                                            │
@@ -59,13 +59,13 @@ feel impossible to debug — you end up with three unproven links and one sympto
 | --- | --- | --- | --- |
 | 1 | Apple: App ID capability + `.p8` key | [1a](#1a-apple-developer-portal) | You have the `.p8`, Key ID and Team ID |
 | 2 | Xcode: Push + Background Modes (VoIP, Audio) | [1b](#1b-xcode-capabilities) | Capabilities show in the project |
-| 3 | Firebase: project + `google-services.json` | [2a](#2a-firebase) | File is in `android/app/` |
-| 4 | App: acquire tokens | [1c](#1c-app-register-for-pushkit-and-report-the-token), [2b](#2b-app-report-the-fcm-token) | You can log a token on each platform |
+| 3 | Firebase: project + `google-services.json` | [2b](#2b-firebase-project) | File is in `android/app/` |
+| 4 | App: acquire tokens | [1c](#1c-app-read-the-pushkit-token), [2c](#2c-register-the-token) | You can log a token on each platform |
 | 5 | App: upload tokens to your server | [3](#3-app-sending-the-token-to-your-server) | `GET /devices` lists them |
 | 6 | Server: senders configured | [4b](#4b-sending-an-apns-voip-push), [4c](#4c-sending-an-fcm-data-message) | Startup logs no "not configured" warning |
 | 7 | Send a push by hand, app in foreground | [5](#5-verifying-it-one-link-at-a-time) | `POST /notify` reports `delivered: 1` |
 | 8 | Native PushKit hook (generated) | [1d](#1d-the-native-pushkit-hook--generated-for-you) | CallKit UI appears with the app force-quit |
-| 9 | JS receives and reports | [1e](#1e-js-pick-the-call-up-from-callkeep), [2c](#2c-app-the-headless-background-handler) | `reportIncomingPush` is called |
+| 9 | JS receives and reports | [1e](#1e-js-the-bridge-picks-the-call-up), [2d](#2d-handle-the-push) | The registry holds an entry for the push |
 | 10 | Fusion | [5](#5-verifying-it-one-link-at-a-time) | Logs show `Fused call … into …` |
 | 11 | The trigger (webhook) | [4d](#4d-the-trigger) | A real inbound call pushes automatically |
 
@@ -87,12 +87,15 @@ the native call entry to the SDK call by matching on it.
 ```
 
 - `call_id` — **required.** Without it the registry falls back to "the single
-  unmatched inbound call within 20 seconds" and logs a warning. That breaks the
-  moment two calls overlap.
-- `uuid` — iOS only. Generate it **on the backend** so the native `AppDelegate`
-  hook and the JS side agree on one identifier. Any RFC 4122 v4 UUID.
+  push entry with no call id, while it is still waiting" (up to the fusion
+  timeout, 45 seconds by default) and logs a warning. That breaks the moment two
+  calls overlap.
+- `uuid` — iOS only. Generate it **on the backend** so the backend and the
+  CallKit entry agree on one identifier (the native hook mints one when it is
+  absent). Any RFC 4122 v4 UUID.
 - `from` / `from_name` — what the native call UI displays. Optional; the
-  registry substitutes "Unknown".
+  registry substitutes "Unknown". FCM refuses a data key named `from`, so an
+  Android push sends it as `sw_from` ([2g](#2g-reserved-keys-in-the-payload)).
 
 Keep the payload under 4 KB (APNs limit). VoIP pushes have no user-visible part.
 
@@ -125,29 +128,32 @@ In **Signing & Capabilities** add:
 With Expo, the config plugin already writes the `UIBackgroundModes` array
 (`audio` + `voip`); confirm it survived `expo prebuild`.
 
-### 1c. App: register for PushKit and report the token
+### 1c. App: read the PushKit token
 
-```bash
-npm install react-native-voip-push-notification
-```
+The PushKit token comes from the native module the config plugin generates
+([1d](#1d-the-native-pushkit-hook--generated-for-you)), through
+`watchVoipToken`:
 
 ```ts
-// src/push/ios.ts
-import VoipPushNotification from 'react-native-voip-push-notification';
+import { watchVoipToken } from '@signalwire/react-native/callkit';
 
-export function registerVoipPush(uploadToken: (token: string) => Promise<void>): void {
-  VoipPushNotification.addEventListener('register', (token: string) => {
-    // NOTE: this is the PushKit token. It is NOT the same as the APNs alert
-    // token from expo-notifications or @react-native-firebase/messaging.
-    void uploadToken(token);
-  });
-
-  VoipPushNotification.registerVoipToken();
-}
+const stop = watchVoipToken((token) => {
+  // NOTE: this is the PushKit token. It is NOT the same as the APNs alert
+  // token from expo-notifications or @react-native-firebase/messaging.
+  console.log('PushKit token', token);
+});
 ```
 
-Call it once the user is authenticated, and re-upload whenever it changes —
-tokens rotate on reinstall, restore, and occasionally at the OS's discretion.
+[Section 3](#3-app-sending-the-token-to-your-server) uploads it; there it is read
+through `watchPushToken`, which is `watchVoipToken` on iOS and the FCM token on
+Android.
+
+**Do not add `react-native-voip-push-notification`.** Its `registerVoipToken()`
+creates a second VoIP `PKPushRegistry`, beside the one the generated module
+already runs, and makes the app delegate its delegate. Its `register` event
+fires only when the `AppDelegate` forwards PushKit credentials to it, which no
+Expo `AppDelegate` does, so the listener never receives a token and the device
+is never registered.
 
 ### 1d. The native PushKit hook — generated for you
 
@@ -178,63 +184,70 @@ A generated `.m` that Xcode does not compile is silently ignored, and the
 failure only shows up much later as "pushes do nothing" — which is why the
 check asserts the `pbxproj` reference, not just the file.
 
-**Bare React Native** projects add the equivalent by hand. Copy the source from
-`packages/react-native/src/plugin/voipPushSource.ts` into your app target; it
-has no Expo dependencies.
+**Bare React Native** projects add the same file by hand. It is not shipped as
+an `.m`: `packages/react-native/src/plugin/voipPushSource.ts` is a TypeScript
+module that holds the Objective-C as a template string (`VOIP_PUSH_SOURCE`),
+and `src/` is not in the npm package, so take that file from the repository at
+the version you installed. Copying the `.ts` into Xcode does nothing — Xcode
+does not compile it, and pushes then silently do nothing. Write the string out
+as an Objective-C file instead; evaluating the literal also restores its
+escaped backticks:
+
+```bash
+node -e '
+const src = require("fs").readFileSync(process.argv[1], "utf8");
+const literal = src.slice(src.indexOf("= `") + 2, src.lastIndexOf("`") + 1);
+process.stdout.write(new Function("return " + literal)());
+' path/to/voipPushSource.ts > ios/YourApp/SignalWireVoipPush.m
+```
+
+Then add `SignalWireVoipPush.m` to the app target's **Compile Sources** in
+Xcode. It has no Expo dependencies, only `RNCallKeep`. Repeat this when you
+upgrade the package: nothing updates the copy for you.
 
 ### 1d-bis. Registering the device token
 
-The generated module exposes the PushKit token to JS:
-
-```ts
-import { watchVoipToken } from '@signalwire/react-native/callkit';
-
-watchVoipToken((token) => {
-  void fetch(`${SERVER}/devices`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      externalUserId: subscriberReference,  // MUST match the token's reference
-      platform: 'ios',
-      token,
-      environment: 'sandbox'                // development builds are sandbox
-    })
-  });
-});
-```
-
-Two ways to get this wrong, both silent:
+[Section 3](#3-app-sending-the-token-to-your-server) has the upload code. Two
+ways to get it wrong, both silent:
 
 - **`externalUserId` must be the subscriber reference the SignalWire token was
   minted for.** The server looks devices up by exactly that key; a mismatch
   sends the push to someone else's device, or nobody's.
-- **`environment` must match how the app was signed.** A development build is
-  sandbox. Sending a sandbox token to production APNs (or the reverse) fails at
-  Apple with a device-token mismatch, which reads like a bad token rather than
-  a wrong environment.
+- **`environment` must match how the app was signed**, not how it was built.
+  A build signed with a development provisioning profile (Debug *or* Release)
+  gets a sandbox token; Ad Hoc, TestFlight and App Store builds get production
+  tokens. Sending a token to the other APNs host fails at Apple with
+  `BadDeviceToken`, which reads like a bad token rather than a wrong
+  environment, and this server then prunes the device as expired. Section 3
+  reads the environment from the provisioning profile rather than guessing.
 
 `watchVoipToken` fires once with the token cached during launch — iOS issues it
 before React Native has a bridge, so waiting only for the change event would
 miss the first run after install — and again on every reissue.
 
-### 1e. JS: pick the call up from callkeep
+### 1e. JS: the bridge picks the call up
 
-The native hook already showed the CallKit UI. JS then tells the registry about
-it, so the SDK call can fuse:
+The native hook already showed the CallKit UI. JavaScript needs **no listener of
+its own** for that: `CallKeepBridge` subscribes to callkeep's
+`didDisplayIncomingCall` itself, adopts every call the generated module
+reported (callkeep marks them `fromPushKit: '1'`), and on a cold start also
+reads the push the module cached before JavaScript existed. All it needs is to
+exist early, so set it up in the entry file, before React mounts:
 
 ```ts
 // index.js, after the polyfills import
 import { getCallKit } from '@signalwire/react-native/callkit';
-import RNCallKeep from 'react-native-callkeep';
 
-RNCallKeep.addEventListener('didDisplayIncomingCall', ({ payload }) => {
-  getCallKit().reportIncomingPush({
-    callId: payload?.callId,
-    from: payload?.from,
-    fromName: payload?.from_name
-  });
-});
+void getCallKit().setup({ appName: 'My App' });
 ```
+
+Do **not** add your own `didDisplayIncomingCall` listener that calls
+`reportIncomingPush`. callkeep emits that event for every call reported to
+CallKit, including the ones `reportIncomingPush` reports itself, so such a
+listener reports each push a second time as a new call, and then reports that
+one again, without end. `reportIncomingPush` is for push paths the generated
+module does not handle — Android's
+([2d](#2d-handle-the-push)) does this for you too.
 
 ---
 
@@ -295,7 +308,7 @@ range is `>=22.0.0` and, on legacy architecture, `<23`.
 
 ### 2c. Register the token
 
-`watchPushToken` returns whichever token this platform issues, so no platform
+`watchPushToken` reports whichever token this platform issues, so no platform
 branch is needed. Getting that branch wrong is silent: the device registers
 under the wrong platform, the server picks the wrong sender, and the push
 simply never arrives.
@@ -304,15 +317,12 @@ simply never arrives.
 import { watchPushToken } from '@signalwire/react-native/callkit';
 
 watchPushToken(({ platform, token }) => {
-  void fetch(DEVICES_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ externalUserId, platform, token })
-  });
+  console.log(`${platform} push token`, token);   // 'android': the FCM token
 });
 ```
 
-`environment: 'sandbox'` is APNs-only; FCM has no sandbox/production split.
+[Section 3](#3-app-sending-the-token-to-your-server) uploads it. `environment`
+is APNs-only; FCM has no sandbox/production split.
 
 ### 2d. Handle the push
 
@@ -385,20 +395,41 @@ shows the sending half.
 
 ## 3. App: sending the token to your server
 
-Sections 1c and 2b both hand their token to an `uploadToken` callback. This is
-that callback — the seam between the two halves, and the step most easily
-forgotten until nothing arrives and it is not obvious why.
+Sections 1c and 2c each produce a token. This is where it goes — the seam
+between the two halves, and the step most easily forgotten until nothing
+arrives and it is not obvious why.
+
+```bash
+npx expo install expo-application   # reads the APNs environment, see below
+```
 
 ```ts
 // src/push/register.ts
-import { Platform } from 'react-native';
+import * as Application from 'expo-application';
+
+/** What `watchPushToken` reports. */
+interface PushRegistration {
+  platform: 'ios' | 'android';
+  token: string;
+}
 
 const PUSH_SERVER = process.env.EXPO_PUBLIC_PUSH_SERVER ?? 'http://localhost:3000';
 
-/** Whether this build talks to APNs sandbox. Dev builds do; TestFlight and App Store do not. */
-const APNS_ENVIRONMENT = __DEV__ ? 'sandbox' : 'production';
+/**
+ * Which APNs host this build's PushKit token belongs to, read from the
+ * provisioning profile's `aps-environment`. `__DEV__` cannot tell: a Release
+ * build signed with a development profile still gets a sandbox token. No
+ * profile at all (`null`) means an App Store install, which is production.
+ */
+async function apnsEnvironment(): Promise<'sandbox' | 'production'> {
+  const environment = await Application.getIosPushNotificationServiceEnvironmentAsync();
+  return environment === 'development' ? 'sandbox' : 'production';
+}
 
-export async function uploadToken(externalUserId: string, token: string): Promise<void> {
+export async function uploadToken(
+  externalUserId: string,
+  { platform, token }: PushRegistration
+): Promise<void> {
   const response = await fetch(`${PUSH_SERVER}/devices`, {
     method: 'POST',
     headers: {
@@ -407,9 +438,10 @@ export async function uploadToken(externalUserId: string, token: string): Promis
     },
     body: JSON.stringify({
       externalUserId,
-      platform: Platform.OS,
+      platform,
       token,
-      environment: APNS_ENVIRONMENT
+      // Required for iOS (the server answers 400 without it); FCM has no split.
+      ...(platform === 'ios' ? { environment: await apnsEnvironment() } : {})
     })
   });
 
@@ -419,27 +451,30 @@ export async function uploadToken(externalUserId: string, token: string): Promis
 }
 ```
 
-Then wire both platforms up once the user is authenticated — you need the
+Then wire it up once the user is authenticated — you need the
 `externalUserId` first, so this cannot happen at app launch:
 
 ```ts
 // src/push/index.ts
-import { Platform } from 'react-native';
+import { watchPushToken } from '@signalwire/react-native/callkit';
 
-import { registerFcmPush } from './android';
-import { registerVoipPush } from './ios';
 import { uploadToken } from './register';
 
-export function registerForCalls(externalUserId: string): void {
-  const upload = (token: string) => uploadToken(externalUserId, token);
-
-  if (Platform.OS === 'ios') {
-    registerVoipPush(upload);
-  } else {
-    void registerFcmPush(upload);
-  }
+/** Registers this device for call pushes; returns the unsubscribe. */
+export function registerForCalls(externalUserId: string): () => void {
+  return watchPushToken((registration) => {
+    uploadToken(externalUserId, registration).catch((error: Error) => {
+      // Retry here (with a backoff) in a real app: watchPushToken does not
+      // fire again for the same token, so one failure lasts until relaunch.
+      console.warn(error.message);
+    });
+  });
 }
 ```
+
+`watchPushToken` is `watchVoipToken` on iOS and `watchFcmToken` on Android,
+reporting `platform` as `'ios'` or `'android'` to match what the server
+expects.
 
 Three things worth getting right here:
 
@@ -447,10 +482,11 @@ Three things worth getting right here:
   restore from backup, and occasionally at the OS's discretion. `POST /devices`
   is idempotent — it overwrites by token — so calling it every launch is cheap
   and closes the staleness gap.
-- **`environment` must match the build.** A development build registers against
-  APNs sandbox; TestFlight and App Store builds are production. Sending a
-  sandbox token to the production host returns `BadDeviceToken`, and this is the
-  single most common reason a correctly-written push never arrives.
+- **`environment` must match the signing, not the build configuration.** A
+  build signed with a development profile registers against APNs sandbox;
+  Ad Hoc, TestFlight and App Store builds are production. Sending a token to
+  the other host returns `BadDeviceToken`, and this is the single most common
+  reason a correctly-written push never arrives.
 - **Unregister on sign-out** with `DELETE /devices/:token`, or the next person
   to use the handset gets a call meant for someone else.
 
@@ -592,9 +628,12 @@ export async function sendCallPush({ deviceToken, payload }) {
           token: deviceToken,
           // Data-only. Adding a `notification` block makes Android hand it to
           // the system tray instead of your background handler.
+          // `from` is a reserved key: FCM rejects the whole message with
+          // `400 Invalid data payload key` (section 2g). It goes as `sw_from`,
+          // which decodePushData on the device maps back to `from`.
           data: {
             call_id: payload.call_id,
-            from: payload.from ?? '',
+            sw_from: payload.from ?? '',
             from_name: payload.from_name ?? ''
           },
           android: { priority: 'high' }
@@ -610,7 +649,10 @@ export async function sendCallPush({ deviceToken, payload }) {
 ```
 
 `priority: 'high'` is what lets the message pierce Doze. A `notification` block
-alongside `data` sends it to the system tray and your handler never runs.
+alongside `data` sends it to the system tray and your handler never runs. Any
+extra key you add (a bridge token, say) must stay clear of the reserved names
+in [2g](#2g-reserved-keys-in-the-payload) too; the server in `../server/`
+renames them all (`FcmSender.dataPayload`).
 
 ### 4d. The trigger
 
@@ -664,17 +706,22 @@ Do **not** debug this end to end. Test each link in isolation, in this order:
    wrong library.
 2. **The sender works, app in foreground.** Call `sendVoipPush` from a script
    with a known token. A `200` from Apple means accepted — it does not mean
-   delivered. On iOS, the `AppDelegate` hook firing is the proof.
+   delivered. On iOS, the generated hook logging
+   `[SignalWireVoipPush] push received` and `reported call … to CallKit` is the
+   proof (device console, e.g. `devicectl device process launch --console`).
 3. **App backgrounded.** Same push. CallKit UI should appear.
-4. **App force-quit.** The real test. If nothing appears, it is almost always
-   the missing `AppDelegate` hook or the wrong `apns-topic`.
+4. **App force-quit.** The real test. If nothing appears, check that the
+   generated `SignalWireVoipPush.m` is compiled into the app
+   (`npm run verify:prebuild`, or the target's Compile Sources in a bare
+   project), that the build carries `aps-environment`, and the `apns-topic`.
 5. **Fusion.** Confirm the SDK connects and `CallRegistry` moves the entry from
    `pending-push` to `fused`. Enable debug logging:
    `setLogLevel('debug')` from `@signalwire/js`; look for
    `[SignalWireRN] Fused call … into …`.
 6. **The unfused case.** Send a push with a `call_id` that never arrives. The
-   native call must end itself as missed within 20 seconds. A stuck entry in the
-   iOS call log means the tick timer is not running.
+   native call must end itself as missed at the fusion timeout: 45 seconds by
+   default, plus up to one 2-second tick. A stuck entry in the iOS call log
+   means the tick timer is not running.
 
 Scenarios 5 to 7 in [`device-testing.md`](device-testing.md) are the hardware
 versions of steps 4 to 6.
@@ -688,7 +735,7 @@ versions of steps 4 to 6.
 | APNs `BadDeviceToken` | Sandbox token sent to production host, or vice versa |
 | APNs `TopicDisallowed` | `apns-topic` missing the `.voip` suffix |
 | APNs `403 InvalidProviderToken` | JWT older than 1h, wrong Key ID/Team ID, or malformed `.p8` |
-| APNs 200 but nothing happens on device | `AppDelegate` hook missing — the most common cause by far |
+| APNs 200 but nothing happens on device | The PushKit hook is not in the build — `SignalWireVoipPush.m` not generated or not in Compile Sources (`npm run verify:prebuild`) — or the build lacks `aps-environment` |
 | App is killed shortly after a push | You did not report to CallKit in the PushKit callback. iOS eventually stops delivering VoIP pushes entirely |
 | FCM delivered but handler never runs | Payload included a `notification` block; make it data-only |
 | FCM delayed by minutes | `android.priority` not set to `high` |
@@ -773,6 +820,11 @@ real number appears as itself rather than "Unknown".
 
 **Still unverified:** the exact request shape SignalWire sends to a SWML
 handler. `callSidFrom` and `calledAddressFrom` accept several plausible field
-names and the handler logs the whole body — point a real call at it, read the
-log, then delete the guesses. The `ring:2:us` fallback for ringback is likewise
-from memory; set `PUBLIC_URL` and serve your own audio if it is wrong.
+names. The park handler logs the whole body only when it cannot find a call
+SID or a subscriber and hangs up; a successful park logs just the SID, the
+subscriber and the delivery counts. To see the shape of a working request, log
+`req.body` in `server/src/routes/swml.ts` for one real call, then delete the
+guesses. The ringback is SignalWire's generated `ring:15.0:us` tone, repeated
+to fill the 60-second park window; set `PARK_RINGBACK_URL` to play your own
+audio instead (`PUBLIC_URL` does not affect it: it only builds the bridge's
+status callback URL).
