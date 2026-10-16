@@ -227,19 +227,44 @@ summary:
 - **Android:** Firebase, `@react-native-firebase` **v22** (v23+ needs the New
   Architecture), a high-priority **data** message, and `registerAndroidCallPush()`.
 
-Register the device token wherever your app knows who the user is:
+Register the device token wherever your app knows who the user is.
+`externalUserId` is the subscriber reference the user's SignalWire token was
+minted for:
 
 ```ts
 import { watchPushToken } from '@signalwire/react-native/callkit';
+import * as Application from 'expo-application';   // npx expo install expo-application
 
 watchPushToken(({ platform, token }) => {
-  void fetch(`${SERVER}/devices`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ externalUserId: user.id, platform, token })
-  });
+  void (async () => {
+    // iOS only, and required: the server answers 400 without it. Read from the
+    // provisioning profile, because sandbox and production tokens are not
+    // interchangeable and __DEV__ cannot tell which one this build has.
+    const environment =
+      platform === 'ios'
+        ? (await Application.getIosPushNotificationServiceEnvironmentAsync()) === 'development'
+          ? 'sandbox'
+          : 'production'
+        : undefined;
+
+    const response = await fetch(`${SERVER}/devices`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        // Only when the server runs with API_TOKEN; it answers 401 otherwise.
+        authorization: `Bearer ${API_TOKEN}`
+      },
+      body: JSON.stringify({ externalUserId: subscriberReference, platform, token, environment })
+    });
+    if (!response.ok) {
+      console.warn(`Device registration failed: ${response.status} ${await response.text()}`);
+    }
+  })();
 });
 ```
+
+[push-setup.md §3](./push-setup.md#3-app-sending-the-token-to-your-server) has
+the same code as a module, and why each field matters.
 
 **Checkpoint:** your server can push and the phone rings with the app closed.
 
