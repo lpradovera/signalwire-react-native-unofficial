@@ -5,7 +5,13 @@ import { BehaviorSubject, Subject } from 'rxjs';
 import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
 import { CallKeepBridge } from './CallKeepBridge';
 
-jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
+const nativeModules: { RNCallKeep?: Record<string, unknown> } = {};
+jest.mock('react-native', () => ({
+  Platform: { OS: 'android' },
+  get NativeModules() {
+    return nativeModules;
+  }
+}));
 
 const callkeep = RNCallKeep as unknown as typeof RNCallKeep & {
   __emit: (event: string, payload: unknown) => void;
@@ -40,6 +46,7 @@ describe('CallKeepBridge', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     callkeep.__reset();
+    nativeModules.RNCallKeep = { setup: jest.fn() };
     bridge = new CallKeepBridge();
   });
 
@@ -237,6 +244,58 @@ describe('CallKeepBridge', () => {
     await bridge.setup({ appName: 'Demo' });
     bridge.destroy();
     expect(RNCallKeep.removeEventListener).toHaveBeenCalled();
+  });
+
+  it('two overlapping setup() calls set callkeep up once', async () => {
+    // The guard was read before the await and set after it, so two calls in
+    // one run (two effects in one commit, StrictMode) both registered every
+    // listener, and each answer, digit and hold was then delivered twice.
+    const registered = (RNCallKeep.addEventListener as jest.Mock).mock.calls.length;
+    await Promise.all([bridge.setup({ appName: 'Demo' }), bridge.setup({ appName: 'Demo' })]);
+
+    expect(RNCallKeep.setup).toHaveBeenCalledTimes(1);
+    expect((RNCallKeep.addEventListener as jest.Mock).mock.calls.length).toBe(registered);
+
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient(createClient(incoming$) as never);
+    const uuid = bridge.reportIncomingPush({ callId: 'c1' });
+    const call = createCall('c1');
+    incoming$.next([call]);
+    callkeep.__emit('didPerformDTMFAction', { callUUID: uuid, digits: '5' });
+    expect(call.sendDigits).toHaveBeenCalledTimes(1);
+  });
+
+  it('can be set up again after a failed setup', async () => {
+    (RNCallKeep.setup as jest.Mock).mockRejectedValueOnce(new Error('no permission'));
+    await expect(bridge.setup({ appName: 'Demo' })).rejects.toThrow('no permission');
+
+    await bridge.setup({ appName: 'Demo' });
+    expect(RNCallKeep.setup).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a callkeep whose native module is not linked as a missing peer', async () => {
+    // callkeep's default export always has `setup`, so testing the JS wrapper
+    // never fired; the native module is what an unlinked build lacks.
+    delete nativeModules.RNCallKeep;
+
+    await expect(bridge.setup({ appName: 'Demo' })).rejects.toThrow(/react-native-callkeep/);
+    expect(RNCallKeep.setup).not.toHaveBeenCalled();
+  });
+
+  it('handles a native answer that arrives before setup()', () => {
+    // On iOS the constructor's listener starts callkeep's observing, after
+    // which callkeep sends actions live instead of buffering them: one that
+    // arrived before setup() registered its listener reached nobody.
+    callkeep.__emit('didDisplayIncomingCall', {
+      callUUID: 'native-uuid',
+      handle: '+1555',
+      localizedCallerName: 'Ada',
+      fromPushKit: '1',
+      payload: { bridgeToken: 't' }
+    });
+    callkeep.__emit('answerCall', { callUUID: 'native-uuid' });
+
+    expect(bridge.registry.entryForUuid('native-uuid')?.intent).toBe('answer');
   });
 
   it('setup twice does not double-register listeners', async () => {
