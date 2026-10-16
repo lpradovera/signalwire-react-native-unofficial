@@ -329,6 +329,42 @@
   action for the calls it drops, so before this they stayed live in the
   registry and the next call found the session still started for them.
 
+### Android calls: set active, permissions, foreground service, incoming-call notification
+
+Needs a native rebuild: the package now has an Android library (autolinked).
+
+- A connected call is set active in Telecom (`setCurrentCallActive`). The
+  bridge reported connection only through callkeep's
+  `reportConnectedOutgoingCallWithUUID`, which is a no-op on Android, so every
+  answered incoming call stayed RINGING and every outgoing call DIALING
+  (Android 16 disconnects such a call after about two minutes).
+- `setup()` requests READ_PHONE_NUMBERS, RECORD_AUDIO, POST_NOTIFICATIONS
+  (13+) and BLUETOOTH_CONNECT (12+) at runtime, once the app is on screen.
+  Not CAMERA: react-native-webrtc's getUserMedia asks for it when a call first
+  sends video, so an audio-only app with `supportsVideo` is never asked. callkeep requests nothing in
+  self-managed mode, so `additionalPermissions` never asked, and without
+  READ_PHONE_NUMBERS the first incoming call killed the app with a
+  SecurityException in `VoiceConnectionService.createConnection`.
+- The ConnectionService's foreground-service types are `phoneCall|microphone`
+  (was `camera|microphone` without FOREGROUND_SERVICE_CAMERA, which Android 14+
+  refuses outright, so no call ever ran as a foreground service), with
+  FOREGROUND_SERVICE_PHONE_CALL declared. An earlier prebuild's declaration is
+  corrected. The ongoing-call notification gets a small icon
+  (`androidNotificationIcon`, default `ic_launcher`).
+- A call to a backgrounded or killed app rings: when Telecom asks for
+  incoming-call UI, the bridge posts a call notification (CallStyle, its own
+  ringing channel, Answer and Decline through the Telecom connection) whose
+  full-screen intent opens the app over the lock screen while a call rings or
+  runs. Not posted while the app is on screen. `bringToForeground()` no longer
+  starts the activity from the push's headless task (a background activity
+  start) when the library is linked. New options: `androidIncomingChannelName`.
+- A call Telecom refuses (`createIncomingConnectionFailed`) is answered and
+  rejected in the app through the SDK; a refused push with no call is ended.
+- The plugin declares BLUETOOTH_CONNECT, so incall-manager sees Bluetooth
+  headsets on Android 12+.
+- `verify:prebuild` matches whole `uses-permission` elements and checks the
+  ConnectionService declaration (guard, exported, foreground-service types).
+
 ### Android call push works from the ES-module build and with React Native Firebase 22
 
 - Android call push was off in every app that `import`s
@@ -408,6 +444,7 @@
   TypeError from a timer, fatal in a release build) instead of restarting
   ICE through TURN. A react-native-webrtc release that has the method is
   used unchanged.
+
 ### Readable caller names in the incoming-call sheet
 
 - `IncomingCallSheet` no longer shows the backend's `_undef_` placeholder or

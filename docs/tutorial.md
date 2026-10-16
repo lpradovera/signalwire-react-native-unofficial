@@ -298,5 +298,5 @@ most time:
 | A fix "does nothing" on device | Metro served a cached bundle. `iOS Bundled 42ms (1 module)` is the tell; a real bundle is ~1200 modules |
 | Push reports `delivered`, nothing arrives | Missing `aps-environment`, or a token from a different install |
 | `Call create timeout` in a browser | An unanswered microphone prompt — the SDK takes media before sending the invite |
-| Android app dies just after connecting | `READ_PHONE_NUMBERS` declared but not granted |
+| Android app dies on the first incoming or outgoing call | `READ_PHONE_NUMBERS` declared but not granted (`setup()` asks once the app is on screen; check it was not refused) |
 | Everything works, no audio | Check the OS volume for the *voice-call* stream before suspecting the SDK |

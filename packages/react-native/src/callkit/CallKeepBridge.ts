@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { AppState, NativeModules, PermissionsAndroid, Platform } from 'react-native';
 import RNCallKeep, { CONSTANTS } from 'react-native-callkeep';
 import {
   BehaviorSubject,
@@ -86,8 +86,67 @@ const HANDLE_TYPE = 'generic';
 /** A handle callkeep's updateDisplay can re-send as a phone number unchanged in meaning. */
 const PHONE_NUMBER = /^\+?[0-9]+$/;
 
-/** Runtime permissions callkeep's ConnectionService needs on Android. */
-const ANDROID_CALL_PERMISSIONS = ['android.permission.READ_PHONE_NUMBERS'];
+/**
+ * The package's own Android module (android/): the incoming-call notification
+ * a self-managed ConnectionService must post. Absent until the app is rebuilt
+ * with the package autolinked.
+ */
+interface IncomingCallModule {
+  show(
+    uuid: string,
+    handle: string,
+    name: string,
+    hasVideo: boolean,
+    channelName: string
+  ): Promise<boolean>;
+  cancel(uuid: string): void;
+  /** No call is left: the app stops showing over the lock screen. */
+  release(): void;
+}
+
+function incomingCallModule(): IncomingCallModule | undefined {
+  const modules = NativeModules as Record<string, IncomingCallModule | undefined> | undefined;
+  return modules?.SignalWireIncomingCall;
+}
+
+/** callkeep's `showIncomingCallUi` / `createIncomingConnectionFailed` payload (Android). */
+interface ConnectionEvent {
+  callUUID: string;
+  handle?: string;
+  name?: string;
+  hasVideo?: string;
+}
+
+/**
+ * Runtime permissions the call needs on Android, for this API level.
+ *
+ * callkeep requests none of them with `selfManaged: true` (its `_setupAndroid`
+ * returns first), so this package does. READ_PHONE_NUMBERS above all:
+ * callkeep's `VoiceConnectionService.createConnection` calls
+ * `TelecomManager.getPhoneAccount`, and ungranted, the first incoming or
+ * outgoing call kills the app:
+ *
+ *   FATAL EXCEPTION: main
+ *   SecurityException: Neither user nor current process has
+ *   android.permission.READ_PHONE_NUMBERS.
+ *     at VoiceConnectionService.createConnection
+ *
+ * RECORD_AUDIO also gates callkeep's own `startCall`, which ignores the call
+ * without it; POST_NOTIFICATIONS (13+) lets the incoming-call and ongoing-call
+ * notifications show; BLUETOOTH_CONNECT (12+) lets incall-manager see a headset.
+ *
+ * Not CAMERA: react-native-webrtc's getUserMedia asks for it when a call first
+ * sends video, so an app that never does is never asked.
+ */
+function androidCallPermissions(): string[] {
+  const api = Number(Platform.Version);
+  return [
+    'android.permission.READ_PHONE_NUMBERS',
+    'android.permission.RECORD_AUDIO',
+    ...(api >= 33 ? ['android.permission.POST_NOTIFICATIONS'] : []),
+    ...(api >= 31 ? ['android.permission.BLUETOOTH_CONNECT'] : [])
+  ];
+}
 
 /** Call statuses after which the native entry must be torn down. */
 // 'ended' is what the SDK actually reports — the wire shows call_state
@@ -108,6 +167,7 @@ export interface CallKitSetupOptions {
   ringtoneSound?: string;
   /** Whether the native UI offers a video button. Default `false`. */
   supportsVideo?: boolean;
+  /** Channel of the ongoing-call (foreground service) notification. */
   androidChannelId?: string;
   androidChannelName?: string;
   /**
@@ -115,6 +175,14 @@ export interface CallKitSetupOptions {
    * user can call back (see `startCallRequested$`). Default `true`.
    */
   includesCallsInRecents?: boolean;
+  /** Name of the channel incoming calls ring on. Default `'Incoming calls'`. */
+  androidIncomingChannelName?: string;
+  /**
+   * `mipmap` resource for the ongoing-call notification's small icon.
+   * Default `'ic_launcher'`, the app icon Expo and the React Native template
+   * generate. Android refuses a notification without one.
+   */
+  androidNotificationIcon?: string;
   /** How long a push entry waits for its SDK call. Default 20000. */
   fusionTimeoutMs?: number;
 }
@@ -170,6 +238,14 @@ export class CallKeepBridge {
   private expectingAudio = false;
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
+  /** Calls whose incoming-call notification is up. */
+  private readonly notified = new Set<string>();
+  /** A notification let the app show over the lock screen; released with the last call. */
+  private lockScreenHeld = false;
+  /** Calls Telecom refused to create a connection for; see handleConnectionFailed. */
+  private readonly refused = new Set<string>();
+  private incomingChannelName = 'Incoming calls';
+  private permissionsWait: { remove(): void } | null = null;
   /**
    * SDK inbound calls. The registry answers every one of them with
    * INBOUND_ANSWER (audio-only today; an in-app answer included, since that
@@ -206,7 +282,14 @@ export class CallKeepBridge {
         RNCallKeep.displayIncomingCall(uuid, handle, displayName, HANDLE_TYPE, this.reportsVideo(uuid)),
       startOutgoingCall: (uuid, handle, displayName) =>
         RNCallKeep.startCall(uuid, handle, displayName, HANDLE_TYPE, this.reportsVideo(uuid)),
-      reportOutgoingConnected: (uuid) => RNCallKeep.reportConnectedOutgoingCallWithUUID(uuid),
+      // callkeep's reportConnectedOutgoingCallWithUUID is iOS-only, a no-op on
+      // Android. There a connection stays RINGING or DIALING in Telecom until
+      // it is set active (no audio focus, no "ongoing call" anywhere, and
+      // Android 16 disconnects it after about two minutes).
+      reportOutgoingConnected: (uuid) =>
+        Platform.OS === 'android'
+          ? RNCallKeep.setCurrentCallActive(uuid)
+          : RNCallKeep.reportConnectedOutgoingCallWithUUID(uuid),
       reportCallEnded: (uuid, reason) =>
         RNCallKeep.reportEndCallWithUUID(uuid, this.endReasonFor(reason)),
       generateUuid: () => generateUuid(),
@@ -223,7 +306,10 @@ export class CallKeepBridge {
     // idle app, and the next call's start was ignored.
     this.registry.entries$
       .pipe(takeUntil(this.destroyed$))
-      .subscribe(() => this.releaseAudioIfOwnerEnded());
+      .subscribe(() => {
+        this.releaseAudioIfOwnerEnded();
+        this.withdrawSettledNotifications();
+      });
 
     // Registered here, not in setup(): callkeep flushes the events it buffered
     // while JavaScript was starting as soon as the bundle finishes loading,
@@ -253,6 +339,7 @@ export class CallKeepBridge {
     );
 
     this.supportsVideo = options.supportsVideo ?? false;
+    this.incomingChannelName = options.androidIncomingChannelName ?? 'Incoming calls';
 
     await RNCallKeep.setup({
       ios: {
@@ -270,24 +357,14 @@ export class CallKeepBridge {
         cancelButton: 'Cancel',
         okButton: 'OK',
         imageName: options.imageName,
-        // Requested at runtime, not merely declared. callkeep's
-        // ConnectionService calls TelecomManager.getPhoneAccount() while
-        // building an outgoing connection, and that needs READ_PHONE_NUMBERS
-        // — a dangerous permission, so the manifest entry callkeep ships is
-        // not enough. Ungranted, the call connects and then the *app* dies:
-        //
-        //   FATAL EXCEPTION: main
-        //   SecurityException: Neither user nor current process has
-        //   android.permission.READ_PHONE_NUMBERS
-        //     at VoiceConnectionService.createConnection
-        //
-        // which looks like a crash on answer rather than a missing grant.
-        additionalPermissions: ANDROID_CALL_PERMISSIONS,
+        // callkeep requests no permissions in self-managed mode, so
+        // `additionalPermissions` would do nothing; see requestAndroidPermissions.
         selfManaged: true,
         foregroundService: {
           channelId: options.androidChannelId ?? 'signalwire-calls',
           channelName: options.androidChannelName ?? 'Ongoing calls',
-          notificationTitle: 'Call in progress'
+          notificationTitle: 'Call in progress',
+          notificationIcon: options.androidNotificationIcon ?? 'ic_launcher'
         }
       }
     } as never);
@@ -301,6 +378,7 @@ export class CallKeepBridge {
     // call rings) waits for it; when the last one ends without a session the
     // choice is dropped. Keyed on the entries, not on audio start/stop: a
     // call that never starts audio ends with neither.
+    this.requestAndroidPermissions();
     this.registry.entries$
       .pipe(
         map((entries) => entries.some((entry) => entry.state !== 'ended')),
@@ -431,7 +509,7 @@ export class CallKeepBridge {
    */
   answerIncomingFromApp(call: Call): boolean {
     const uuid = this.registry.uuidForCall(call);
-    if (!uuid || !this.isSetup) {
+    if (!uuid || !this.isSetup || this.refused.has(uuid)) {
       // The fallback is the silent-call trap, so a decline must say why.
       logger.debug(
         `In-app answer NOT routed through CallKit (uuid=${String(uuid)}, setup=${this.isSetup}); answering the SDK directly`
@@ -446,7 +524,7 @@ export class CallKeepBridge {
   /** The reject twin of {@link answerIncomingFromApp}. */
   rejectIncomingFromApp(call: Call): boolean {
     const uuid = this.registry.uuidForCall(call);
-    if (!uuid || !this.isSetup) {
+    if (!uuid || !this.isSetup || this.refused.has(uuid)) {
       logger.debug(
         `In-app reject NOT routed through CallKit (uuid=${String(uuid)}, setup=${this.isSetup})`
       );
@@ -503,18 +581,29 @@ export class CallKeepBridge {
   }
 
   /**
-   * Brings the app to the front, for a call the OS will not show.
+   * Makes a pushed call visible, for a call the OS will not show.
    *
    * Android wakes a killed app into a headless task to handle the push, so
-   * JavaScript runs but no activity does — and with a self-managed
-   * ConnectionService the system draws nothing either. Telecom ends up
-   * holding a live connection that the user cannot see or answer.
+   * JavaScript runs but no activity does, and with a self-managed
+   * ConnectionService the system draws nothing either.
+   *
+   * With the package's Android module linked this does nothing: Telecom asks
+   * for incoming-call UI (`showIncomingCallUi`) once the connection exists,
+   * and the bridge posts the incoming-call notification, which rings, shows
+   * over the lock screen and carries Answer and Decline. Starting the activity
+   * from the headless task instead is a background activity start: refused on
+   * Android 10+ unless an exemption applies, and behind the keyguard when the
+   * phone is locked. Without the module (an app not rebuilt since installing
+   * this version) it still tries that, as before.
    *
    * iOS never needs this: CallKit puts its own screen up, over the lock
    * screen if it has to.
    */
   bringToForeground(): void {
     if (Platform.OS !== 'android' || typeof RNCallKeep?.backToForeground !== 'function') {
+      return;
+    }
+    if (incomingCallModule()) {
       return;
     }
     try {
@@ -608,6 +697,11 @@ export class CallKeepBridge {
   }
 
   destroy(): void {
+    this.permissionsWait?.remove();
+    this.permissionsWait = null;
+    for (const uuid of [...this.notified]) {
+      this.withdrawNotification(uuid);
+    }
     if (this.expectingAudio) {
       this.expectingAudio = false;
       this.withAudioRoutes('debug', (audio) => audio.expectSession(false));
@@ -824,6 +918,7 @@ export class CallKeepBridge {
 
   private handleAnswerCall(callUUID: string): void {
     logger.debug(`Native answer for ${callUUID}`);
+    this.withdrawNotification(callUUID);
     if (this.liveAction(callUUID, 'answer')) {
       return;
     }
@@ -837,6 +932,7 @@ export class CallKeepBridge {
   /** Audio, if this call owns it, is released by {@link releaseAudioIfOwnerEnded}. */
   private handleEndCall(callUUID: string): void {
     logger.debug(`Native end for ${callUUID}`);
+    this.withdrawNotification(callUUID);
     if (this.liveAction(callUUID, 'end')) {
       return;
     }
@@ -925,6 +1021,12 @@ export class CallKeepBridge {
     this.listen<StartCallEvent>('didReceiveStartCallAction', (event) =>
       this.handleStartCallAction(event)
     );
+
+    // Android only: Telecom asks a self-managed app to show its own ringing UI.
+    this.listen<ConnectionEvent>('showIncomingCallUi', (event) => this.handleShowIncomingCallUi(event));
+    this.listen<ConnectionEvent>('createIncomingConnectionFailed', (event) =>
+      this.handleConnectionFailed(event)
+    );
   }
 
   private handleStartCallAction(event: StartCallEvent): void {
@@ -948,6 +1050,132 @@ export class CallKeepBridge {
     } else {
       this.heldStartRequests.push({ request, at: Date.now() });
     }
+  }
+
+  /**
+   * Posts the incoming-call notification, when the app is not on screen.
+   *
+   * In the foreground the app shows its own ringing UI (`useRingingPushes`,
+   * or its handling of `incomingCalls$`), so a heads-up notification on top
+   * would only duplicate it.
+   */
+  private handleShowIncomingCallUi(event: ConnectionEvent): void {
+    const entry = this.registry.entryForUuid(event.callUUID);
+    const module = incomingCallModule();
+    if (!entry || !this.registry.isLive(entry.uuid) || !module) {
+      return;
+    }
+    if (AppState.currentState === 'active') {
+      logger.debug(`Incoming call ${entry.uuid} rings in the app`);
+      return;
+    }
+    this.notified.add(entry.uuid);
+    this.lockScreenHeld = true;
+    logger.debug(`Posting the incoming-call notification for ${entry.uuid}`);
+    module
+      .show(
+        entry.uuid,
+        decodeHandle(event.handle) ?? entry.handle,
+        event.name ?? entry.displayName,
+        event.hasVideo === 'true',
+        this.incomingChannelName
+      )
+      .catch((error: unknown) => {
+        logger.warn('Could not post the incoming-call notification:', error);
+      });
+  }
+
+  /**
+   * Telecom refused the incoming call (another call in progress, the system's
+   * call limit, a phone account it no longer accepts). There is no connection,
+   * so a callkeep answer or reject would do nothing: an SDK call is answered
+   * and rejected in the app directly from now on, and a push with no call to
+   * answer is over.
+   */
+  private handleConnectionFailed(event: ConnectionEvent): void {
+    const entry = this.registry.entryForUuid(event.callUUID);
+    if (!entry) {
+      return;
+    }
+    logger.warn(`Telecom refused incoming call ${entry.uuid}`);
+    this.refused.add(entry.uuid);
+    this.withdrawNotification(entry.uuid);
+    if (!entry.call) {
+      this.registry.reportRemoteEnded(entry.uuid);
+    }
+  }
+
+  /**
+   * Withdraws notifications of calls that are no longer ringing, and lets the
+   * lock screen back once no call is left.
+   */
+  private withdrawSettledNotifications(): void {
+    for (const uuid of [...this.notified]) {
+      const entry = this.registry.entryForUuid(uuid);
+      if (!entry || !this.registry.isLive(uuid) || entry.intent !== null) {
+        this.withdrawNotification(uuid);
+      }
+    }
+    if (this.lockScreenHeld && !this.registry.entries.some((e) => this.registry.isLive(e.uuid))) {
+      this.lockScreenHeld = false;
+      try {
+        incomingCallModule()?.release();
+      } catch (error) {
+        logger.debug('Could not release the lock screen:', error);
+      }
+    }
+  }
+
+  private withdrawNotification(uuid: string): void {
+    if (!this.notified.delete(uuid)) {
+      return;
+    }
+    try {
+      incomingCallModule()?.cancel(uuid);
+    } catch (error) {
+      logger.debug('Could not withdraw the incoming-call notification:', error);
+    }
+  }
+
+  /**
+   * Asks for {@link androidCallPermissions}, once, with the app on screen.
+   *
+   * setup() runs from the entry file, which for a push to a killed app is a
+   * headless task with no activity to ask from; then it waits for the app to
+   * come forward. A refusal is logged, not thrown: Android decides what the
+   * call can still do.
+   */
+  private requestAndroidPermissions(): void {
+    if (Platform.OS !== 'android' || typeof PermissionsAndroid?.requestMultiple !== 'function') {
+      return;
+    }
+    const request = () => {
+      const permissions = androidCallPermissions();
+      void PermissionsAndroid.requestMultiple(permissions as never)
+        .then((results) => {
+          const refused = Object.entries(results as Record<string, string>)
+            .filter(([, result]) => result !== 'granted')
+            .map(([permission]) => permission);
+          if (refused.length > 0) {
+            logger.warn(`Call permissions not granted: ${refused.join(', ')}`);
+          }
+        })
+        .catch((error: unknown) => {
+          logger.warn('Could not request the call permissions:', error);
+        });
+    };
+    if (AppState.currentState === 'active') {
+      request();
+      return;
+    }
+    this.permissionsWait = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') {
+        return;
+      }
+      this.permissionsWait?.remove();
+      this.permissionsWait = null;
+      request();
+    });
   }
 
   /**
@@ -997,10 +1225,10 @@ export class CallKeepBridge {
         { defaultValue: false }
       );
     }
-    // The call can end during the wait. Started anyway, the session would stay
-    // up with nothing left to stop it, and the next call, whose own start is
+    // The call can end during the wait, including a push the user ended
+    // before its SDK call existed. Started anyway, the session would stay up
+    // with nothing left to stop it, and the next call, whose own start is
     // ignored because start() is first-wins, would inherit this call's mode.
-    // A push the user ended before its SDK call existed is over too.
     const entry = this.registry.entryForUuid(uuid);
     if (!entry || !this.registry.isLive(uuid)) {
       logger.debug(`Call ${uuid} ended before its audio session was ready; not starting audio`);
@@ -1270,6 +1498,18 @@ export class CallKeepBridge {
 
 function isRemovable(value: unknown): value is { remove(): void } {
   return typeof (value as { remove?: unknown } | null | undefined)?.remove === 'function';
+}
+
+/** callkeep hands Android handles URI-encoded (`%2B1555...`). */
+function decodeHandle(handle: string | undefined): string | undefined {
+  if (handle === undefined) {
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(handle);
+  } catch {
+    return handle;
+  }
 }
 
 /** RFC 4122 v4 UUID. `crypto.getRandomValues` comes from the polyfills entry. */

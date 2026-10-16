@@ -252,14 +252,16 @@ describe('CallKeepBridge', () => {
     expect(RNCallKeep.reportEndCallWithUUID).toHaveBeenCalledWith(uuid, expect.any(Number));
   });
 
-  it('reports an outgoing call connected when its status reaches connected', async () => {
+  it('sets an outgoing call active in Telecom when its status reaches connected', async () => {
+    // This suite runs as Android, where callkeep's
+    // reportConnectedOutgoingCallWithUUID is a no-op (iOS: CallKeepBridge.ios.test.ts).
     await bridge.setup({ appName: 'Demo' });
     const call = createCall('c1');
     const uuid = bridge.trackCall(call as never, '/public/room', 'Support');
 
     call._status$.next('connected');
 
-    expect(RNCallKeep.reportConnectedOutgoingCallWithUUID).toHaveBeenCalledWith(uuid);
+    expect(RNCallKeep.setCurrentCallActive).toHaveBeenCalledWith(uuid);
   });
 
   it('trackCall starts a native outgoing call', async () => {
@@ -875,21 +877,5 @@ describe('CallKeepBridge', () => {
 
       expect(asked).toEqual([{ bridgeToken: 'opaque-token' }]);
     });
-  });
-
-  it('asks for READ_PHONE_NUMBERS, which the outgoing connection needs', async () => {
-    // Declared but ungranted, the call connects and then the app dies with
-    // SecurityException inside VoiceConnectionService.createConnection —
-    // which reads as a crash on answer, not a missing runtime grant.
-    const bridge = new CallKeepBridge();
-    await bridge.setup({ appName: 'Demo' });
-
-    const options = (RNCallKeep.setup as jest.Mock).mock.calls[0][0] as {
-      android: { additionalPermissions: string[] };
-    };
-
-    expect(options.android.additionalPermissions).toContain(
-      'android.permission.READ_PHONE_NUMBERS'
-    );
   });
 });

@@ -12,6 +12,27 @@ const listeners = new Map<string, Set<Handler>>();
 let legacyApi = false;
 const legacyHandlers = new Map<string, { remove(): void }>();
 
+/** react-native-callkeep 4.3.16's event names (actions.js); any other name throws there. */
+const KNOWN_EVENTS = new Set([
+  'didReceiveStartCallAction',
+  'answerCall',
+  'endCall',
+  'didActivateAudioSession',
+  'didDeactivateAudioSession',
+  'didDisplayIncomingCall',
+  'didPerformSetMutedCallAction',
+  'didToggleHoldCallAction',
+  'didPerformDTMFAction',
+  'didResetProvider',
+  'checkReachability',
+  'didLoadWithEvents',
+  'showIncomingCallUi',
+  'silenceIncomingCall',
+  'createIncomingConnectionFailed',
+  'didChangeAudioRoute',
+  'onHasActiveCall'
+]);
+
 const RNCallKeep = {
   setup: jest.fn(async () => undefined),
   setAvailable: jest.fn(),
@@ -20,11 +41,18 @@ const RNCallKeep = {
   rejectCall: jest.fn(),
   startCall: jest.fn(),
   reportConnectedOutgoingCallWithUUID: jest.fn(),
+  setCurrentCallActive: jest.fn(),
+  backToForeground: jest.fn(),
   reportEndCallWithUUID: jest.fn(),
   updateDisplay: jest.fn(),
   clearInitialEvents: jest.fn(),
+  endCall: jest.fn(),
   /** Like callkeep 4.3.16: returns an EventListener whose remove() drops this handler only. */
   addEventListener: jest.fn((event: string, handler: Handler) => {
+    if (!KNOWN_EVENTS.has(event)) {
+      // What callkeep does: `listeners[type]` is undefined, and calling it throws.
+      throw new TypeError(`listeners[type] is not a function (${event})`);
+    }
     const set = listeners.get(event) ?? new Set<Handler>();
     set.add(handler);
     listeners.set(event, set);
