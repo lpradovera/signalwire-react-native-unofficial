@@ -1,7 +1,8 @@
 /**
- * ES2025 iterator helpers, for runtimes that lack them.
+ * The two ES2025 iterator helpers `@signalwire/js` calls, for runtimes that
+ * lack them.
  *
- * `@signalwire/js` calls them on `Map` iterators, e.g. in `DirectoryManager`:
+ * The SDK calls them on `Map` iterators in `DirectoryManager`:
  *
  * ```js
  * Array.from(this._addressesInstances.values().map((address) => address.id));
@@ -17,25 +18,35 @@
  * the other four it is not an import-time failure: it lies dormant until a
  * code path reaches one of these calls.
  *
- * Only missing methods are installed, so a Hermes release that ships the real
- * helpers takes precedence automatically.
+ * The polyfill goes on the realm-wide `%IteratorPrototype%`, so every library
+ * in the app sees it. That is why it is only `map` and `find`, and why they
+ * follow the spec where app code can tell the difference: the callback is
+ * checked at the call, the index is passed, and the source iterator is
+ * closed when the helper is returned early, when the callback throws, and
+ * when `find` has its answer. Feature-detecting code that finds the other
+ * helpers missing uses its own fallback, as it would on any engine without
+ * them. Only missing methods are installed, so a Hermes release that ships
+ * the real helpers takes precedence automatically.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+type Result = IteratorResult<unknown>;
 
-type AnyIterator = Iterator<unknown> & Record<string, unknown>;
+interface Direct {
+  iterator: Iterator<unknown>;
+  next: () => Result;
+}
 
 /** The shared `%IteratorPrototype%`, reached through any built-in iterator. */
-function iteratorPrototype(): Record<string, unknown> | null {
+function iteratorPrototype(): Record<PropertyKey, unknown> | null {
   const arrayIterator = [][Symbol.iterator]();
   const arrayIteratorPrototype = Object.getPrototypeOf(arrayIterator) as object | null;
   const shared = arrayIteratorPrototype
     ? (Object.getPrototypeOf(arrayIteratorPrototype) as object | null)
     : null;
-  return shared as Record<string, unknown> | null;
+  return shared as Record<PropertyKey, unknown> | null;
 }
 
-function define(target: Record<string, unknown>, name: string, value: unknown): void {
+function define(target: Record<PropertyKey, unknown>, name: string, value: unknown): void {
   if (typeof target[name] === 'function') {
     return;
   }
@@ -47,133 +58,142 @@ function define(target: Record<string, unknown>, name: string, value: unknown): 
   });
 }
 
+/** GetIteratorDirect: the iterator and its `next`, read once. */
+function direct(target: unknown): Direct {
+  if ((typeof target !== 'object' && typeof target !== 'function') || target === null) {
+    throw new TypeError('Iterator helper called on a non-object');
+  }
+  const iterator = target as Iterator<unknown>;
+  const next = iterator.next;
+  return { iterator, next: () => next.call(iterator) as Result };
+}
+
+function close(iterator: Iterator<unknown>): void {
+  const done = iterator.return;
+  if (typeof done === 'function') {
+    done.call(iterator);
+  }
+}
+
+/** Closes after a throw: the original error wins over one from `return()`. */
+function closeQuietly(iterator: Iterator<unknown>): void {
+  try {
+    close(iterator);
+  } catch {
+    // The caller rethrows the error that made us close.
+  }
+}
+
+/** Closes the source and throws when `callback` is not callable. */
+function requireCallable(iterator: Iterator<unknown>, callback: unknown, helper: string): void {
+  if (typeof callback !== 'function') {
+    closeQuietly(iterator);
+    throw new TypeError(`Iterator.prototype.${helper} requires a function, got ${typeof callback}`);
+  }
+}
+
+interface HelperState {
+  next(): Result;
+  return(): Result;
+}
+
+const DONE: Result = { value: undefined, done: true };
+
 /**
  * Installs the iterator helpers the SDK relies on. Safe to call repeatedly.
- *
- * Deliberately not the full ES2025 surface — these are the ones the SDK uses,
- * plus the close relatives a caller would reasonably reach for next.
  */
 export function installIteratorHelpers(): void {
   const proto = iteratorPrototype();
-  if (!proto) {
+  if (!proto || (typeof proto.map === 'function' && typeof proto.find === 'function')) {
     return;
   }
 
-  define(proto, 'map', function* (this: AnyIterator, fn: (value: any, index: number) => any) {
-    let index = 0;
-    for (const value of this as unknown as Iterable<unknown>) {
-      yield fn(value, index++);
+  const states = new WeakMap<object, HelperState>();
+  const stateOf = (helper: unknown): HelperState => {
+    const state = typeof helper === 'object' && helper !== null ? states.get(helper) : undefined;
+    if (!state) {
+      throw new TypeError('Not an iterator helper');
     }
-  });
+    return state;
+  };
 
-  define(proto, 'filter', function* (this: AnyIterator, fn: (value: any, index: number) => boolean) {
-    let index = 0;
-    for (const value of this as unknown as Iterable<unknown>) {
-      if (fn(value, index++)) {
-        yield value;
-      }
-    }
-  });
+  // %IteratorHelperPrototype%: inherits Symbol.iterator from %IteratorPrototype%.
+  const helperPrototype = Object.create(proto, {
+    next: {
+      value: function next(this: unknown): Result {
+        return stateOf(this).next();
+      },
+      writable: true,
+      configurable: true
+    },
+    return: {
+      value: function return_(this: unknown): Result {
+        return stateOf(this).return();
+      },
+      writable: true,
+      configurable: true
+    },
+    [Symbol.toStringTag]: { value: 'Iterator Helper', configurable: true }
+  }) as object;
 
-  define(proto, 'flatMap', function* (this: AnyIterator, fn: (value: any, index: number) => any) {
-    let index = 0;
-    for (const value of this as unknown as Iterable<unknown>) {
-      const mapped = fn(value, index++);
-      if (mapped != null && typeof (mapped as any)[Symbol.iterator] === 'function') {
-        yield* mapped as Iterable<unknown>;
-      } else {
-        yield mapped;
-      }
-    }
-  });
+  define(proto, 'map', function map(this: unknown, mapper: unknown): object {
+    const source = direct(this);
+    requireCallable(source.iterator, mapper, 'map');
+    const fn = mapper as (value: unknown, index: number) => unknown;
+    let counter = 0;
+    let done = false;
 
-  define(proto, 'take', function* (this: AnyIterator, limit: number) {
-    if (limit <= 0) {
-      return;
-    }
-    let taken = 0;
-    for (const value of this as unknown as Iterable<unknown>) {
-      yield value;
-      if (++taken >= limit) {
-        return;
-      }
-    }
-  });
-
-  define(proto, 'drop', function* (this: AnyIterator, count: number) {
-    let dropped = 0;
-    for (const value of this as unknown as Iterable<unknown>) {
-      if (dropped++ < count) {
-        continue;
-      }
-      yield value;
-    }
-  });
-
-  define(proto, 'find', function (this: AnyIterator, fn: (value: any, index: number) => boolean) {
-    let index = 0;
-    for (const value of this as unknown as Iterable<unknown>) {
-      if (fn(value, index++)) {
-        return value;
-      }
-    }
-    return undefined;
-  });
-
-  define(proto, 'some', function (this: AnyIterator, fn: (value: any, index: number) => boolean) {
-    let index = 0;
-    for (const value of this as unknown as Iterable<unknown>) {
-      if (fn(value, index++)) {
-        return true;
-      }
-    }
-    return false;
-  });
-
-  define(proto, 'every', function (this: AnyIterator, fn: (value: any, index: number) => boolean) {
-    let index = 0;
-    for (const value of this as unknown as Iterable<unknown>) {
-      if (!fn(value, index++)) {
-        return false;
-      }
-    }
-    return true;
-  });
-
-  define(proto, 'forEach', function (this: AnyIterator, fn: (value: any, index: number) => void) {
-    let index = 0;
-    for (const value of this as unknown as Iterable<unknown>) {
-      fn(value, index++);
-    }
-  });
-
-  define(
-    proto,
-    'reduce',
-    function (this: AnyIterator, fn: (acc: any, value: any, index: number) => any, ...rest: any[]) {
-      let index = 0;
-      let acc: unknown;
-      let seeded = rest.length > 0;
-      if (seeded) {
-        acc = rest[0];
-      }
-      for (const value of this as unknown as Iterable<unknown>) {
-        if (!seeded) {
-          acc = value;
-          seeded = true;
-          index++;
-          continue;
+    const helper = Object.create(helperPrototype) as object;
+    states.set(helper, {
+      next(): Result {
+        if (done) {
+          return DONE;
         }
-        acc = fn(acc, value, index++);
+        const result = source.next();
+        if (result.done) {
+          done = true;
+          return DONE;
+        }
+        try {
+          return { value: fn(result.value, counter++), done: false };
+        } catch (error) {
+          done = true;
+          closeQuietly(source.iterator);
+          throw error;
+        }
+      },
+      return(): Result {
+        if (!done) {
+          done = true;
+          close(source.iterator);
+        }
+        return DONE;
       }
-      if (!seeded) {
-        throw new TypeError('Reduce of empty iterator with no initial value');
-      }
-      return acc;
-    }
-  );
+    });
+    return helper;
+  });
 
-  define(proto, 'toArray', function (this: AnyIterator) {
-    return Array.from(this as unknown as Iterable<unknown>);
+  define(proto, 'find', function find(this: unknown, predicate: unknown): unknown {
+    const source = direct(this);
+    requireCallable(source.iterator, predicate, 'find');
+    const fn = predicate as (value: unknown, index: number) => unknown;
+    let counter = 0;
+    for (;;) {
+      const result = source.next();
+      if (result.done) {
+        return undefined;
+      }
+      let matched: unknown;
+      try {
+        matched = fn(result.value, counter++);
+      } catch (error) {
+        closeQuietly(source.iterator);
+        throw error;
+      }
+      if (matched) {
+        close(source.iterator);
+        return result.value;
+      }
+    }
   });
 }
