@@ -196,6 +196,35 @@ describe('AudioRouteController', () => {
       expect(controller.route).toBe('speaker');
     });
 
+    it("keeps a speaker-off made before the session, so a video call doesn't start on the speaker", () => {
+      // A video call rings; the user turns the speaker on, then off again.
+      controller.holdChoicesUntilStart();
+      controller.setSpeakerOn(true);
+      controller.setSpeakerOn(false);
+      expect(controller.route).toBe('earpiece');
+      expect(flag).not.toHaveBeenCalled();
+
+      controller.start('video');
+
+      expect(controller.route).toBe('earpiece');
+      expect(flag.mock.calls).toEqual([[false]]);
+    });
+
+    it('keeps a speaker-off made before the session with incall-manager’s iOS routes', async () => {
+      installIncallIosRoutes();
+      controller.holdChoicesUntilStart();
+      controller.setSpeakerOn(true);
+      controller.setSpeakerOn(false);
+
+      controller.start('video');
+      await flush();
+
+      // Speaker off is the default route, not a receiver choice.
+      expect(choose).not.toHaveBeenCalled();
+      expect(flag.mock.calls).toEqual([[false]]);
+      expect(controller.route).toBe('earpiece');
+    });
+
     it('writes nothing native for a call that never starts', () => {
       // After a video call, incall-manager's speaker-off outside a session
       // turned the proximity sensor on in the idle app.
