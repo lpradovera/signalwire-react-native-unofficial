@@ -21,7 +21,10 @@
   isn't in the buffer is held until `setup()` adopts that push, instead of
   being dropped.
 - `CallKeepBridge.destroy()` removes only the bridge's own callkeep handlers,
-  not every handler of each event type in the app.
+  not every handler of each event type in the app. On callkeep 4.3.0-4.3.8,
+  whose `addEventListener` returns nothing, it reads each handler's
+  subscription back from callkeep as it is added, so it removes them there
+  too.
 - A CallKit provider reset (callservicesd restarting, say) ends every live
   call as a native end would: its SDK call is hung up, a ringing push is
   turned down, and the audio session is stopped. CallKit sends no endCall

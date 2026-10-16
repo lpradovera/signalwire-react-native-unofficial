@@ -10,6 +10,7 @@ jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 const callkeep = RNCallKeep as unknown as typeof RNCallKeep & {
   __emit: (event: string, payload: unknown) => void;
   __reset: () => void;
+  __useLegacyApi: () => void;
 };
 
 function createCall(id: string) {
@@ -242,6 +243,35 @@ describe('CallKeepBridge', () => {
     callkeep.__emit('answerCall', { callUUID: uuid });
 
     expect(applyIntent).not.toHaveBeenCalled();
+  });
+
+  it('destroy removes its own native listeners on callkeep 4.3.0-4.3.8, whose addEventListener returns nothing', async () => {
+    // Left subscribed, a destroyed bridge adopts the next push too, and its
+    // own tick later ends the live bridge's answered call as missed.
+    callkeep.__useLegacyApi();
+    const old = new CallKeepBridge();
+    await old.setup({ appName: 'Demo' });
+    const appEndCall = jest.fn();
+    RNCallKeep.addEventListener('endCall', appEndCall);
+    old.destroy();
+    await bridge.setup({ appName: 'Demo' });
+    const display = jest.spyOn(old.registry, 'adoptNativeEntry');
+    const answer = jest.spyOn(old.registry, 'applyIntent');
+
+    callkeep.__emit('didDisplayIncomingCall', {
+      callUUID: 'next-uuid',
+      handle: '+15551234567',
+      localizedCallerName: 'Ada',
+      fromPushKit: '1'
+    });
+    callkeep.__emit('answerCall', { callUUID: 'next-uuid' });
+    callkeep.__emit('endCall', { callUUID: 'other' });
+
+    expect(display).not.toHaveBeenCalled();
+    expect(answer).not.toHaveBeenCalled();
+    expect(bridge.registry.entryForUuid('next-uuid')?.intent).toBe('answer');
+    // The app's handler, added after the bridge's, stays.
+    expect(appEndCall).toHaveBeenCalledTimes(1);
   });
 
   it("destroy leaves the app's own callkeep handlers in place", async () => {
