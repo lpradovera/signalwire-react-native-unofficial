@@ -181,6 +181,17 @@ export class AudioRouteController {
   private early: RouteState | null = null;
   /** A call that will start a session is live; see {@link expectSession}. */
   private expecting = false;
+  /**
+   * Numbers the writes: a choice's refusal goes back only if no later choice
+   * or write replaced it.
+   */
+  private writes = 0;
+  /**
+   * What a refused choice goes back to while choices are in flight: the
+   * state before the first of them, which incall-manager had confirmed (or a
+   * write had set), not another choice still waiting for its answer.
+   */
+  private unconfirmed: Snapshot | null = null;
   private destroyed = false;
 
   constructor() {
@@ -333,6 +344,8 @@ export class AudioRouteController {
     const session = this.session;
     this.session = null;
     this.early = null;
+    this.writes += 1;
+    this.unconfirmed = null;
     session?.devices?.unsubscribe();
     if (session?.readyTimer) {
       clearTimeout(session.readyTimer);
@@ -421,14 +434,15 @@ export class AudioRouteController {
       warnOnce('noSessionRoute');
       return;
     }
-    const before: Snapshot = base ?? {
+    const shown: Snapshot = base ?? {
       route: this._route$.value,
       chosen: this.chosen,
       beforeSpeaker: this.beforeSpeaker
     };
-    this.beforeSpeaker = before.beforeSpeaker;
-    if (route === 'speaker' && before.route !== 'speaker') {
-      this.beforeSpeaker = { route: before.route, chosen: before.chosen };
+    const before = base ?? this.unconfirmed ?? shown;
+    this.beforeSpeaker = shown.beforeSpeaker;
+    if (route === 'speaker' && shown.route !== 'speaker') {
+      this.beforeSpeaker = { route: shown.route, chosen: shown.chosen };
     }
     this.chosen = chosen;
     this._route$.next(route);
@@ -469,6 +483,10 @@ export class AudioRouteController {
       return;
     }
     const flag = speakerFlag(session, route, chosen);
+    // A write replaces every choice still in flight: their refusals no
+    // longer go back, and what it sets is the state to go back to.
+    this.writes += 1;
+    this.unconfirmed = null;
     if (!session.iosRoutes) {
       this.writeSpeaker(route, flag);
       return;
@@ -503,6 +521,9 @@ export class AudioRouteController {
    */
   private choose(session: Session, route: AudioRoute, before: Snapshot, onRefused: (() => void) | undefined): void {
     const device = DEVICE_FOR_ROUTE[route];
+    this.writes += 1;
+    const write = this.writes;
+    this.unconfirmed = before;
     session.pending += 1;
     // Called now, in order with every other native call; a synchronous throw
     // becomes a rejection like any refusal.
@@ -517,26 +538,40 @@ export class AudioRouteController {
           }
           if (!answered.available.includes(device)) {
             logger.warn(`Failed to apply audio route "${route}": no such device`);
-            this.refuse(session, route, before, onRefused);
+            this.refuse(session, write, before, onRefused);
+          } else {
+            this.confirm(write);
           }
           this.settle(session, null);
           return;
         }
+        this.confirm(write);
         this.settle(session, answered.selected !== null ? answered : null);
       },
       (error: unknown) => {
         logger.warn(`Failed to apply audio route "${route}":`, error);
-        this.refuse(session, route, before, onRefused);
+        this.refuse(session, write, before, onRefused);
         this.settle(session, null);
       }
     );
   }
 
-  /** Puts the route state back the way it was before a refused choice, if nothing replaced it. */
-  private refuse(session: Session, route: AudioRoute, before: Snapshot, onRefused: (() => void) | undefined): void {
-    if (this.session !== session || this._route$.value !== route) {
+  /** The latest choice was taken: nothing in flight to go back from. */
+  private confirm(write: number): void {
+    if (write === this.writes) {
+      this.unconfirmed = null;
+    }
+  }
+
+  /**
+   * Puts the route state back the way it was before a refused choice, if no
+   * later choice or write replaced it (that one's own answer decides).
+   */
+  private refuse(session: Session, write: number, before: Snapshot, onRefused: (() => void) | undefined): void {
+    if (this.session !== session || write !== this.writes) {
       return;
     }
+    this.unconfirmed = null;
     this.chosen = before.chosen;
     this.beforeSpeaker = before.beforeSpeaker;
     this._route$.next(before.route);
@@ -554,7 +589,7 @@ export class AudioRouteController {
     }
     const latest = answered ?? session.deferred;
     session.deferred = null;
-    if (latest && session.devices !== null) {
+    if (latest) {
       this.mirror(session, latest);
     }
   }

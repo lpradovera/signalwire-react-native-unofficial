@@ -35,7 +35,12 @@
   hold the last status read. One native subscription serves every hook and
   the controller, in every bundle copy of the package; it is released when
   the last of them unsubscribes, and a call's start reads the status once.
-- A refused route (no such device) leaves `route` where it was. On Android,
+- A refused route (no such device) leaves `route` where it was: the route
+  incall-manager last confirmed, also when the choice was held for the
+  session (it used to "go back" to the held route itself) or other choices
+  were still waiting for their answers (a refusal is matched to its own
+  choice, not to the route shown, and one a later choice or write replaced
+  changes nothing). On Android,
   where incall-manager answers a Bluetooth choice it can't make instead of
   refusing it, the answer's device list decides, and speaker-off falls back
   to the speaker off when the device it would return to is gone.
