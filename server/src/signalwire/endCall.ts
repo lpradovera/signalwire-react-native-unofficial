@@ -20,13 +20,16 @@ export interface CallEnderOptions {
   projectId: string;
   apiToken: string;
   fetchImpl?: typeof fetch;
+  /** Bound on the REST request. Default 10s. */
+  timeoutMs?: number;
 }
 
 export function createCallEnder({
   space,
   projectId,
   apiToken,
-  fetchImpl = fetch
+  fetchImpl = fetch,
+  timeoutMs = 10_000
 }: CallEnderOptions): CallEnder {
   const url = `https://${space}/api/calling/calls`;
   const auth = Buffer.from(`${projectId}:${apiToken}`).toString('base64');
@@ -44,7 +47,8 @@ export function createCallEnder({
           // 404 here reads as "no such call" rather than "wrong field name",
           // which is a slow thing to discover. `command` is the namespaced
           // form; the bare "end" is also rejected.
-          body: JSON.stringify({ command: 'calling.end', id: callId, reason })
+          body: JSON.stringify({ command: 'calling.end', id: callId, reason }),
+          signal: AbortSignal.timeout(timeoutMs)
         });
 
         if (!response.ok) {

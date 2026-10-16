@@ -40,9 +40,13 @@ is why `example/.env` points at a `*.ts.net` hostname and why the script pins
 the Mac's loopback and may not share its WiFi. A cable is only for reinstalling
 the app or streaming the device console.
 
-**Turn the funnel off when you stop.** It publishes port 3000 to the public
-internet while `ALLOW_UNAUTHENTICATED_TOKENS=1` mints a subscriber token for
-anyone who asks. `scripts/dev.sh down` disables it first, before anything else.
+**Turn the funnel off when you stop.** It publishes port 3000, the whole
+server, to the public internet. With the development settings in
+`server/.env`, `ALLOW_UNAUTHENTICATED_TOKENS=1` mints a subscriber token for anyone who asks,
+and with `API_TOKEN` unset (the example app registers without it) `/notify`,
+`/devices` and `/webhooks/signalwire` are open too: anyone can push a call to
+any user, list every device token, and register or delete devices.
+`scripts/dev.sh down` disables the funnel first, before anything else.
 
 Two failure modes worth recognising rather than re-debugging:
 

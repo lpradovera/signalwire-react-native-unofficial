@@ -75,9 +75,14 @@ export function createTokenRoutes({ minter, authenticateCaller }: TokenRouteOpti
  */
 export function createDevAuthenticateCaller(defaultReference: string): AuthenticateCaller {
   return (req) => {
-    const body = req.body as { reference?: unknown } | undefined;
-    return typeof body?.reference === 'string' && body.reference.length > 0
-      ? body.reference
-      : defaultReference;
+    // `reference` is what /token is sent; `externalUserId` is what /devices is
+    // sent (with DEVICE_AUTH=caller). Either names the caller, unchecked.
+    const body = req.body as { reference?: unknown; externalUserId?: unknown } | undefined;
+    for (const claimed of [body?.reference, body?.externalUserId]) {
+      if (typeof claimed === 'string' && claimed.length > 0) {
+        return claimed;
+      }
+    }
+    return defaultReference;
   };
 }

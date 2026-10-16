@@ -63,7 +63,7 @@ async function listen(app: ReturnType<typeof buildApp>['app']): Promise<{
   base: string;
 }> {
   const server = await new Promise<Server>((resolve) => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   const address = server.address();
   return {
@@ -151,7 +151,7 @@ describe('POST /token', () => {
     const response = await post(built);
 
     assert.equal(response.status, 502);
-    assert.match((await response.json()).error, /no recognisable token/i);
+    assert.match(((await response.json()) as { error: string }).error, /no recognisable token/i);
   });
 
   it('explains the missing configuration rather than 404ing', async () => {
@@ -159,6 +159,6 @@ describe('POST /token', () => {
     const response = await post(built);
 
     assert.equal(response.status, 503);
-    assert.match((await response.json()).error, /SIGNALWIRE_SPACE/);
+    assert.match(((await response.json()) as { error: string }).error, /SIGNALWIRE_SPACE/);
   });
 });

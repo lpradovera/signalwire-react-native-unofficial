@@ -1,0 +1,6 @@
+{
+  // The emitted server. Tests are type-checked by tsconfig.json (`npm run
+  // type-check`) but never compiled into dist/.
+  "extends": "./tsconfig.json",
+  "exclude": ["src/**/*.test.ts"]
+}

@@ -15,6 +15,8 @@ export interface SubscriberTokenMinterOptions {
   apiToken: string;
   /** Injectable for tests. Defaults to global `fetch`. */
   fetchImpl?: typeof fetch;
+  /** Bound on the request to SignalWire. Default 10s. */
+  timeoutMs?: number;
 }
 
 export interface SubscriberToken {
@@ -72,7 +74,8 @@ export class SubscriberTokenMinter {
         'content-type': 'application/json',
         authorization: this.authorization
       },
-      body: JSON.stringify({ reference })
+      body: JSON.stringify({ reference }),
+      signal: AbortSignal.timeout(this.options.timeoutMs ?? 10_000)
     });
 
     const text = await response.text();
