@@ -1,7 +1,7 @@
 # `@signalwire/react-ui`
 
-> **Unofficial.** This is a community project, not a SignalWire product, and is
-> not affiliated with or endorsed by SignalWire.
+> **Alpha.** On its way to becoming SignalWire's supported React Native SDK;
+> APIs may change between alpha releases.
 
 React components for the SignalWire [web components](https://www.npmjs.com/package/@signalwire/web-components).
 **Browser only** — React Native has its own component kit.
@@ -10,7 +10,7 @@ These are thin wrappers, not reimplementations. The SDK already ships 26 Lit
 components; this package makes the SDK-aware ones idiomatic in React.
 
 ```bash
-npm install @signalwire/react-ui @signalwire/web-components @lit/react @signalwire/react
+npm install @signalwire/react-ui@alpha @signalwire/web-components @lit/react @signalwire/react@alpha
 ```
 
 ```tsx
