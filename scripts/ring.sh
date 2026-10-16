@@ -13,6 +13,10 @@
 # up to and including "Bridged device to parked caller" in the server log is
 # genuine. Use a real call for the last mile.
 #
+# The subscriber rides on the handler URL (`/swml/park?subscriber=`), the one
+# place the park route takes it from; a caller cannot set it. The request is
+# unsigned, so this works only while SIGNALWIRE_SIGNING_KEY is unset.
+#
 # Usage: scripts/ring.sh [subscriber]
 set -euo pipefail
 
@@ -20,9 +24,9 @@ SERVER="${SW_SERVER:-http://127.0.0.1:3000}"
 SUBSCRIBER="${1:-rn-example}"
 CALL_SID="synthetic-$(date +%s)"
 
-curl -sS -X POST "$SERVER/swml/park" \
+curl -sS -X POST "$SERVER/swml/park?subscriber=$SUBSCRIBER" \
   -H 'content-type: application/json' \
-  -d "{\"params\":{\"call\":{\"call_id\":\"$CALL_SID\",\"to\":\"/public/rn-example-park\",\"from\":\"+15551234567\",\"from_name\":\"Fast Loop\"},\"vars\":{\"subscriber\":\"$SUBSCRIBER\"}}}" \
+  -d "{\"params\":{\"call\":{\"call_id\":\"$CALL_SID\",\"to\":\"/public/rn-example-park\",\"from\":\"+15551234567\",\"from_name\":\"Fast Loop\"}}}" \
   | python3 -c "import sys,json; d=json.load(sys.stdin); print('park SWML:', [list(v)[0] for v in d['sections']['main']])"
 
 echo "rang $SUBSCRIBER (sid $CALL_SID) — answer on the device, then: scripts/trace.sh"

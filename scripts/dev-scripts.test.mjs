@@ -201,7 +201,8 @@ describe('trace.sh', () => {
       lines.map((l) => l.slice(9)),
       [
         'device  SignalWireRNExample[1:2] [SignalWireVoipPush] compact recent',
-        'server  Parked caller and pushed sid-recent',
+        // Every server line, with the fields that say why (see trace.sh).
+        'server  Parked caller and pushed callSid=sid-recent',
         'device  SignalWireRNExample: [SignalWireVoipPush] default recent'
       ]
     );
@@ -209,7 +210,7 @@ describe('trace.sh', () => {
 
   test('lists lines without a time apart, never stamped with the current time', () => {
     assert.match(untimed(), /js {6}Adopted bridge call abc/);
-    assert.match(untimed(), /server {2}Bridge token rejected expired/);
+    assert.match(untimed(), /server {2}Bridge token rejected reason=expired/);
     assert.doesNotMatch(timeline(), /Adopted bridge call|Bridge token rejected/);
   });
 });

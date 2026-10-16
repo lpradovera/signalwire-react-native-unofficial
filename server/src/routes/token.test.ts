@@ -69,7 +69,7 @@ async function listen(app: ReturnType<typeof buildApp>['app']): Promise<{
   base: string;
 }> {
   const server = await new Promise<Server>((resolve) => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   const address = server.address();
   return {
@@ -131,7 +131,7 @@ describe('POST /token', () => {
     const response = await post(built, { reference: 'sub-42' });
 
     assert.equal((built.calls[0]?.body as { expire_at: number }).expire_at, NOW_S + 120);
-    assert.equal((await response.json()).expires_at, NOW_S + 120);
+    assert.equal(((await response.json()) as { expires_at: number }).expires_at, NOW_S + 120);
   });
 
   it('rejects when the caller cannot be authenticated', async () => {
@@ -157,19 +157,28 @@ describe('POST /token', () => {
     assert.equal(response.status, 502);
   });
 
-  it('passes a SignalWire 401 through as-is', async () => {
-    const built = buildApp({ reply: { status: 401, body: { error: 'bad creds' } } });
-    const response = await post(built);
+  for (const status of [401, 403, 422]) {
+    it(`reports a SignalWire ${status} as a gateway error, not the app's own auth failure (server-18)`, async () => {
+      // The server's project credentials (or its reference mapping) were
+      // refused, not the app's: a 401 here would send the app to re-login.
+      const built = buildApp({ reply: { status, body: { error: 'refused' } } });
+      const response = await post(built);
 
-    assert.equal(response.status, 401);
-  });
+      assert.equal(response.status, 502);
+      const { error } = (await response.json()) as { error: string };
+      assert.match(error, new RegExp(`refused to mint a token \\(${status}\\)`));
+      if (status !== 422) {
+        assert.match(error, /SIGNALWIRE_PROJECT_ID/);
+      }
+    });
+  }
 
   it('fails clearly when the response carries no recognisable token', async () => {
     const built = buildApp({ reply: { status: 200, body: { unexpected: true } } });
     const response = await post(built);
 
     assert.equal(response.status, 502);
-    assert.match((await response.json()).error, /no recognisable token/i);
+    assert.match(((await response.json()) as { error: string }).error, /no recognisable token/i);
   });
 
   it('explains the missing configuration rather than 404ing', async () => {
@@ -177,6 +186,6 @@ describe('POST /token', () => {
     const response = await post(built);
 
     assert.equal(response.status, 503);
-    assert.match((await response.json()).error, /SIGNALWIRE_SPACE/);
+    assert.match(((await response.json()) as { error: string }).error, /SIGNALWIRE_SPACE/);
   });
 });

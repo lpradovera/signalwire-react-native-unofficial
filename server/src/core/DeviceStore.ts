@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { Device, DeviceRegistration } from './types.js';
@@ -57,7 +57,7 @@ export class InMemoryDeviceStore implements DeviceStore {
 /**
  * In-memory with a JSON file behind it, so a restart during development does
  * not lose the tokens you just registered from a device. Not for production —
- * every write rewrites the file and there is no locking.
+ * every write rewrites the whole file, and only this process may use it.
  */
 export class JsonFileDeviceStore extends InMemoryDeviceStore {
   private constructor(private readonly path: string) {
@@ -79,8 +79,26 @@ export class JsonFileDeviceStore extends InMemoryDeviceStore {
     return store;
   }
 
-  protected override async persist(): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true });
-    await writeFile(this.path, JSON.stringify([...this.devices.values()], null, 2), 'utf8');
+  /** The write in flight, if any. Writes run one after another. */
+  private writing: Promise<void> = Promise.resolve();
+
+  /**
+   * Writes the current devices to a temporary file and renames it over the
+   * real one, one write at a time. Overlapping in-place rewrites used to tear
+   * the file (a shorter array followed by the tail of a longer one), and a
+   * kill mid-write left it empty; either way the next boot failed to parse it.
+   * A rename replaces the file whole, and each queued write snapshots the
+   * devices when its turn comes, so the last one on disk is the latest state.
+   */
+  protected override persist(): Promise<void> {
+    const next = this.writing.then(async () => {
+      await mkdir(dirname(this.path), { recursive: true });
+      const temporary = `${this.path}.${process.pid}.tmp`;
+      await writeFile(temporary, JSON.stringify([...this.devices.values()], null, 2), 'utf8');
+      await rename(temporary, this.path);
+    });
+    // A failed write must not wedge every later one.
+    this.writing = next.catch(() => undefined);
+    return next;
   }
 }

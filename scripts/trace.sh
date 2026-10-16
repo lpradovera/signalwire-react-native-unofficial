@@ -68,16 +68,22 @@ JS_LAST = 20
 js = [f"js      {m[0]}" for m in (JS.search(line) for line in lines('metro.log')) if m]
 untimed.extend(js[-JS_LAST:])
 
-# Server: park and redemption.
-SERVER = re.compile(r'Parked caller|Bridged device|Bridge token rejected')
+# Server: every line it logs, failures included (a park that reached no
+# device, a hang-up for a missing SID or token, a rejected token, a failed
+# push and why, a caller leg that was or was not ended), with the fields that
+# say why. Keeping only the success lines made a failed attempt read like a
+# good one.
+FIELDS = ('callSid', 'externalUserId', 'delivered', 'attempted', 'pruned', 'reason',
+          'error', 'failures', 'prunedReasons', 'state', 'connectState', 'waitedMs')
 for line in lines('server.log'):
-    if not SERVER.search(line):
-        continue
     try:
         d = json.loads(line)
     except ValueError:
         continue
-    text = f"server  {d.get('message')} {d.get('callSid') or d.get('reason') or ''}".rstrip()
+    if not isinstance(d, dict) or 'message' not in d:
+        continue
+    extra = ' '.join(f"{k}={json.dumps(d[k]) if not isinstance(d[k], str) else d[k]}" for k in FIELDS if k in d)
+    text = f"server  {d['message']} {extra}".rstrip()
     at = d.get('at')
     if at:
         timed.append((datetime.datetime.fromisoformat(at.replace('Z', '+00:00')).astimezone(), text))

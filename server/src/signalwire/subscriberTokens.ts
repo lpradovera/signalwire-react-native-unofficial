@@ -1,12 +1,19 @@
 /**
  * Mints Fabric subscriber tokens.
  *
- * The second SignalWire-aware file in this server (the other is `webhook.ts`).
- * It exists so that project credentials stay on a server: a subscriber token is
+ * One of the SignalWire adapters in `signalwire/`. It exists so that project credentials stay on a server: a subscriber token is
  * short-lived and scoped to one subscriber, but the project ID and API token
  * that mint it are neither. Shipping those in an app bundle would let anyone
  * who unzips the IPA mint tokens for every subscriber in the space.
  */
+
+/**
+ * The space's hostname from `SIGNALWIRE_SPACE`, which people write with or
+ * without a scheme and a trailing slash.
+ */
+export function spaceHost(space: string): string {
+  return space.trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+}
 
 export interface SubscriberTokenMinterOptions {
   /** Space hostname, e.g. `example.signalwire.com`. */
@@ -19,6 +26,8 @@ export interface SubscriberTokenMinterOptions {
   ttlSeconds?: number;
   /** Injectable for tests. Defaults to `Date.now`. */
   now?: () => number;
+  /** Bound on the request to SignalWire. Default 10s. */
+  timeoutMs?: number;
 }
 
 /** SignalWire's own default lifetime for a subscriber token. */
@@ -65,8 +74,7 @@ export class SubscriberTokenMinter {
   private readonly now: () => number;
 
   constructor(private readonly options: SubscriberTokenMinterOptions) {
-    const host = options.space.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    this.endpoint = `https://${host}/api/fabric/subscribers/tokens`;
+    this.endpoint = `https://${spaceHost(options.space)}/api/fabric/subscribers/tokens`;
     this.authorization = `Basic ${Buffer.from(`${options.projectId}:${options.apiToken}`).toString('base64')}`;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS;
@@ -88,7 +96,8 @@ export class SubscriberTokenMinter {
         'content-type': 'application/json',
         authorization: this.authorization
       },
-      body: JSON.stringify({ reference, expire_at: expiresAt })
+      body: JSON.stringify({ reference, expire_at: expiresAt }),
+      signal: AbortSignal.timeout(this.options.timeoutMs ?? 10_000)
     });
 
     const text = await response.text();
