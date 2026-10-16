@@ -2,6 +2,8 @@ import { useSignalWire } from '@signalwire/react-native';
 import { getCallKit } from '@signalwire/react-native/callkit';
 import { useEffect, useRef } from 'react';
 
+import { planBridgeAnswer } from './bridgePlan';
+
 import type { Call } from '@signalwire/js';
 
 /** How long a cold-started app may take to come online before giving up. */
@@ -40,17 +42,16 @@ export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
     const bridge = getCallKit();
 
     const subscription = bridge.registry.answerRequested$.subscribe((entry) => {
-      const token = entry.data?.bridgeToken;
-      if (!token) {
-        // Nothing to bridge to. The entry times out as a missed call, which is
-        // the right outcome — better than a native UI wired to nothing.
-        console.warn(`Answered push ${entry.uuid} carries no bridge token; ignoring`);
+      const plan = planBridgeAnswer(entry.data, process.env.EXPO_PUBLIC_SW_BRIDGE_ADDRESS);
+      if (plan.action === 'ignore') {
+        // Not a bridge push. If no SDK call fuses with it, the entry times
+        // out as a missed call.
+        console.warn(`Answered push ${entry.uuid} ${plan.reason}; ignoring`);
         return;
       }
-
-      const address = process.env.EXPO_PUBLIC_SW_BRIDGE_ADDRESS;
-      if (!address) {
-        console.warn('EXPO_PUBLIC_SW_BRIDGE_ADDRESS is unset; cannot bridge');
+      if (plan.action === 'end') {
+        console.warn(plan.reason);
+        bridge.registry.endCall(entry.uuid);
         return;
       }
 
@@ -82,7 +83,7 @@ export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
 
           // Audio only: an SDP answer cannot introduce an m-line the offer
           // lacks, and this destination is a voice bridge.
-          const call = await dial(`${address}?bridgeToken=${encodeURIComponent(token)}`, {
+          const call = await dial(plan.destination, {
             audio: true,
             video: false
           }).finally(() => bridge.endBridgeDial());
