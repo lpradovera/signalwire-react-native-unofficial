@@ -10,10 +10,17 @@ const mockRingingPushes: Array<{ uuid: string; from?: string; fromName?: string 
 const mockAnswerPush = jest.fn();
 const mockRejectPush = jest.fn();
 jest.mock('@signalwire/react-native/ringing', () => ({
+  // The real name formatting; only the native ringing list is faked.
+  displayableName: jest.requireActual('@signalwire/react-native/ringing').displayableName,
   useRingingPushes: () => ({ ringing: mockRingingPushes, answer: mockAnswerPush, reject: mockRejectPush })
 }));
 
 const incomingCalls$ = new BehaviorSubject<unknown[]>([]);
+
+/** A call double that is still ringing, as the sheet requires. */
+function ringingCall<T extends object>(fields: T): T & { status: 'ringing'; status$: BehaviorSubject<string> } {
+  return { status: 'ringing', status$: new BehaviorSubject('ringing'), ...fields };
+}
 
 async function renderSheet(props: Record<string, unknown> = {}): Promise<void> {
   await render(
@@ -40,19 +47,64 @@ describe('IncomingCallSheet', () => {
   });
 
   it('shows the caller name', async () => {
-    incomingCalls$.next([{ id: 'a', fromName: 'Ada Lovelace', answer: jest.fn(), reject: jest.fn() }]);
+    incomingCalls$.next([ringingCall({ id: 'a', fromName: 'Ada Lovelace', answer: jest.fn(), reject: jest.fn() })]);
     await renderSheet();
     expect(screen.getByText('Ada Lovelace')).toBeTruthy();
   });
 
   it('falls back to the handle, then to a placeholder', async () => {
-    incomingCalls$.next([{ id: 'a', from: '+15551234', answer: jest.fn(), reject: jest.fn() }]);
+    incomingCalls$.next([ringingCall({ id: 'a', from: '+15551234', answer: jest.fn(), reject: jest.fn() })]);
     await renderSheet();
     expect(screen.getByText('+15551234')).toBeTruthy();
   });
 
+  it('shows "Unknown caller" when there is neither a name nor a handle', async () => {
+    incomingCalls$.next([ringingCall({ id: 'a', answer: jest.fn(), reject: jest.fn() })]);
+    await renderSheet();
+    expect(screen.getByText('Unknown caller')).toBeTruthy();
+  });
+
+  it('never shows the backend\'s "_undef_" placeholder as a name', async () => {
+    incomingCalls$.next([
+      ringingCall({ id: 'a', fromName: '_undef_', from: '+15551234', answer: jest.fn(), reject: jest.fn() })
+    ]);
+    await renderSheet();
+    expect(screen.queryByText('_undef_')).toBeNull();
+    expect(screen.getByText('+15551234')).toBeTruthy();
+  });
+
+  it('falls back to "Unknown caller" when the name is a placeholder and there is no handle', async () => {
+    incomingCalls$.next([ringingCall({ id: 'a', fromName: '  ', answer: jest.fn(), reject: jest.fn() })]);
+    await renderSheet();
+    expect(screen.getByText('Unknown caller')).toBeTruthy();
+  });
+
+  it('shows a Fabric address or SIP URI as a readable name', async () => {
+    incomingCalls$.next([
+      ringingCall({ id: 'a', fromName: '/private/rn-device-test', answer: jest.fn(), reject: jest.fn() })
+    ]);
+    await renderSheet();
+    expect(screen.queryByText('/private/rn-device-test')).toBeNull();
+    expect(screen.getByText('Rn Device Test')).toBeTruthy();
+  });
+
+  it('makes a native push\'s name readable too', async () => {
+    mockRingingPushes.push({
+      uuid: 'u9',
+      fromName: '_undef_',
+      from: 'sip:rn-example@0000.call.signalwire.com;context=private'
+    });
+    try {
+      await renderSheet({ includeNativePushes: true });
+      expect(screen.queryByText('_undef_')).toBeNull();
+      expect(screen.getByText('Rn Example')).toBeTruthy();
+    } finally {
+      mockRingingPushes.length = 0;
+    }
+  });
+
   it('answers audio-only by default — an answer cannot add an m-line', async () => {
-    const call = { id: 'a', answer: jest.fn(async () => undefined), reject: jest.fn() };
+    const call = ringingCall({ id: 'a', answer: jest.fn(async () => undefined), reject: jest.fn() });
     incomingCalls$.next([call]);
     await renderSheet();
 
@@ -63,7 +115,7 @@ describe('IncomingCallSheet', () => {
   });
 
   it('honours answerWith', async () => {
-    const call = { id: 'a', answer: jest.fn(async () => undefined), reject: jest.fn() };
+    const call = ringingCall({ id: 'a', answer: jest.fn(async () => undefined), reject: jest.fn() });
     incomingCalls$.next([call]);
     await renderSheet({ answerWith: { audio: true, video: false } });
 
@@ -74,7 +126,7 @@ describe('IncomingCallSheet', () => {
   });
 
   it('rejects on decline', async () => {
-    const call = { id: 'a', answer: jest.fn(), reject: jest.fn(async () => undefined) };
+    const call = ringingCall({ id: 'a', answer: jest.fn(), reject: jest.fn(async () => undefined) });
     incomingCalls$.next([call]);
     await renderSheet();
 

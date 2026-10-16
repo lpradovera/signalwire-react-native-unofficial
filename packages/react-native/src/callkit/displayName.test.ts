@@ -30,3 +30,16 @@ describe('isPlaceholderName', () => {
     expect(isPlaceholderName(name)).toBe(false);
   });
 });
+
+describe('displayableName on the public entries', () => {
+  it('is exported from the main entry and from ./ringing, and needs no context', () => {
+    const { displayableName: fromMain } = require('../index') as typeof import('../index');
+    const { displayableName: fromRinging } = require('../ringing') as typeof import('../ringing');
+    expect(fromRinging).toBe(fromMain);
+    expect(fromMain('_undef_')).toBeNull();
+    expect(fromMain('')).toBeNull();
+    expect(fromMain('/private/rn-device-test')).toBe('Rn Device Test');
+    expect(fromMain('Ada Lovelace')).toBe('Ada Lovelace');
+    expect(fromMain(undefined)).toBeNull();
+  });
+});
