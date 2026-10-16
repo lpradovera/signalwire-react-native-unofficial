@@ -137,7 +137,10 @@ describe('reporting that push is off', () => {
   it.each([
     ['not linked', () => (mockNative.linked = false)],
     ['linked without a google-services.json', () => (mockNative.constantsThrow = true)]
-  ])('says so once, in one info line, when Firebase is %s', (_case, arrange) => {
+    // A warning, not info: the SDK logger's default level is warn, so an info
+    // line never shows in a release build, and "why is push off" is exactly
+    // what a release build's tester needs to see.
+  ])('says so once, in one warning, when Firebase is %s', (_case, arrange) => {
     arrange();
     const { loadFirebaseMessaging } = load();
     const log = spyOnLogger();
@@ -147,10 +150,10 @@ describe('reporting that push is off', () => {
     loadFirebaseMessaging();
     loadFirebaseMessaging();
 
-    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.info).not.toHaveBeenCalled();
     expect(log.error).not.toHaveBeenCalled();
-    expect(log.info).toHaveBeenCalledTimes(1);
-    const line = log.info.mock.calls[0].join(' ');
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    const line = log.warn.mock.calls[0].join(' ');
     expect(line).toMatch(/Android push is off/);
     // Not the Java stack the native module's getConstants() throws with.
     expect(line).not.toMatch(/\n/);

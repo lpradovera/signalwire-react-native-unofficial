@@ -45,9 +45,14 @@ function hasModularApi(candidate: unknown): candidate is FirebaseMessaging {
   return REQUIRED.every((name) => typeof members[name] === 'function');
 }
 
-/** Why Firebase messaging is unusable on this build, reported on first use. */
+/**
+ * Why Firebase messaging is unusable on this build, reported on first use.
+ *
+ * Always as a warning, even for an app that simply has no Firebase: the SDK
+ * logger's default level is warn, so an info line never shows in a release
+ * build, and that is where "why does this phone not ring" gets asked.
+ */
 interface Unavailable {
-  level: 'info' | 'warn';
   message: string;
 }
 
@@ -83,7 +88,6 @@ function resolveFirebaseMessaging(): FirebaseMessaging | Unavailable {
     missing = NATIVE_MODULES.filter((name) => modules?.[name] == null);
   } catch (error) {
     return {
-      level: 'info',
       message:
         'Firebase messaging is linked but not configured (no google-services.json); ' +
         `Android push is off: ${firstLine(error)}`
@@ -91,7 +95,6 @@ function resolveFirebaseMessaging(): FirebaseMessaging | Unavailable {
   }
   if (missing.length > 0) {
     return {
-      level: 'info',
       message:
         `Firebase messaging is not linked (${missing.join(', ')} missing); Android push is off. ` +
         'Install @react-native-firebase/app and @react-native-firebase/messaging and rebuild.'
@@ -103,7 +106,6 @@ function resolveFirebaseMessaging(): FirebaseMessaging | Unavailable {
     loaded = require('@react-native-firebase/messaging');
   } catch (error) {
     return {
-      level: 'warn',
       message: `Firebase messaging failed to load; Android push is off: ${firstLine(error)}`
     };
   }
@@ -115,7 +117,6 @@ function resolveFirebaseMessaging(): FirebaseMessaging | Unavailable {
     }
   }
   return {
-    level: 'warn',
     message:
       'Firebase messaging has no modular API (getMessaging, onMessage, ...); Android push is ' +
       'off. This package needs @react-native-firebase/messaging 22 or later.'
@@ -153,7 +154,7 @@ export function loadFirebaseMessaging(): FirebaseMessaging | undefined {
   }
   if (!reported) {
     reported = true;
-    logger[resolved.level](resolved.message);
+    logger.warn(resolved.message);
   }
   return undefined;
 }
