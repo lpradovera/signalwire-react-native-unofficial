@@ -336,7 +336,7 @@ export default function App() {
 
 | Hook | Returns | Entry point |
 | --- | --- | --- |
-| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `dial`, `disconnect` | `@signalwire/react-native` |
+| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `dial`, `connect`, `disconnect` | `@signalwire/react-native` |
 | `useCall(call)` | `status`, `participants`, `self`, `localStream`, `remoteStream`, `isAudioMuted`, `isVideoMuted`, `error`, `hangup`, `toggleHold`, `setAudioMuted`, `setVideoMuted`, `sendDigits` | `@signalwire/react-native` |
 | `useIncomingCalls()` | `calls`, `answer`, `reject` | `@signalwire/react-native` |
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` | `@signalwire/react-native` |

@@ -32,7 +32,7 @@ function Dialer() {
 
 | Hook | Returns |
 | --- | --- |
-| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `dial`, `disconnect` |
+| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `dial`, `connect`, `disconnect` |
 | `useCall(call)` | `status`, `participants`, `self`, streams, mute state, `error`, and call actions |
 | `useIncomingCalls()` | `calls`, `answer`, `reject` |
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` |

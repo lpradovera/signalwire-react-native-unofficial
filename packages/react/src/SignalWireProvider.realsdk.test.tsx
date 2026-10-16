@@ -136,6 +136,36 @@ describe('client lifecycle', () => {
   });
 });
 
+describe('disconnect and connect', () => {
+  it('connect() brings a disconnected client back', async () => {
+    const view = render(
+      <SignalWireProvider credentialProvider={credentials()} options={options}>
+        <Status />
+      </SignalWireProvider>
+    );
+    expect(await waitUntil(() => state?.isConnected === true)).toBe(true);
+
+    await act(async () => {
+      await state!.disconnect();
+    });
+    await settle(100);
+    expect(state!.isConnected).toBe(false);
+    expect(server.open()).toHaveLength(0);
+
+    await act(async () => {
+      await state!.connect();
+    });
+    expect(await waitUntil(() => state?.isConnected === true)).toBe(true);
+    expect(server.open()).toHaveLength(1);
+    // Registered again, so inbound calls reach it.
+    expect(await waitUntil(() => server.count('subscriber.online') === 2)).toBe(true);
+
+    view.unmount();
+    await settle(50);
+    expect(server.open()).toHaveLength(0);
+  });
+});
+
 describe('useIncomingCalls', () => {
   function IncomingOnly(): React.JSX.Element {
     const { calls } = useIncomingCalls();
