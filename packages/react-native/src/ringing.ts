@@ -9,3 +9,6 @@
  */
 export { useRingingPushes, ringingFrom } from './callkit/useRingingPushes';
 export type { RingingPush, RingingPushes } from './callkit/useRingingPushes';
+
+/** Also on the main entry; here so a component drawing a ringing call needs only this entry. */
+export { displayableName } from './callkit/displayName';

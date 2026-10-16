@@ -54,11 +54,25 @@ export function readableAddress(value: string): string | null {
 }
 
 /**
- * The name to show for `name`: null for a placeholder or empty name (a
- * placeholder is logged, with `context` naming where it came from), and an
- * address made readable ({@link readableAddress}).
+ * The name to show for a caller or callee, or null when there is none to show.
+ *
+ * - An empty name, or a placeholder the backend sends instead of a name
+ *   (`"_undef_"`), gives null; a placeholder is logged at debug level, with
+ *   `context` (default `"displayableName"`) saying where it came from.
+ * - A Fabric address or SIP URI gives its readable form
+ *   (`/private/rn-device-test` -> `Rn Device Test`,
+ *   `sip:rn-example@<project>.call.signalwire.com` -> `Rn Example`), or null
+ *   when it has no readable part.
+ * - Anything else (a name, a number) is returned as it is.
+ *
+ * ```ts
+ * const title = displayableName(call.fromName) ?? displayableName(call.from) ?? 'Unknown caller';
+ * ```
  */
-export function displayableName(name: string | undefined | null, context: string): string | null {
+export function displayableName(
+  name: string | undefined | null,
+  context = 'displayableName'
+): string | null {
   if (name === undefined || name === null) {
     return null;
   }

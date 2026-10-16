@@ -338,6 +338,15 @@
   TypeError from a timer, fatal in a release build) instead of restarting
   ICE through TURN. A react-native-webrtc release that has the method is
   used unchanged.
+### Readable caller names in the incoming-call sheet
+
+- `IncomingCallSheet` no longer shows the backend's `_undef_` placeholder or
+  a raw Fabric address / SIP URI as the caller: `/private/rn-device-test`
+  shows as `Rn Device Test`, and a call with no usable name or handle shows
+  "Unknown caller".
+- New `displayableName(name)` on `@signalwire/react-native` (and
+  `@signalwire/react-native/ringing`): the same naming CallKit uses, for apps
+  that draw their own call UI.
 
 ## 0.1.0
 
