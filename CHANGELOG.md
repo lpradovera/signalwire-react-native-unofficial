@@ -17,6 +17,12 @@
   twice asks once, `bindCall()` refuses a second call for an entry that has
   one, and a bridge dial whose entry ended or already has its call is hung
   up instead of being reported as a new outgoing call.
+- The example's `useBridgeAnswer` subscribes once and reads `dial` and
+  `onCallStarted` when it uses them. Keyed on `dial`, which changes when the
+  provider creates its client, it subscribed twice on a cold start, and with
+  each answer delivered once the copy that received it held the `dial` of a
+  client that did not exist yet: it failed and ended the call the user had
+  answered.
 - New `CallRegistry.rejectRequested$`: a decline of a push with no SDK call
   (the parked-caller flow), so the app can tell its server. The example
   posts it to the support server's `POST /swml/decline`.
