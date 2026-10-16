@@ -708,7 +708,8 @@ describe('CallKeepBridge — the fusion tick timer', () => {
     expect(RNCallKeep.reportEndCallWithUUID).not.toHaveBeenCalled();
     jest.advanceTimersByTime(2100);
 
-    expect(RNCallKeep.reportEndCallWithUUID).toHaveBeenCalledWith('never-adopted', 6);
+    // Missed: on iOS callkeep's table maps it to UNANSWERED (3).
+    expect(RNCallKeep.reportEndCallWithUUID).toHaveBeenCalledWith('never-adopted', 3);
     expect(jest.getTimerCount()).toBe(0);
     // Expired, the hold no longer applies to a late display of that uuid.
     callkeep.__emit('didDisplayIncomingCall', {
