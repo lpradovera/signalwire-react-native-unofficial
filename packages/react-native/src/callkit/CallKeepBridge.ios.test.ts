@@ -623,7 +623,7 @@ describe('CallKeepBridge on iOS — the audio session belongs to the call that s
   });
 });
 
-describe('CallKeepBridge on iOS — a CallKit provider reset', () => {
+describe('CallKeepBridge on iOS — a provider reset and the session owner', () => {
   let bridge: CallKeepBridge;
   const start = InCallManager.start as jest.Mock;
   const stop = InCallManager.stop as jest.Mock;
@@ -642,57 +642,40 @@ describe('CallKeepBridge on iOS — a CallKit provider reset', () => {
     jest.useRealTimers();
   });
 
-  it('ends every live call, hangs up its SDK call and releases the session', async () => {
-    // CallKit drops its calls on a reset and sends no endCall for them.
-    const a = createCall('out-a');
-    const uuidA = bridge.trackCall(a as never, '/public/room', 'Support');
-    a.status$.next('connected');
+  /** An outbound call that owns the session. */
+  async function owningCall(id: string) {
+    const call = createCall(id);
+    const uuid = bridge.trackCall(call as never, '/public/room', 'Support');
+    call.status$.next('connected');
     callkeep.__emit('didActivateAudioSession', {});
     await jest.advanceTimersByTimeAsync(3100);
-    expect(start).toHaveBeenCalledTimes(1);
+    return { call, uuid };
+  }
 
-    const incoming$ = new Subject<unknown[]>();
-    bridge.bindClient({ session: { incomingCalls$: incoming$ } } as never);
-    const b = createCall('in-b');
-    incoming$.next([b]);
-    const uuidB = bridge.registry.uuidForCall(b as never)!;
+  it('releases the owner’s session at once, ending a push that is still ringing with it', async () => {
+    // The ringing push is ended too, so it holds no handover open.
+    const a = await owningCall('out-a');
+    const ringing = bridge.reportIncomingPush({ callId: 'ringing' });
 
     callkeep.__emit('didResetProvider', {});
 
-    expect(a.hangup).toHaveBeenCalledTimes(1);
-    expect(b.hangup).toHaveBeenCalledTimes(1);
-    expect(bridge.registry.isLive(uuidA)).toBe(false);
-    expect(bridge.registry.isLive(uuidB)).toBe(false);
+    expect(a.call.hangup).toHaveBeenCalledTimes(1);
+    expect(bridge.registry.isLive(a.uuid)).toBe(false);
+    expect(bridge.registry.entryForUuid(ringing)?.intent).toBe('reject');
+    expect(bridge.registry.isLive(ringing)).toBe(false);
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
-  it('ends a ringing push, so no audio starts for it', async () => {
-    const uuid = bridge.reportIncomingPush({ callId: 'p1' });
-    callkeep.__emit('answerCall', { callUUID: uuid });
-
+  it('gives the next call a session of its own, which its end stops', async () => {
+    await owningCall('out-a');
     callkeep.__emit('didResetProvider', {});
-    await jest.advanceTimersByTimeAsync(3100);
+    expect(stop).toHaveBeenCalledTimes(1);
 
-    expect(bridge.registry.isLive(uuid)).toBe(false);
-    expect(start).not.toHaveBeenCalled();
-  });
-
-  it('lets the next call start its own session', async () => {
-    const a = createCall('out-a');
-    bridge.trackCall(a as never, '/public/room', 'Support');
-    a.status$.next('connected');
-    callkeep.__emit('didActivateAudioSession', {});
-    await jest.advanceTimersByTimeAsync(3100);
-
-    callkeep.__emit('didResetProvider', {});
-
-    const b = createCall('out-b');
-    bridge.trackCall(b as never, '/public/room', 'Support');
-    b.status$.next('connected');
-    callkeep.__emit('didActivateAudioSession', {});
-    await jest.advanceTimersByTimeAsync(3100);
-
+    const next = await owningCall('out-b');
     expect(start).toHaveBeenCalledTimes(2);
+
+    next.call.status$.next('destroyed');
+    expect(stop).toHaveBeenCalledTimes(2);
   });
 });
 
