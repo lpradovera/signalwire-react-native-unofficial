@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Video view follows a swapped track
+
+- `SignalWireVideoView` shows the new track after the SDK replaces one in
+  place: video off then on, a camera switch, and the server-pushed-constraints
+  fallback. Before, the view stayed on the stopped track (a frozen last frame
+  or black self-view) for the rest of the call, because the stream object and
+  its `toURL()` do not change and the native view reads the track only when
+  its URL does. The view now remounts its native view on a new track, and
+  draws nothing while the stream has no video track.
+- A local view is mirrored by default only when its camera is not a back
+  camera (`facingMode` other than `'environment'`). An explicit `mirror` prop
+  still wins.
+- Each view subscribes to its own stream only, rather than to all of the
+  call's state through `useCall`.
+
 ### CallKit audio belongs to its call
 
 - The audio session belongs to the call it was started for. Another call

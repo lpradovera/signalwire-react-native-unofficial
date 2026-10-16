@@ -64,10 +64,14 @@ native call UI shows an active call.
 
 **2. Outbound video call.**
 Dial with `{ audio: true, video: true }`.
-Expect: the local self-view is mirrored, remote video renders. **Then switch
-cameras mid-call** — video must keep rendering. This exercises the in-place
-track replacement that `SignalWireVideoView` handles by re-reading `toURL()`
-every render; a regression here shows as a frozen last frame.
+Expect: the local self-view is mirrored, remote video renders. **Then turn
+video off and on, and switch to the back camera and back, mid-call** — the
+self-view must go blank while video is off and show live video after each
+change, mirrored on the front camera and not on the back. The SDK swaps the
+track inside the same `MediaStream` (same `toURL()`) in all of these, and
+`SignalWireVideoView` remounts its native view on the new track; a regression
+here shows as a frozen last frame or a black self-view while the far end sees
+video.
 
 **3. In-app inbound, foreground.**
 Place a call to the subscriber while the app is open.
