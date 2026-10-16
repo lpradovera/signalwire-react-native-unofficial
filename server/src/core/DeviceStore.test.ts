@@ -51,4 +51,37 @@ describe('JsonFileDeviceStore', () => {
     await writeFile(path, '{not json', 'utf8');
     await assert.rejects(JsonFileDeviceStore.open(path), SyntaxError);
   });
+
+  it('leaves a readable, current file after overlapping writes (server-15)', async () => {
+    // Each register/remove rewrote the file in place, unserialised. With a
+    // store of about 1 MB (written in chunks), a long write overlapped by a
+    // shorter one left valid JSON followed by the tail of the longer one, and
+    // the next open() died with a SyntaxError. The old code tore about one
+    // round in three here.
+    for (let round = 0; round < 10; round++) {
+      const path = join(scratch, `big-${round}.json`);
+      const seed = Array.from({ length: 4000 }, (_, i) => ({
+        externalUserId: `user-${i}-${'y'.repeat(150)}`,
+        platform: 'android',
+        token: `seed-${i}`,
+        environment: 'production',
+        updatedAt: 0
+      }));
+      await writeFile(path, JSON.stringify(seed), 'utf8');
+      const store = await JsonFileDeviceStore.open(path);
+
+      const writes: Array<Promise<unknown>> = [store.register({ ...ios, token: 'new-1' })];
+      await new Promise((resolve) => setTimeout(resolve, round % 5));
+      for (let i = 0; i < 10; i++) {
+        writes.push(store.remove(`seed-${i}`));
+      }
+      await Promise.all(writes);
+
+      const reopened = await JsonFileDeviceStore.open(path);
+      const tokens = (await reopened.all()).map((device) => device.token);
+      assert.equal(tokens.length, 3991, `round ${round}`);
+      assert.ok(tokens.includes('new-1'));
+      assert.ok(!tokens.includes('seed-0'));
+    }
+  });
 });
