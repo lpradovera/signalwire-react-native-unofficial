@@ -87,6 +87,8 @@
   },
   "files": [
     "dist",
+    "android/build.gradle",
+    "android/src",
     "app.plugin.js",
     "README.md"
   ],

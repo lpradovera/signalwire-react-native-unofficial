@@ -39,3 +39,4 @@ GoogleService-Info.plist
 
 # Dev environment logs from scripts/dev.sh
 .dev/
+packages/react-native/android/build/
