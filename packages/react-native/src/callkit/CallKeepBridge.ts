@@ -18,6 +18,7 @@ import {
 import { getAudioRouteController } from '../audio/AudioRouteController';
 import type { AudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
+import { CallInProgressError } from '../errors';
 import { assertPeerModule } from '../platform/peers';
 import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
 import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
@@ -468,6 +469,25 @@ export class CallKeepBridge {
   }
 
   /**
+   * Throws {@link CallInProgressError} if starting an outbound call now would
+   * be a second call: any live entry counts, a ringing push included, because
+   * CallKit is set up for one call and refuses another start. A bridge dial
+   * for a live, claimed entry ({@link beginBridgeDial}) passes, since its call
+   * joins the entry already on screen. The CallKit observer calls this before
+   * `dial()` reaches the SDK.
+   */
+  assertCanDial(): void {
+    const claimed = this.pendingBridgeUuid;
+    if (claimed !== null && this.registry.isLive(claimed)) {
+      return;
+    }
+    const live = this.registry.entries.find((entry) => this.registry.isLive(entry.uuid));
+    if (live) {
+      throw new CallInProgressError(live.uuid);
+    }
+  }
+
+  /**
    * Registers an outbound call with the native UI. Returns its UUID.
    *
    * Whether it is a video call comes from the call itself
@@ -476,6 +496,11 @@ export class CallKeepBridge {
    * voice call starts on the receiver (or a connected headset or car), a video
    * call on the loudspeaker. A call without `mediaDirections` falls back to
    * the app's `supportsVideo`.
+   *
+   * A second call while another is live (one that got past
+   * {@link assertCanDial}, such as two dials racing) is hung up and refused
+   * with {@link CallInProgressError}: CallKit would refuse its start
+   * transaction, and the registry must not hold a call CallKit never took.
    */
   trackCall(call: Call, handle: string, displayName: string): string {
     const claimed = this.pendingBridgeUuid;
@@ -498,6 +523,19 @@ export class CallKeepBridge {
       // normal outbound call, so the user is not left on a live call with no
       // native UI to end it.
       logger.debug(`Entry ${claimed} vanished during the bridge dial`);
+    }
+
+    const tracked = this.registry.uuidForCall(call);
+    if (tracked) {
+      return tracked;
+    }
+    const live = this.registry.entries.find((entry) => this.registry.isLive(entry.uuid));
+    if (live) {
+      logger.warn(`Refusing outbound call ${call.id}: ${live.uuid} is still live; hanging it up`);
+      void call.hangup().catch((error: unknown) => {
+        logger.debug('Hangup of the refused second call failed:', error);
+      });
+      throw new CallInProgressError(live.uuid);
     }
 
     const uuid = this.registry.attachOutgoingCall(call, handle, displayName);

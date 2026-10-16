@@ -40,6 +40,12 @@ export interface CallObserver {
    * later observer for the same client is not bound.
    */
   bindClient?(client: SignalWire): void | (() => void);
+  /**
+   * Called by `dial()` before the SDK places the call. Throw to refuse it:
+   * `dial()` rejects with that error and nothing is dialled. The CallKit
+   * observer throws `CallInProgressError` while another call is live.
+   */
+  beforeOutgoingCall?(destination: string): void;
   /** Called after a successful `dial()`, before the call is returned. */
   onOutgoingCall?(call: Call, destination: string): void;
   /**
