@@ -1,6 +1,12 @@
 import { getCallKit } from './CallKeepBridge';
 
 import type { CallObserver } from '@signalwire/react';
+import type { DialOptions } from '@signalwire/js';
+
+/** Whether a dial sends video: the SDK's own test, and its default is audio. */
+function sendsVideo(options: DialOptions | undefined): boolean {
+  return Boolean(options?.video || options?.inputVideoDeviceConstraints || options?.inputVideoStream);
+}
 
 /**
  * A {@link CallObserver} backed by CallKit / ConnectionService.
@@ -13,8 +19,8 @@ import type { CallObserver } from '@signalwire/react';
 export function createCallKitObserver(): CallObserver {
   return {
     bindClient: (client) => getCallKit().bindClient(client),
-    onOutgoingCall: (call, destination) =>
-      void getCallKit().trackCall(call, destination, destination),
+    onOutgoingCall: (call, destination, options) =>
+      void getCallKit().trackCall(call, destination, destination, sendsVideo(options)),
     onIncomingAnswer: (call) => getCallKit().answerIncomingFromApp(call),
     onIncomingReject: (call) => getCallKit().rejectIncomingFromApp(call)
   };

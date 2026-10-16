@@ -145,10 +145,13 @@ describe('CallKeepBridge on Android', () => {
       expect(mockPermissions.requests[0]).not.toContain('android.permission.CAMERA');
     });
 
-    it('asks for the camera when the app offers video', async () => {
+    // An audio-only app with the native video button on still has no use for
+    // the camera until a call sends video, and react-native-webrtc's
+    // getUserMedia asks for it then.
+    it('does not ask for the camera up front, even when the app offers video', async () => {
       await bridge.setup({ appName: 'Demo', supportsVideo: true });
       await flush();
-      expect(mockPermissions.requests[0]).toContain('android.permission.CAMERA');
+      expect(mockPermissions.requests[0]).not.toContain('android.permission.CAMERA');
     });
 
     it('asks only for what exists at the API level', async () => {

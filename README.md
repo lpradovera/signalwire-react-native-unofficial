@@ -37,9 +37,6 @@ testing the dev client, not your app.
   the app over the lock screen through its full-screen intent; the app's own
   ringing UI takes it from there. On Android 14+ the user can revoke
   full-screen intents in Settings, and then the notification only rings.
-- **A voice call forces speakerphone.** The audio session mode is chosen from
-  the app's `supportsVideo` capability rather than the call's own media, so a
-  voice call in a video-capable app starts in video mode.
 
 ## Packages
 
@@ -362,6 +359,11 @@ import { getCallKit } from '@signalwire/react-native/callkit';
 
 void getCallKit().setup({ appName: 'My App', supportsVideo: true });
 ```
+
+`supportsVideo` lets the native UI offer video; it does not make a call a
+video call. A dial is reported as video when it sends video (`video: true`),
+and starts on the speaker; every other call, including every call answered
+from the native UI (always audio-only), is a voice call on the earpiece.
 
 ```tsx
 <SignalWireProvider credentialProvider={credentials} callKit>

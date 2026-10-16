@@ -371,9 +371,10 @@ runtime:
   `SecurityException` inside `VoiceConnectionService.createConnection` — which
   reads as a crash on answer rather than a missing grant. callkeep requests
   nothing in self-managed mode, so `setup()` requests it, with RECORD_AUDIO,
-  CAMERA (with `supportsVideo`), POST_NOTIFICATIONS (13+) and BLUETOOTH_CONNECT
-  (12+), once the app is on screen; set up from a headless task, it waits for
-  the app to come forward.
+  POST_NOTIFICATIONS (13+) and BLUETOOTH_CONNECT (12+), once the app is on
+  screen; set up from a headless task, it waits for the app to come forward.
+  CAMERA is not asked for up front: react-native-webrtc asks when a call first
+  sends video.
 - **`POST_NOTIFICATIONS`** (Android 13+) for anything you want to show.
   `getFcmToken()` and `watchPushToken()` ask for it before reading the token.
 

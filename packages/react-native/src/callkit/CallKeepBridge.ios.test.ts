@@ -114,7 +114,9 @@ describe('CallKeepBridge on iOS — the audio-session gate', () => {
     expect(InCallManager.start).toHaveBeenCalled();
   });
 
-  it('starts a video session when the bridge was set up for video', async () => {
+  // A native answer is audio-only (CallRegistry.runIntent), so `supportsVideo`
+  // must not make it a 'video' session, whose default route is the speaker.
+  it('starts an answered call as audio even when the bridge was set up for video', async () => {
     bridge.destroy();
     resetAudioRouteControllerForTesting();
     bridge = new CallKeepBridge();
@@ -130,7 +132,7 @@ describe('CallKeepBridge on iOS — the audio-session gate', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
+    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
   });
 
   it('stops the audio session when the call ends', async () => {
