@@ -86,13 +86,22 @@ export class CallKeepBridge {
   private releaseAudioGate: (() => void) | null = null;
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
+  /**
+   * SDK inbound calls. The registry answers every one of them audio-only
+   * (`answer({ audio: true, video: false })`, an in-app answer included,
+   * since that is routed through CallKit), so they are voice calls whatever
+   * their offer carried. See {@link mediaFor}.
+   */
+  private readonly inboundCalls = new WeakSet<Call>();
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     const host: CallRegistryHost = {
+      // The registry writes the entry before it calls the host, so the call (if
+      // there is one yet) is there to read its media from.
       displayIncomingCall: (uuid, handle, displayName) =>
-        RNCallKeep.displayIncomingCall(uuid, handle, displayName, HANDLE_TYPE, this.supportsVideo),
+        RNCallKeep.displayIncomingCall(uuid, handle, displayName, HANDLE_TYPE, this.reportsVideo(uuid)),
       startOutgoingCall: (uuid, handle, displayName) =>
-        RNCallKeep.startCall(uuid, handle, displayName, HANDLE_TYPE, this.supportsVideo),
+        RNCallKeep.startCall(uuid, handle, displayName, HANDLE_TYPE, this.reportsVideo(uuid)),
       reportOutgoingConnected: (uuid) => RNCallKeep.reportConnectedOutgoingCallWithUUID(uuid),
       reportCallEnded: (uuid, reason) =>
         RNCallKeep.reportEndCallWithUUID(uuid, this.endReasonFor(reason)),
@@ -210,6 +219,8 @@ export class CallKeepBridge {
       .subscribe((calls) => {
         for (const call of calls) {
           if (!this.registry.uuidForCall(call)) {
+            // Marked first: attaching shows the call in CallKit, which reads its media.
+            this.inboundCalls.add(call);
             this.registry.attachIncomingCall(call);
             this.watchCallStatus(call);
           }
@@ -267,6 +278,7 @@ export class CallKeepBridge {
     const bound = this.registry.bindCall(uuid, call);
     if (bound) {
       this.watchCallStatus(call);
+      this.showBoundCallType(uuid);
     }
     return bound;
   }
@@ -317,7 +329,16 @@ export class CallKeepBridge {
     }
   }
 
-  /** Registers an outbound call with the native UI. Returns its UUID. */
+  /**
+   * Registers an outbound call with the native UI. Returns its UUID.
+   *
+   * Whether it is a video call comes from the call itself
+   * (`call.mediaDirections`, the SDK's own offer, after preferences,
+   * `?channel=`, the dial options and a disabled camera are all applied): a
+   * voice call starts on the receiver (or a connected headset or car), a video
+   * call on the loudspeaker. A call without `mediaDirections` falls back to
+   * the app's `supportsVideo`.
+   */
   trackCall(call: Call, handle: string, displayName: string): string {
     const claimed = this.pendingBridgeUuid;
     if (claimed !== null) {
@@ -441,7 +462,7 @@ export class CallKeepBridge {
     // Applied synchronously — the registry buffers it when the SDK call has
     // not arrived yet. Only the audio start waits for the audio session.
     this.registry.applyIntent(callUUID, 'answer');
-    void this.startAudioWhenSessionReady();
+    void this.startAudioWhenSessionReady(callUUID);
   }
 
   private handleEndCall(callUUID: string): void {
@@ -523,7 +544,7 @@ export class CallKeepBridge {
    * silent call on iOS. Android has no such event, so this runs immediately.
    * The timeout prevents a permanently silent call if the event never fires.
    */
-  private async startAudioWhenSessionReady(): Promise<void> {
+  private async startAudioWhenSessionReady(uuid: string): Promise<void> {
     if (Platform.OS === 'ios') {
       const gate = new Promise<void>((resolve) => {
         this.releaseAudioGate = resolve;
@@ -533,12 +554,80 @@ export class CallKeepBridge {
         new Promise<void>((resolve) => setTimeout(resolve, AUDIO_SESSION_TIMEOUT_MS))
       ]);
     }
-    this.startAudio();
+    // The call can end during the wait. Started anyway, the session would stay
+    // up with nothing left to stop it, and the next call, whose own start is
+    // ignored because start() is first-wins, would inherit this call's mode.
+    const entry = this.registry.entryForUuid(uuid);
+    if (!entry || entry.state === 'ended') {
+      logger.debug(`Call ${uuid} ended before its audio session was ready; not starting audio`);
+      return;
+    }
+    // A push answered before its SDK call exists: its media is unknown until
+    // that call (or the bridge call placed for it) arrives, and the session
+    // mode can't be changed once incall-manager has started. It starts when
+    // that call connects, with that call's media.
+    if (!entry.call) {
+      logger.debug(`Call ${uuid} has no SDK call yet; its audio starts when that call connects`);
+      return;
+    }
+    this.startAudio(this.mediaFor(entry.call));
   }
 
-  private startAudio(): void {
+  /**
+   * A call's media. An SDK inbound call is voice: the registry answers it
+   * audio-only. Its `mediaDirections` can't be used, because @signalwire/js
+   * reports video for any offer whose m=video sends ('sendrecv' before the
+   * answer, 'recvonly' after it), so a video caller's call would start on the
+   * loudspeaker. An outbound call (the bridge call placed for a push
+   * included) is video when it sends or receives video; one without
+   * `mediaDirections`, or a destroyed one, uses the app's `supportsVideo`. A
+   * pushed entry whose call hasn't arrived yet is shown as voice, as iOS shows
+   * every VoIP push: its call is answered audio-only, or is the app's own
+   * bridge call, whose type is shown once it binds.
+   */
+  private mediaFor(call: Call | null | undefined): 'audio' | 'video' {
+    if (!call || this.inboundCalls.has(call)) {
+      return 'audio';
+    }
+    let video: string | undefined;
     try {
-      getAudioRouteController().start(this.supportsVideo ? 'video' : 'audio');
+      // Optional-chained: a Call from an older SDK, or a test double, may not have it.
+      video = call.mediaDirections?.video;
+    } catch {
+      // The getter throws once the call is destroyed ('Main peer connection not found').
+      video = undefined;
+    }
+    if (video === undefined) {
+      return this.supportsVideo ? 'video' : 'audio';
+    }
+    return video === 'inactive' ? 'audio' : 'video';
+  }
+
+  /** Whether CallKit shows the entry as a video call: the call has video and the provider supports it. */
+  private reportsVideo(uuid: string): boolean {
+    return this.supportsVideo && this.mediaFor(this.registry.entryForUuid(uuid)?.call) === 'video';
+  }
+
+  /**
+   * A pushed entry was shown as voice. When the call placed for it is a video
+   * call, CallKit is told (`CXCallUpdate.hasVideo`, through callkeep's
+   * `updateDisplay`, which also re-sends the name and handle). Android's
+   * ConnectionService takes no type update from callkeep.
+   */
+  private showBoundCallType(uuid: string): void {
+    const entry = this.registry.entryForUuid(uuid);
+    if (Platform.OS !== 'ios' || !entry || !this.reportsVideo(uuid)) {
+      return;
+    }
+    if (typeof RNCallKeep.updateDisplay !== 'function') {
+      return;
+    }
+    RNCallKeep.updateDisplay(uuid, entry.displayName, entry.handle, { ios: { hasVideo: true } });
+  }
+
+  private startAudio(media: 'audio' | 'video'): void {
+    try {
+      getAudioRouteController().start(media);
     } catch (error) {
       logger.warn('Audio routing unavailable:', error);
     }
@@ -567,7 +656,7 @@ export class CallKeepBridge {
         // the session in its default category — a connected but silent call.
         // `AudioRouteController.start` is idempotent, so an inbound call that
         // already started audio on answer is unaffected.
-        void this.startAudioWhenSessionReady();
+        void this.startAudioWhenSessionReady(uuid);
         return;
       }
       if (TERMINAL_STATUSES.has(status)) {
