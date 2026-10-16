@@ -447,8 +447,9 @@ export function createSwmlRoutes({
     // minted for one subscriber was checked against that default and rejected
     // as wrong-subscriber — which only stayed invisible while the default
     // happened to match the only device being tested.
-    const externalUserId =
-      (vars.subscriber as string | undefined) ?? subscriberFromCaller(body);
+    // Nor a `subscriber` variable: the dialled query is the caller's to
+    // write, so naming the token's owner there would skip the check below.
+    const externalUserId = subscriberFromCaller(body);
 
     if (!token) {
       // Logged with the request shape, not just the fact of failure. A device

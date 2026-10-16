@@ -239,6 +239,26 @@ describe('who a park rings', () => {
   });
 });
 
+describe('who a bridge is for', () => {
+  it('checks the token against who is calling, not a subscriber the caller named', async () => {
+    // The device dials `<bridge>?bridgeToken=…`; anything else on that query
+    // is the caller's to choose. Naming the token's owner there skipped the
+    // check against the real caller.
+    const h = await harness();
+    const { token } = h.tokens.mint('parked-sid', 'rn-example');
+    const swml = await swmlOf(
+      await h.post('/swml/bridge', {
+        params: {
+          vars: { userVariables: { bridgeToken: token, subscriber: 'rn-example' } },
+          call: { from: '/private/someone-else' }
+        }
+      })
+    );
+
+    assert.deepEqual(verbs(swml), ['hangup']);
+  });
+});
+
 describe('a park nobody can answer', () => {
   it('does not answer the caller when the user has no device', async () => {
     // Answering bills the caller's leg and plays a minute of ringing nobody
