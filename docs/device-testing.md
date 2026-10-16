@@ -101,7 +101,8 @@ arrives; no ghost call remains; the caller sees a decline, not a timeout.
 ## Audio and resilience
 
 **8. Audio routing.**
-Toggle speaker and earpiece mid-call. Then connect a Bluetooth headset mid-call,
+Toggle speaker and earpiece mid-call. Plug in wired or USB-C headphones
+mid-call (the label should read "Headset"). Then connect a Bluetooth headset mid-call,
 pick a route in the system route menu, and tap CallKit's speaker button.
 Expect: output follows each change, and with incall-manager's iOS routes
 `route` (the speaker button's label) names where the audio actually is: check
