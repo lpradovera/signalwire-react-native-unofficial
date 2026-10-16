@@ -72,18 +72,35 @@
   native rebuild (`pod install`, or `expo prebuild` / `expo run:ios`); until
   then it renders nothing. It writes nothing to the audio session.
 - `CallControls` shows it on iOS. `showRoutePicker` defaults to
-  `showAudioRoute`, so an app that hid audio routing doesn't get it.
-- `AudioRoutePickerButton` takes a background, corner radius and padding in
-  its own `style` (the padding insets the icon), so `CallControls` styles
-  the button as a pill with no wrapper view.
+  `showAudioRoute`, so an app that hid audio routing doesn't get it. With the
+  fifth control the bar wraps onto a second row where one row doesn't fit
+  (a screen narrower than about 410 pt at the default text size, which is
+  most iPhones, and wider ones at large Dynamic Type sizes), instead of
+  pushing Mute and End off both screen edges.
+- **Upgrading tests and stand-ins:** `CallControls` now renders
+  `AudioRoutePickerButton` and calls `useAudioRoute().setSpeakerOn`, so a jest
+  mock of `@signalwire/react-native/audio` that provides only `useAudioRoute`
+  returning `{ route, setRoute }` (the 0.1.0 shape) must add
+  `AudioRoutePickerButton` (a component; `() => null` will do) and
+  `setSpeakerOn`. `setSpeakerOn` is a required member of
+  `UseAudioRouteResult`, so a typed stand-in needs it too.
+- `AudioRoutePickerButton` takes a background, border, corner radius and
+  padding in its own `style` (the padding insets the icon), so `CallControls`
+  styles the button as a pill with no wrapper view. The style is drawn once,
+  on the view around the native picker (it used to be applied to the picker
+  as well: a translucent background doubled, a border drew two rings, opacity
+  was squared), and a tap anywhere in that view, padding, border and
+  `hitSlop` included, opens the menu (only the area inside the padding did).
 - The button shows only with incall-manager's iOS routes (the upstream
   change, or `docs/patches/`), and `isAudioRoutePickerAvailable()` says so.
   Released incall-manager 4.3.0 neither reports a choice made there nor
   keeps it, so on 4.3.0 it renders nothing and `CallControls` offers speaker
   on/off.
-- VoiceOver reads the button as one element, a button with its
-  `accessibilityLabel` (default "Audio output"); before, it read AVKit's
-  inner "AirPlay" button and the label went unused. `activeTintColor` is
+- VoiceOver reads the button as one element, a button (`accessibilityRole`,
+  default `'button'`) with its `accessibilityLabel` (default "Audio
+  output"); before, it read AVKit's inner "AirPlay" button and the label went
+  unused. `aria-label`, `aria-hidden`, `aria-disabled` and `id` work as on
+  `View`. `activeTintColor` is
   AVKit's AirPlay-active colour, which a headset or car doesn't trigger, so
   `CallControls` no longer passes one.
 
