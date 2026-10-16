@@ -77,6 +77,11 @@ export class CallRegistry {
   private readonly _answered$ = new Subject<Call>();
   private readonly _answerRequested$ = new Subject<CallEntry>();
   private readonly byUuid = new Map<string, CallEntry>();
+  /**
+   * Entries holding an inbound SDK call that is still ringing, unanswered.
+   * Ending one declines it: see {@link endCall}.
+   */
+  private readonly ringingInbound = new Set<string>();
 
   constructor(options: CallRegistryOptions) {
     this.host = options.host;
@@ -275,6 +280,7 @@ export class CallRegistry {
       intent: null,
       fuseDeadline: null
     });
+    this.ringingInbound.add(uuid);
 
     this.host.displayIncomingCall(uuid, handle, displayName);
   }
@@ -380,16 +386,29 @@ export class CallRegistry {
     this.host.reportOutgoingConnected(uuid);
   }
 
-  /** The local side ended the call, from the native UI or in-app. */
+  /**
+   * The local side ended the call, from the native UI or in-app.
+   *
+   * An inbound call still ringing is declined with `reject()`, as the same
+   * Decline does without CallKit: `hangup()` sends a bye with no cause, while
+   * `reject()` sends USER_BUSY, which is what the server and SWML see as a
+   * declined call.
+   */
   endCall(uuid: string): void {
     const entry = this.byUuid.get(uuid);
     if (!entry || entry.state === 'ended') {
       return;
     }
 
-    void entry.call?.hangup().catch((error: unknown) => {
-      logger.debug('Hangup on an already-ended call:', error);
-    });
+    const call = entry.call;
+    if (call && this.ringingInbound.has(uuid) && call.status === 'ringing') {
+      this.runIntent(call, 'reject');
+    } else {
+      void call?.hangup().catch((error: unknown) => {
+        logger.debug('Hangup on an already-ended call:', error);
+      });
+    }
+    this.ringingInbound.delete(uuid);
 
     this.write({ ...entry, state: 'ended', intent: null, fuseDeadline: null });
     this.host.reportCallEnded(uuid, 'local');
@@ -401,6 +420,7 @@ export class CallRegistry {
     if (!entry || entry.state === 'ended') {
       return;
     }
+    this.ringingInbound.delete(uuid);
     this.write({ ...entry, state: 'ended', intent: null, fuseDeadline: null });
     this.host.reportCallEnded(uuid, 'remote');
   }
@@ -431,6 +451,7 @@ export class CallRegistry {
 
   destroy(): void {
     this.byUuid.clear();
+    this.ringingInbound.clear();
     this._entries$.complete();
     this._answered$.complete();
     this._answerRequested$.complete();
@@ -486,6 +507,7 @@ export class CallRegistry {
       fuseDeadline: null
     };
     this.write(fused);
+    this.ringingInbound.add(entry.uuid);
     logger.debug(`Fused call ${call.id} into ${entry.uuid}`);
 
     if (entry.intent) {
@@ -495,6 +517,10 @@ export class CallRegistry {
   }
 
   private runIntent(call: Call, intent: CallIntent): void {
+    const uuid = this.uuidForCall(call);
+    if (uuid !== undefined) {
+      this.ringingInbound.delete(uuid);
+    }
     try {
       if (intent === 'answer') {
         this._answered$.next(call);
