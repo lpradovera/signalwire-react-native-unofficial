@@ -9,7 +9,7 @@ how to apply it.
 It is generated, not edited. Source: branch `ios-audio-routes` of
 https://github.com/mjerris/react-native-incall-manager (proposed upstream), at:
 
-    source-commit: 0b483d1c48b593b021caec1086d57ecbbaeab139
+    source-commit: 2241907ff2b1caa15b88415c7a09ee3d7791c055
 
 To regenerate it after a change on that branch, or to check that it still
 matches, point the script at a clone of that repository:
