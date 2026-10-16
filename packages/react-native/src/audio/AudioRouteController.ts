@@ -124,7 +124,11 @@ export class AudioRouteController {
   /** What turning the speaker off returns to. */
   private beforeSpeaker: RouteState = DEFAULT_ROUTE;
   private session: Session | null = null;
-  /** A choice made before start(), applied when it runs. */
+  /**
+   * The user's last route action before start(), applied when it runs: a
+   * choice, or speaker-off back to the default (not a choice, but it keeps a
+   * video call off the speaker).
+   */
   private early: RouteState | null = null;
   /** Calls start and stop the session (CallKit is set up); see {@link holdChoicesUntilStart}. */
   private holdsUntilStart = false;
@@ -212,7 +216,7 @@ export class AudioRouteController {
       );
     }
     if (early) {
-      this.select(early.route, true);
+      this.select(early.route, early.chosen);
     }
   }
 
@@ -297,7 +301,10 @@ export class AudioRouteController {
     }
     if (this.holdsUntilStart) {
       // No session yet: shown now, applied when the call's session starts.
-      this.early = chosen ? { route, chosen } : null;
+      // Kept whether or not it is a choice: speaker-off (the default
+      // route, not chosen) is still the user's last action, and start()
+      // must not put a video call back on the speaker over it.
+      this.early = { route, chosen };
       return;
     }
     // An app that starts no session (no CallKit): speaker on/off, as incall-manager allows outside one.
