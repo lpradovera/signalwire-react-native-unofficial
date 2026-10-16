@@ -76,7 +76,7 @@ just a stale ordering.
 | build | Four packages, each `ESM/CJS/DTS ⚡️ Build success` |
 | lint | no output, exit 0 |
 | type-check | no `error TS` lines, across seven workspaces |
-| test | 57 core + 13 react-ui + 167 react-native + 23 react-native-ui = **260**, plus 37 server |
+| test | Every suite passes: a jest summary for each of the four packages (core, react-ui, react-native, react-native-ui) with `Tests: … passed` and nothing failed, then the server's `node:test` summary with `fail 0`. The counts rise with each change, so a different number is not a regression; a failure, a skip or a missing package is |
 | bundle-check | `iOS Bundled … (~1090 modules)`, an `Android Bundled …` line, and a Vite `✓ built in …` |
 
 **Do not treat the Android module count as a gate.** Both platforms export
@@ -103,9 +103,9 @@ attw, including `node10` — `typesVersions` covers classic resolution. The
 build-time entry consumed by the config-plugin loader, not by TypeScript, so it
 legitimately ships no declarations.
 
-`verify:prebuild` expects:
-`✓ 10 Android permissions and 4 iOS Info.plist entries applied by the plugin.`
-It needs no Xcode, Android SDK, or CocoaPods — prebuild only generates sources.
+`verify:prebuild` ends with one `✓` line naming what the plugin applied
+(the Android permissions, the iOS Info.plist entries, the VoIP push hook) and
+exits 0. A failed assertion prints a `✗` line for each and exits 1. It needs no Xcode, Android SDK, or CocoaPods — prebuild only generates sources.
 
 Coverage, if you want it:
 

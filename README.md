@@ -444,7 +444,7 @@ installed. The platform logs a warning and continues with reduced resilience.
 
 ```bash
 npm install
-npm test                # 192 unit tests, ~95% statement coverage
+npm test                # every package's unit tests, then the server's
 npm run type-check
 npm run lint
 npm run build
