@@ -19,7 +19,8 @@
     "build": "tsup",
     "test": "jest && node --test test/entries.test.mjs",
     "type-check": "tsc --noEmit",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "lint:package": "publint && attw --pack . --exclude-entrypoints theme.css --ignore-rules cjs-resolves-to-esm"
   },
   "keywords": [
     "signalwire",
