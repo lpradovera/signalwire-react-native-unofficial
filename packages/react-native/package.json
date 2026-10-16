@@ -1,8 +1,12 @@
 {
   "name": "@signalwire/react-native",
-  "version": "0.1.0",
+  "version": "2.0.0-alpha.0",
   "description": "React Native support for the SignalWire JS SDK",
   "license": "MIT",
+  "publishConfig": {
+    "tag": "alpha",
+    "access": "public"
+  },
   "type": "commonjs",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -171,6 +175,6 @@
   },
   "homepage": "https://github.com/lpradovera/signalwire-react-native-unofficial#readme",
   "dependencies": {
-    "@signalwire/react": "^0.1.0"
+    "@signalwire/react": "^2.0.0-alpha.0"
   }
 }
