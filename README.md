@@ -94,11 +94,11 @@ so the two UI packages are siblings by name only and share no code.
 
 | Import | For |
 | --- | --- |
-| `@signalwire/react-native` | Provider, hooks, video view |
+| `@signalwire/react-native` | Provider, hooks, video view, `displayableName` |
 | `@signalwire/react-native/polyfills` | **Must be line 1** of your entry file |
 | `@signalwire/react-native/callkit` | Native call UI, push tokens, `registerAndroidCallPush` |
 | `@signalwire/react-native/audio` | Speaker / earpiece / Bluetooth routing |
-| `@signalwire/react-native/ringing` | `useRingingPushes`, for drawing your own incoming-call UI |
+| `@signalwire/react-native/ringing` | `useRingingPushes` and `displayableName`, for drawing your own incoming-call UI |
 
 `./ringing` is deliberately separate from `./callkit`: the latter imports
 `react-native-callkeep`, which constructs a `NativeEventEmitter` at import
@@ -363,6 +363,25 @@ void getCallKit().setup({ appName: 'My App', supportsVideo: true });
 ```tsx
 <SignalWireProvider credentialProvider={credentials} callKit>
 ```
+
+The native call UI and Recents show an outbound call by a readable form of its
+destination: a Fabric address's last segment, humanised (`/private/support-agent`
+shows as `Support Agent`), a SIP URI's user part, or a number as it is. To show
+a name of your own, pass options in place of `true`:
+
+```tsx
+<SignalWireProvider credentialProvider={credentials} callKit={{ displayName: (to) => contacts[to] ?? to }}>
+```
+
+The observer is built when `callKit` turns on and dropped when it turns off,
+which also stops CallKit from showing the client's inbound calls; changing
+only the options doesn't rebuild it. Each call reads the latest
+`displayName`, so it can close over data that loads later. A Fabric address
+it returns is made readable the same way. If it throws or returns an empty
+string, the call is named by its destination: the call has already been placed
+by then, so it is still tracked. An inbound call's `fromName` that is a Fabric
+address is shown readably too, and the placeholder `_undef_` some calls carry
+for a missing name shows as "Unknown caller" (with a debug log line).
 
 Then, from your own push handler:
 

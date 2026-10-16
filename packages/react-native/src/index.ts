@@ -39,6 +39,9 @@ export { ReactNativeStorage } from './platform/storage';
 export type { AsyncStorageLike, StorageScope } from './platform/storage';
 export { installBaseGlobals } from './platform/baseGlobals';
 
+// Caller names: readable Fabric/SIP addresses, no "_undef_" placeholder
+export { displayableName } from './callkit/displayName';
+
 // Components
 export { SignalWireVideoView } from './components/SignalWireVideoView';
 export type { SignalWireVideoViewProps } from './components/SignalWireVideoView';

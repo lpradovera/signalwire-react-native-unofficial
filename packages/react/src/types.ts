@@ -22,8 +22,16 @@ export interface SignalWirePlatform {
  * a browser bundle carries none of it.
  */
 export interface CallObserver {
-  /** Called once, immediately after the client is constructed. */
-  bindClient?(client: SignalWire): void;
+  /**
+   * Called with the client once it is constructed, and again for a new
+   * observer or client. Return a function that undoes the binding: the
+   * provider calls it when this observer is replaced or removed, the client
+   * is replaced, or the provider unmounts. An observer passed inline is a new
+   * observer on every render, so memoize it. One that returns nothing (the
+   * 0.1.0 contract) can't be unbound, so it is bound once per client and a
+   * later observer for the same client is not bound.
+   */
+  bindClient?(client: SignalWire): void | (() => void);
   /** Called after a successful `dial()`, before the call is returned. */
   onOutgoingCall?(call: Call, destination: string): void;
   /**
