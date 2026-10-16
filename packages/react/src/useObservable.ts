@@ -73,8 +73,8 @@ function peek<T>(observable$: Observable<T>): Peeked<T> {
  * 1. **Identity is unstable.** `get isConnected$()` returns
  *    `deferEmission(this._isConnected$.asObservable())` — a new object on every
  *    access. Any `useMemo` keyed on it is invalidated every render, so a
- *    snapshot stored inside that memo is rebuilt constantly. It therefore lives
- *    in a ref that outlives the memo.
+ *    snapshot stored inside that memo is rebuilt constantly. The store is
+ *    therefore keyed on the root subject behind it (see `rootSource`).
  *
  * 2. **Emission is deferred.** `deferEmission` pipes through
  *    `observeOn(asapScheduler)`, so the replayed value arrives in a microtask
@@ -87,16 +87,12 @@ function peek<T>(observable$: Observable<T>): Peeked<T> {
  * its "Connecting…" screen with a healthy authenticated WebSocket underneath.
  */
 export function useObservable<T>(observable$: Observable<T> | undefined, initialValue: T): T {
-  // The current source's latest value, once it has emitted. Survives
-  // re-subscriptions to the same source; reset when the source changes.
-  const snapshotRef = useRef<T>(initialValue);
-  const hasEmittedRef = useRef(false);
   // The caller's synchronous getter, read live until the source emits.
   const initialRef = useRef(initialValue);
   initialRef.current = initialValue;
 
-  // The subscribe callback reads the latest observable through a ref rather
-  // than closing over it, so it can stay referentially stable (see below).
+  // The store takes the observable through a ref: it is keyed on the root
+  // subject rather than on the observable itself (see below).
   const sourceRef = useRef(observable$);
   sourceRef.current = observable$;
 
@@ -115,39 +111,43 @@ export function useObservable<T>(observable$: Observable<T> | undefined, initial
   const sourceKey = rootSource(observable$);
 
   const store = useMemo<ObservableStore<T>>(() => {
-    // A different source (another call, another client, or none): the old
-    // one's value no longer applies. Kept, it outlived the swap: a healthy
-    // call B showed call A's error, whose errors$ never emits, and call={null}
-    // kept the last call's status. Until the new source emits, the caller's
-    // getter (initialValue) is the value.
-    hasEmittedRef.current = false;
-    snapshotRef.current = initialRef.current;
+    // One store, and one value, per source. A different source (another call,
+    // another client, or none) starts with nothing emitted: the old one's
+    // value no longer applies (a healthy call B showed call A's error, whose
+    // errors$ never emits, and call={null} kept the last call's status), so
+    // until the new source emits, the caller's getter (initialValue) is the
+    // value. The value lives in this closure, not in a ref the stores share:
+    // React moves the subscription to the new store in a passive effect after
+    // the commit, and until then the old source's subscription is live. With
+    // End & Accept call A emitted its teardown in that window, and a shared
+    // snapshot handed 'destroyed' to call B's screen.
     const source = sourceRef.current;
+    let emitted = false;
+    let snapshot: T | undefined;
     if (source) {
       const peeked = peek(source);
       if (peeked.emitted) {
-        snapshotRef.current = peeked.value as T;
-        hasEmittedRef.current = true;
+        snapshot = peeked.value;
+        emitted = true;
       }
     }
 
     return {
       subscribe(onStoreChange: () => void): () => void {
-        const current = sourceRef.current;
-        if (!current) {
+        if (!source) {
           return () => undefined;
         }
-        const subscription = current.subscribe((next) => {
-          if (hasEmittedRef.current && Object.is(next, snapshotRef.current)) {
+        const subscription = source.subscribe((next) => {
+          if (emitted && Object.is(next, snapshot)) {
             return;
           }
-          snapshotRef.current = next;
-          hasEmittedRef.current = true;
+          snapshot = next;
+          emitted = true;
           onStoreChange();
         });
         return () => subscription.unsubscribe();
       },
-      getSnapshot: (): T => (hasEmittedRef.current ? snapshotRef.current : initialRef.current)
+      getSnapshot: (): T => (emitted ? (snapshot as T) : initialRef.current)
     };
     // `sourceKey` is not read inside the callback — it exists purely to force a
     // re-subscription when the underlying subject changes. That is exactly the
