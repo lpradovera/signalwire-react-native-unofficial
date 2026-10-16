@@ -134,3 +134,11 @@ test('every JavaScript entry in exports can also be loaded through require()', {
     .filter(([, error]) => error !== undefined);
   assert.deepEqual(failures, []);
 });
+
+test("every built JavaScript entry, the barrel included, starts with 'use client'", () => {
+  const files = ['index.mjs', ...COMPONENTS.map((c) => `components/${c.name}.mjs`)];
+  for (const file of files) {
+    const source = readFileSync(join(root, 'dist', file), 'utf8');
+    assert.match(source, /^(\/\/[^\n]*\n|\s)*['"]use client['"]/, `dist/${file} has no leading 'use client'`);
+  }
+});

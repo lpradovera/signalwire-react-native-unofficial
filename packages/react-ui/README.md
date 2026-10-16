@@ -100,7 +100,7 @@ module dependency.
 
 ## Server rendering
 
-Every component module carries `'use client'`. Lit elements call
+Every component module, and the barrel, carries `'use client'`. Lit elements call
 `customElements.define` and touch the DOM at import time, so they cannot run in
 a React Server Component or during SSR. In Next.js App Router, import them from
 a client component; with a classic SSR setup, render them behind a mounted check.
