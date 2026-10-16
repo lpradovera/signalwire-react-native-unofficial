@@ -5,6 +5,8 @@
 // DOM at module scope — so this is a browser-only, client-side module.
 'use client';
 
+import '@signalwire/web-components/sw-ui-dialpad';
+import '@signalwire/web-components/sw-ui-icon';
 import { SwCallDialpad } from '@signalwire/web-components/sw-call-dialpad';
 
 import { createSwComponent } from '../createSwComponent';

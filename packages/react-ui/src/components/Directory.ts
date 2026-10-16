@@ -5,6 +5,7 @@
 // DOM at module scope — so this is a browser-only, client-side module.
 'use client';
 
+import '@signalwire/web-components/sw-ui-icon';
 import { SwDirectory } from '@signalwire/web-components/sw-directory';
 
 import { createSwComponent } from '../createSwComponent';
