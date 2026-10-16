@@ -1,6 +1,6 @@
 import { logger, useCall } from '@signalwire/react';
 import { AudioRoutePickerButton, useAudioRoute } from '@signalwire/react-native/audio';
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { useSignalWireTheme } from '../theme/ThemeProvider';
@@ -50,8 +50,15 @@ export function CallControls({
   testID
 }: CallControlsProps): React.JSX.Element {
   const theme = useSignalWireTheme();
-  const { isAudioMuted, isVideoMuted, setAudioMuted, setVideoMuted, hangup } = useCall(call);
+  const { self, isAudioMuted, isVideoMuted, setAudioMuted, setVideoMuted, hangup } = useCall(call);
   const { route, setSpeakerOn } = useAudioRoute();
+  // The call End was pressed for. A ref, so a second tap handled before the
+  // re-render is still ignored; the state disables the button.
+  const endedRef = useRef<Call | null | undefined>(undefined);
+  const [endedCall, setEndedCall] = useState<Call | null | undefined>(undefined);
+  // Mute and camera act on the call's self participant, which exists only once
+  // the call has joined; before that a tap could do nothing.
+  const noSelf = !self;
 
   return (
     <View
@@ -62,16 +69,28 @@ export function CallControls({
       <ControlButton
         testID="sw-mute"
         label={isAudioMuted ? 'Unmute' : 'Mute'}
+        accessibilityLabel="Mute"
         active={isAudioMuted}
-        onPress={() => void setAudioMuted(!isAudioMuted)}
+        disabled={noSelf}
+        onPress={() => {
+          setAudioMuted(!isAudioMuted).catch((error: unknown) => {
+            logger.warn('Changing the microphone mute failed:', error);
+          });
+        }}
       />
 
       {showVideo ? (
         <ControlButton
           testID="sw-video"
           label={isVideoMuted ? 'Camera on' : 'Camera off'}
+          accessibilityLabel="Camera off"
           active={isVideoMuted}
-          onPress={() => void setVideoMuted(!isVideoMuted)}
+          disabled={noSelf}
+          onPress={() => {
+            setVideoMuted(!isVideoMuted).catch((error: unknown) => {
+              logger.warn('Changing the camera mute failed:', error);
+            });
+          }}
         />
       ) : null}
 
@@ -79,6 +98,9 @@ export function CallControls({
         <ControlButton
           testID="sw-route"
           label={ROUTE_LABELS[route]}
+          // The text shows the route the call is on; the control turns the
+          // speaker on and off, so that is its name and `active` its state.
+          accessibilityLabel="Speaker"
           active={route === 'speaker'}
           // Off returns to the call's own route (a headset or car, if one is
           // connected), not the receiver.
@@ -102,7 +124,15 @@ export function CallControls({
         testID="sw-hangup"
         label="End"
         variant="danger"
+        disabled={endedCall === call && endedRef.current === call}
         onPress={() => {
+          // Once per call: a double tap would run onHangup twice (two
+          // goBack()s pop the screen below too) and send a second bye.
+          if (endedRef.current === call) {
+            return;
+          }
+          endedRef.current = call;
+          setEndedCall(call);
           // Leave first, tear down after. Gating navigation on `hangup()`
           // stranded the user on the call screen whenever the SDK did not
           // settle: a call the far end never answered rejects on an RPC
