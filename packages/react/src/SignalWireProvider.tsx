@@ -1,5 +1,5 @@
 import { SignalWire } from '@signalwire/js';
-import React, { createContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { logger } from './logger';
 
@@ -13,10 +13,27 @@ const CONNECTION_ERRORS = new Set([
   'TransportConnectionError'
 ]);
 
+/**
+ * The SDK's error for a call it could not place or set up. It is thrown to the
+ * caller as well, so it says nothing about the client once a later call works.
+ */
+const CALL_ERRORS = new Set(['CallCreateError']);
+
+/** Whether `error` is about one call rather than the client. */
+function isCallError(error: Error | null): boolean {
+  return error !== null && CALL_ERRORS.has(error.name);
+}
+
 export interface SignalWireContextValue {
   readonly client: SignalWire | null;
   readonly error: Error | null;
   readonly observer: CallObserver | undefined;
+  /**
+   * Clears `error` if it is a call error (`CallCreateError`). `useSignalWire`
+   * calls it when a dial succeeds; the provider itself when the client
+   * registers again.
+   */
+  readonly clearCallError?: () => void;
 }
 
 export const SignalWireContext = createContext<SignalWireContextValue | null>(null);
@@ -75,11 +92,14 @@ export function SignalWireProvider({
     // The SDK reconnects a dropped WebSocket by itself and registers again,
     // but its connection error would stay up for the rest of the session, so
     // a banner showing it said "disconnected" while calls worked. Cleared on
-    // each registration; any other error stays until the next one replaces it.
+    // each registration, as is a failed call's error (a connect starts over);
+    // any other error stays until the next one replaces it.
     subscription.add(
       instance.isRegistered$?.subscribe((isRegistered) => {
         if (isRegistered) {
-          setError((current) => (current && CONNECTION_ERRORS.has(current.name) ? null : current));
+          setError((current) =>
+            current && (CONNECTION_ERRORS.has(current.name) || isCallError(current)) ? null : current
+          );
         }
       })
     );
@@ -101,9 +121,13 @@ export function SignalWireProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [credentialProvider]);
 
+  const clearCallError = useCallback(() => {
+    setError((current) => (isCallError(current) ? null : current));
+  }, []);
+
   const value = useMemo<SignalWireContextValue>(
-    () => ({ client, error, observer }),
-    [client, error, observer]
+    () => ({ client, error, observer, clearCallError }),
+    [client, error, observer, clearCallError]
   );
 
   return <SignalWireContext.Provider value={value}>{children}</SignalWireContext.Provider>;
