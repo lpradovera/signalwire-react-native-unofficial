@@ -42,6 +42,23 @@
 - A video call is no longer forced onto the loudspeaker at start: incall-
   manager's own start uses the speaker only when nothing else is connected,
   so a video call started with AirPods or in a car stays there.
+- On Android `route` follows incall-manager's device reports
+  (`onAudioDeviceChanged`): the device its start picked (a video call on a
+  Bluetooth headset reads `'bluetooth'`, not `'speaker'`, so the speaker
+  toggle turns the speaker on instead of taking the call to the earpiece),
+  and a headset or car connecting or dropping. With iOS routes and on
+  Android a route choice made after the session starts but before its
+  first status (the start read, or Android's first report) is held until it
+  arrives and applied to the route it reports; a held speaker-off then writes
+  nothing when the call isn't on the speaker. With released incall-manager
+  on iOS nothing reports: a video call reads `'speaker'` (incall-manager's
+  default) even when iOS kept it on a headset or car, and the toggle's
+  first tap there is speaker off, which incall-manager implements as voice
+  chat mode for a video call.
+- `setSpeakerOn(false)` on Android returns a voice call to incall-manager's
+  default (a connected headset or car, else the receiver) instead of
+  forcing the receiver, which Android then preferred over the headset; a
+  video call (whose default is the speaker) still gets speaker off.
 - Speaker-off returns a call to a headset or car the speaker had replaced at
   incall-manager's default instead of forcing "speaker off", which in a
   video call meant voice chat mode on the headset and the receiver once it

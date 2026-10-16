@@ -211,9 +211,9 @@ function read(feed: DeviceFeed, routes: IncallRoutesApi): Promise<AudioDeviceSta
  * describes the app's own audio session, which usually lists only the
  * receiver, the speaker and the current media output.
  */
-export async function getAudioDeviceStatus(): Promise<AudioDeviceStatus | null> {
+export function getAudioDeviceStatus(): Promise<AudioDeviceStatus | null> {
   const routes = incallRoutes();
-  return routes ? read(deviceFeed(), routes) : null;
+  return routes ? read(deviceFeed(), routes) : Promise.resolve(null);
 }
 
 /**

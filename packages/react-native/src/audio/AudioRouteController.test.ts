@@ -211,7 +211,11 @@ describe('AudioRouteController', () => {
     });
 
     it('keeps a speaker-off made before the session with incall-manager’s iOS routes', async () => {
-      installIncallIosRoutes();
+      // iOS started the video call on the speaker (nothing else connected).
+      installIncallIosRoutes(deviceStatus('SPEAKER_PHONE'));
+      flag.mockImplementationOnce(() =>
+        incallIosRoutes.getAudioDeviceStatus.mockImplementation(async () => deviceStatus('EARPIECE'))
+      );
       controller.expectSession(true);
       controller.setSpeakerOn(true);
       controller.setSpeakerOn(false);
@@ -411,9 +415,103 @@ describe('AudioRouteController', () => {
     });
     afterEach(() => os.restore());
 
+    /** What incall-manager's own start reports on Android: the device it put the call on. */
+    const ANDROID_LIST = '["EARPIECE","SPEAKER_PHONE","BLUETOOTH"]';
+
+    it("follows incall-manager's device reports, so a video call on a headset reads as one", () => {
+      // incall-manager puts a video call on a connected Bluetooth headset
+      // (BLUETOOTH is preferred over the video default, the speaker).
+      controller.start('video');
+      reportDevice('BLUETOOTH', ANDROID_LIST);
+      expect(controller.route).toBe('bluetooth');
+
+      // CallControls' toggle: the speaker is off, so the tap turns it on,
+      // rather than "off" (the earpiece), which took the call off the headset.
+      controller.setSpeakerOn(controller.route !== 'speaker');
+      expect(flag.mock.calls).toEqual([[true]]);
+
+      reportDevice('WIRED_HEADSET', '["EARPIECE","SPEAKER_PHONE","WIRED_HEADSET"]');
+      expect(controller.route).toBe('headset');
+    });
+
+    it("holds a tap made before the session's first report, then applies it to the reported route", () => {
+      // The video call's 'speaker' is only incall-manager's default until
+      // its start reports the device: here the headset.
+      controller.start('video');
+      controller.setSpeakerOn(false);
+      expect(flag).not.toHaveBeenCalled();
+
+      reportDevice('BLUETOOTH', ANDROID_LIST);
+
+      expect(flag).not.toHaveBeenCalled();
+      expect(choose).not.toHaveBeenCalled();
+      expect(controller.route).toBe('bluetooth');
+    });
+
+    it("applies a choice held for the session once incall-manager has reported the call's devices", () => {
+      // incall-manager 4.2.x fills its device list on the UI thread after
+      // start(); a write in the same tick met an empty list and was dropped.
+      controller.expectSession(true);
+      controller.setSpeakerOn(true);
+      controller.start('audio');
+      expect(flag).not.toHaveBeenCalled();
+
+      reportDevice('EARPIECE', ANDROID_LIST);
+
+      expect(flag.mock.calls).toEqual([[true]]);
+      expect(controller.route).toBe('speaker');
+    });
+
+    it('applies a held choice anyway when no report comes', () => {
+      jest.useFakeTimers();
+      try {
+        controller.expectSession(true);
+        controller.setSpeakerOn(true);
+        controller.start('audio');
+        jest.advanceTimersByTime(1000);
+        expect(flag.mock.calls).toEqual([[true]]);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('speaker off returns a voice call to the headset Android had chosen, at its default', () => {
+      // false is incall-manager's "speaker off": EARPIECE as the user's
+      // selection, which Android prefers over the Bluetooth headset.
+      controller.start('audio');
+      reportDevice('BLUETOOTH', ANDROID_LIST);
+      controller.setSpeakerOn(true);
+      reportDevice('SPEAKER_PHONE', ANDROID_LIST);
+      flag.mockClear();
+
+      controller.setSpeakerOn(false);
+
+      expect(flag.mock.calls).toEqual([[null]]);
+      expect(choose).not.toHaveBeenCalled();
+      expect(controller.route).toBe('bluetooth');
+    });
+
+    it('speaker off takes a voice call on the receiver back to its default, which is the receiver', () => {
+      controller.start('audio');
+      reportDevice('EARPIECE', ANDROID_LIST);
+      controller.setSpeakerOn(true);
+      flag.mockClear();
+      controller.setSpeakerOn(false);
+      expect(flag.mock.calls).toEqual([[null]]);
+    });
+
+    it("speaker off in a video call forces the receiver: the video call's default is the speaker", () => {
+      controller.start('video');
+      reportDevice('SPEAKER_PHONE', ANDROID_LIST);
+      controller.setSpeakerOn(false);
+      expect(flag.mock.calls).toEqual([[false]]);
+      expect(controller.route).toBe('earpiece');
+    });
+
     it('chooses Bluetooth through incall-manager', async () => {
       choose.mockResolvedValueOnce(deviceStatus('BLUETOOTH'));
       controller.start('audio');
+      reportDevice('EARPIECE', ANDROID_LIST);
       controller.setRoute('bluetooth');
       await flush();
       expect(choose).toHaveBeenCalledWith('BLUETOOTH');
@@ -425,6 +523,7 @@ describe('AudioRouteController', () => {
       // resolves with the unchanged status.
       choose.mockResolvedValueOnce(deviceStatus('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]'));
       controller.start('audio');
+      reportDevice('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]');
       controller.setRoute('bluetooth');
       await flush();
       expect(controller.route).toBe('earpiece');
@@ -433,25 +532,50 @@ describe('AudioRouteController', () => {
     it('speaker off leaves the speaker when the Bluetooth device went away', async () => {
       choose.mockResolvedValueOnce(deviceStatus('BLUETOOTH'));
       controller.start('audio');
+      reportDevice('EARPIECE', ANDROID_LIST);
       controller.setRoute('bluetooth');
       await flush();
-      choose.mockResolvedValueOnce(deviceStatus('SPEAKER_PHONE', '["EARPIECE","SPEAKER_PHONE"]'));
+      // Speaker on is setForceSpeakerphoneOn on Android, not a choice: it
+      // reads no answer.
       controller.setSpeakerOn(true);
       await flush();
-      // The headset drops; Android's answer to the speaker-off choice says so.
+      // The headset drops before any report says so; Android's answer to the
+      // speaker-off choice (Bluetooth again) is the only one queued.
       choose.mockResolvedValueOnce(deviceStatus('SPEAKER_PHONE', '["EARPIECE","SPEAKER_PHONE"]'));
       flag.mockClear();
 
       controller.setSpeakerOn(false);
       await flush();
 
+      expect(choose.mock.calls).toEqual([['BLUETOOTH'], ['BLUETOOTH']]);
       expect(controller.route).toBe('earpiece');
-      expect(flag).toHaveBeenLastCalledWith(false);
+      // The voice call's default: the receiver, now that no headset is there.
+      expect(flag).toHaveBeenLastCalledWith(null);
+    });
+
+    it('speaker off skips a Bluetooth device a report said has gone', async () => {
+      choose.mockResolvedValueOnce(deviceStatus('BLUETOOTH'));
+      controller.start('audio');
+      reportDevice('EARPIECE', ANDROID_LIST);
+      controller.setRoute('bluetooth');
+      await flush();
+      controller.setSpeakerOn(true);
+      reportDevice('SPEAKER_PHONE', '["EARPIECE","SPEAKER_PHONE"]');
+      choose.mockClear();
+      flag.mockClear();
+
+      controller.setSpeakerOn(false);
+      await flush();
+
+      expect(choose).not.toHaveBeenCalled();
+      expect(flag.mock.calls).toEqual([[null]]);
+      expect(controller.route).toBe('earpiece');
     });
 
     it('chooses a wired headset through incall-manager, and goes back without one', async () => {
       choose.mockResolvedValueOnce(deviceStatus('WIRED_HEADSET', '["SPEAKER_PHONE","WIRED_HEADSET"]'));
       controller.start('audio');
+      reportDevice('EARPIECE', '["EARPIECE","SPEAKER_PHONE","WIRED_HEADSET"]');
       controller.setRoute('headset');
       await flush();
       expect(choose).toHaveBeenLastCalledWith('WIRED_HEADSET');
@@ -466,6 +590,7 @@ describe('AudioRouteController', () => {
 
     it('the earpiece only turns the speaker off', () => {
       controller.start('audio');
+      reportDevice('EARPIECE', ANDROID_LIST);
       controller.setRoute('speaker');
       controller.setRoute('earpiece');
       expect(flag).toHaveBeenLastCalledWith(false);
@@ -475,6 +600,7 @@ describe('AudioRouteController', () => {
     it('goes back when Bluetooth is refused, logging rather than leaving the rejection unhandled', async () => {
       choose.mockRejectedValueOnce(new Error('No BLUETOOTH audio route'));
       controller.start('audio');
+      reportDevice('EARPIECE', ANDROID_LIST);
       controller.setRoute('bluetooth');
       await flush();
       expect(controller.route).toBe('earpiece');
@@ -500,8 +626,9 @@ describe('AudioRouteController', () => {
       expect(controller.route).toBe('headset');
     });
 
-    it('chooses every route through incall-manager', () => {
+    it('chooses every route through incall-manager', async () => {
       controller.start('audio');
+      await flush();
       controller.setRoute('bluetooth');
       controller.setRoute('earpiece');
       controller.setRoute('speaker');
@@ -798,6 +925,26 @@ describe('AudioRouteController', () => {
       await flush();
       expect(incallIosRoutes.getAudioDeviceStatus).toHaveBeenCalledTimes(1);
       held.unsubscribe();
+    });
+
+    it("holds a tap made before the call's status read returns, then applies it to the reported route", async () => {
+      // A video call iOS started on a wired headset reads 'speaker' (the
+      // media default) until the read returns; a speaker-off written then
+      // stayed, putting the call in voice chat mode on the headset.
+      let resolve: (status: unknown) => void = () => undefined;
+      incallIosRoutes.getAudioDeviceStatus.mockImplementation(
+        () => new Promise((done) => (resolve = done)) as never
+      );
+      controller.start('video');
+      controller.setSpeakerOn(false);
+      expect(flag).not.toHaveBeenCalled();
+
+      resolve(deviceStatus('WIRED_HEADSET', '["SPEAKER_PHONE","WIRED_HEADSET"]'));
+      await flush();
+
+      expect(flag).not.toHaveBeenCalled();
+      expect(choose).not.toHaveBeenCalled();
+      expect(controller.route).toBe('headset');
     });
 
     it("takes the call's status read over a report that reached it first", async () => {
