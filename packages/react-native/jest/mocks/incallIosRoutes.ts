@@ -12,15 +12,15 @@ export function deviceStatus(
 
 /**
  * incall-manager's iOS native module as the upstream iOS routes (or the patch
- * in docs/patches) add it: `getAudioDeviceStatus`, and the
- * `onAudioDeviceChanged` event. Released incall-manager (through 4.3.0) has
- * neither on iOS, which is what the tests see unless they install this.
+ * in docs/patches) add it: `getAudioDeviceStatus` (and `start`, which the
+ * controller's linked check looks for). Released incall-manager (through
+ * 4.3.0) has no `getAudioDeviceStatus` on iOS, which is what the tests see
+ * unless they install this. Events go through the JS wrapper's
+ * `addListener`, which the tests route to DeviceEventEmitter.
  */
 export const incallIosRoutes = {
   start: jest.fn(),
-  getAudioDeviceStatus: jest.fn(async () => deviceStatus('EARPIECE')),
-  addListener: jest.fn(),
-  removeListeners: jest.fn()
+  getAudioDeviceStatus: jest.fn(async () => deviceStatus('EARPIECE'))
 };
 
 const modules = NativeModules as Record<string, unknown>;
