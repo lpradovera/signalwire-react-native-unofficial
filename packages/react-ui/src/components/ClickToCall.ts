@@ -32,7 +32,14 @@ import { createSwComponent } from '../createSwComponent';
 export const ClickToCall = createSwComponent({
   tagName: 'sw-click-to-call',
   elementClass: SwClickToCall,
-  events: {}
+  events: {
+    onCallEnded: 'sw-call-ended',
+    onCallHangup: 'sw-call-hangup',
+    onDial: 'sw-dial'
+  },
+  eventOrigins: {
+    onCallHangup: 'sw-call-controls'
+  }
 });
 
 export type { SwClickToCall };
