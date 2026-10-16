@@ -21,8 +21,11 @@ if (!commit) {
   console.error('docs/patches/README.md records no source-commit');
   process.exit(2);
 }
+// The patch applies to the released 4.3.0, so it is the change from where the
+// fork left the 4.3.0 tag, not from the clone's master, which moves with upstream.
+const base = git('merge-base', 'refs/tags/4.3.0', commit).trim();
 const prefix = 'node_modules/react-native-incall-manager/';
-const diff = git('diff', `--src-prefix=a/${prefix}`, `--dst-prefix=b/${prefix}`, 'master', commit, '--', 'index.d.ts', 'index.js', 'ios');
+const diff = git('diff', `--src-prefix=a/${prefix}`, `--dst-prefix=b/${prefix}`, base, commit, '--', 'index.d.ts', 'index.js', 'ios');
 if (flag === '--write') {
   writeFileSync(patchFile, diff);
   writeFileSync(readme, readFileSync(readme, 'utf8').replace(/source-commit: [0-9a-f]{40}/, `source-commit: ${commit}`));

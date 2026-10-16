@@ -17,6 +17,7 @@ matches, point the script at a clone of that repository:
     node scripts/check-incall-patch.mjs /path/to/react-native-incall-manager          # check
     node scripts/check-incall-patch.mjs /path/to/react-native-incall-manager --write  # regenerate
 
-It diffs `master` (4.3.0) against the commit above (or, with `--write`, against
-the branch head, and records that commit here). It is not part of `npm run
+It diffs the commit above (or, with `--write`, the branch head, recording that
+commit here) against its merge-base with the `4.3.0` tag, so an upstream
+`master` that has moved past the release changes nothing. It is not part of `npm run
 verify`, which has no incall-manager clone to compare against.
