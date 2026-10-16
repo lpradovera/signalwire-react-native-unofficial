@@ -8,9 +8,10 @@
 > Treat every seam marked *replace me* as exactly that — notably
 > `authenticateCaller` in [`src/routes/token.ts`](src/routes/token.ts) and the
 > payload mapping in [`src/signalwire/webhook.ts`](src/signalwire/webhook.ts).
-> There is no persistence story beyond a JSON file, no rate limiting, no
-> per-user authentication on `/devices`, and no multi-tenancy. Do not deploy it
-> as-is.
+> There is no persistence story beyond a JSON file, no rate limiting, and no
+> multi-tenancy. Per-user authentication on `/devices` is opt-in
+> (`DEVICE_AUTH=caller`) and only as good as your `authenticateCaller`. Do not
+> deploy it as-is.
 
 Support server for `@signalwire/react-native`: a device-token registry and a
 push sender for iOS VoIP (PushKit) and Android FCM.
@@ -60,7 +61,8 @@ time, which is the sane way to debug push.
 
 | Variable | Required for | Notes |
 | --- | --- | --- |
-| `API_TOKEN` | — | Bearer token for `/devices`, `/notify` and `/webhooks/signalwire`. **Unset means unauthenticated**: anyone can register a device under any user, list every token, and push to anyone. Development only. |
+| `API_TOKEN` | — | Bearer token for `/notify`, for `/devices` unless `DEVICE_AUTH=caller`, and for `/webhooks/signalwire` unless `SIGNALWIRE_SIGNING_KEY` is set. A backend's secret, never an app's. **Unset means unauthenticated**: anyone can push to anyone, and (without `DEVICE_AUTH=caller`) register a device under any user and list every token. Development only. |
+| `DEVICE_AUTH` | apps registering themselves | `api-token` (default): `/devices` trusts the body's `externalUserId` and is guarded only by `API_TOKEN`. `caller`: `/devices` is authenticated per request by `authenticateCaller` (the same seam as `/token`), outside the `API_TOKEN` guard, and each request registers, lists and deletes only that user's devices. See [Device registration](#device-registration). |
 | `PORT` | — | Default `3000` |
 | `DEVICE_STORE_PATH` | — | Default `./.data/devices.json` |
 | `SIGNALWIRE_SPACE` | `/token`, ending callers | e.g. `example.signalwire.com` |
@@ -69,7 +71,7 @@ time, which is the sane way to debug push.
 | `ALLOW_UNAUTHENTICATED_TOKENS` | — | `1` mints a subscriber token for **any** caller. Development only; see [Subscriber tokens](#subscriber-tokens) |
 | `DEV_SUBSCRIBER_REFERENCE` | — | Default reference for the development `/token` stub, **and** the park's fallback subscriber: with it set, every park that `?subscriber=` and `PARK_ROUTES` do not resolve rings this one user |
 | `PUBLIC_URL` | parked-caller flow | Base URL SignalWire reaches (your tunnel). Builds the bridge's `status_url` — without it a parked caller is left up when the device hangs up — and is the URL signatures are checked against |
-| `SIGNALWIRE_SIGNING_KEY` | production | The space's Signing Key. Set, `/swml/park`, `/swml/bridge` and `/swml/bridge/status` refuse requests SignalWire did not sign. Unset, anyone who can reach the server can ring any subscriber. Needs `PUBLIC_URL` |
+| `SIGNALWIRE_SIGNING_KEY` | production | The space's Signing Key. Set, `/swml/park`, `/swml/bridge`, `/swml/bridge/status` and `/webhooks/signalwire` refuse requests SignalWire did not sign (the webhook then needs no `API_TOKEN`). Unset, anyone who can reach the server can ring any subscriber. Needs `PUBLIC_URL` |
 | `PARK_ROUTES` | phone numbers | Dialled destination → subscriber, e.g. `+15551234567:rn-example,+15559998888:other-user` |
 | `PARK_RINGBACK_URL` | — | Your own ringback recording, replacing the generated `ring:15.0:us` (this server's `/swml/ringback` serves one) |
 | `APNS_TEAM_ID` | iOS | Apple Developer Team ID |
@@ -88,11 +90,11 @@ One `.p8` APNs key covers alert *and* VoIP pushes, sandbox *and* production.
 | --- | --- | --- |
 | `GET /health` | none | Liveness. |
 | `POST /token` | `authenticateCaller` | Mint a subscriber token. See [Subscriber tokens](#subscriber-tokens). |
-| `POST /devices` | `API_TOKEN` | Register or refresh a token. Body: `externalUserId`, `platform`, `token`, `environment` (iOS). |
-| `DELETE /devices/:token` | `API_TOKEN` | Remove one. Call on sign-out. |
-| `GET /devices?externalUserId=` | `API_TOKEN` | List. Debugging aid. |
+| `POST /devices` | `API_TOKEN`, or `authenticateCaller` with `DEVICE_AUTH=caller` | Register or refresh a token. Body: `externalUserId` (optional with `DEVICE_AUTH=caller`, and must match the caller), `platform`, `token`, `environment` (iOS). |
+| `DELETE /devices/:token` | as `POST /devices` | Remove one. Call on sign-out. With `DEVICE_AUTH=caller`, only the caller's own (another user's is a `404`). |
+| `GET /devices?externalUserId=` | as `POST /devices` | List. Debugging aid. With `DEVICE_AUTH=caller`, the caller's devices only; the query is ignored. |
 | `POST /notify` | `API_TOKEN` | Generic send. Body: `externalUserId`, `correlationId`, `from?`, `fromName?`. |
-| `POST /webhooks/signalwire/inbound` | `API_TOKEN` | SignalWire adapter — normalises, then calls the same service. |
+| `POST /webhooks/signalwire/inbound` | SignalWire signature with `SIGNALWIRE_SIGNING_KEY`, else `API_TOKEN` | SignalWire adapter — normalises, then calls the same service. Without a signing key only a caller you control can send `API_TOKEN`; SignalWire cannot. |
 | `POST /swml/park` | SignalWire signature | Park the caller, push the user's devices. Subscriber from `?subscriber=` on this URL, then `PARK_ROUTES`. |
 | `POST /swml/bridge` | SignalWire signature + bridge token | Join the answering device to the parked caller. |
 | `POST /swml/bridge/status` | SignalWire signature | The bridge's status callback; ends the caller once the device leg ends. |
@@ -169,21 +171,47 @@ SignalWire. Also: `externalUserId` is not called `subscriberId` for the same
 reason — one column's worth of discipline now is the difference between
 multi-tenant later and a migration.
 
+## Device registration
+
+An app registers its own push token, so `/devices` has to know which user the
+app is signed in as. Two modes, chosen by `DEVICE_AUTH`:
+
+- **`api-token`** (default). `/devices` takes `externalUserId` from the body
+  and is guarded by the shared `API_TOKEN`. That suits a backend that
+  registers devices on its users' behalf, and local development with
+  `API_TOKEN` unset. An app must not hold `API_TOKEN`: anyone who unzips the
+  bundle could then register under any user, list every token, and push to
+  anyone.
+- **`caller`**. `/devices` is mounted before the `API_TOKEN` guard and calls
+  `authenticateCaller`, the function `/token` already uses to decide who the
+  caller is. The user it returns is the only user the request can act for:
+  `POST` registers under that user (a body `externalUserId` that names anyone
+  else is a `403`), `GET` lists that user's devices, and `DELETE` removes only
+  that user's (another user's token is a `404`). The app authenticates exactly
+  as it does for `/token`, with its own session credential.
+
+`caller` is only as strong as `authenticateCaller`. With the development stub
+(`ALLOW_UNAUTHENTICATED_TOKENS=1`) it accepts anyone as whoever the body names
+(`reference`, then `externalUserId`), so it changes nothing until you replace
+the stub. Without the stub and without your own function, every `/devices`
+request is refused, the same closed default as `/token`.
+
+A push token can still move between users (a reinstall, a shared handset):
+the newest registration wins. Knowing a token does not make you its user,
+which is why the user comes from authentication and not from the body.
+
 ## Production gaps
 
 This is a scaffold. Before it carries real traffic:
 
 - **Storage.** `JsonFileDeviceStore` rewrites the whole file per write and has
   no locking. Implement `DeviceStore` against Postgres.
-- **Per-user auth on `/devices`.** The only control is the shared `API_TOKEN`,
-  which an app cannot hold without shipping it in its bundle. Whoever can call
-  `/devices` can register a device under any user — and so receive that
-  user's calls and bridge tokens — list every token, and delete anyone's.
-  Authenticate the caller as the user (as `/token`'s `authenticateCaller`
-  does) and take `externalUserId` from that, not from the body.
-- **Webhook authentication.** `/swml/*` checks SignalWire's signature when
-  `SIGNALWIRE_SIGNING_KEY` is set. `/webhooks/signalwire/inbound` does not; it
-  sits behind `API_TOKEN`.
+- **Per-user auth on `/devices`.** Off by default: with `DEVICE_AUTH` unset
+  the only control is the shared `API_TOKEN`, which an app cannot hold without
+  shipping it in its bundle, and whoever can call `/devices` can register a
+  device under any user — and so receive that user's calls and bridge tokens —
+  list every token, and delete anyone's. Set `DEVICE_AUTH=caller` and replace
+  `authenticateCaller` (see [Device registration](#device-registration)).
 - **Cancelling a ring.** Nothing tells a user's other devices that one of them
   answered or declined, or that the parked caller hung up: they ring until the
   client's own timeout.

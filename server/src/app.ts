@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
+
 import express from 'express';
 
 import { createDeviceRoutes } from './routes/devices.js';
@@ -7,17 +9,34 @@ import { createSignalWireWebhook } from './signalwire/webhook.js';
 
 import type { DeviceStore } from './core/DeviceStore.js';
 import type { NotificationService } from './core/NotificationService.js';
-import type { Express, NextFunction, Request, Response, Router } from 'express';
+import type { AuthenticateCaller } from './routes/token.js';
+import type { Express, NextFunction, Request, RequestHandler, Response, Router } from 'express';
 
 export interface AppOptions {
   store: DeviceStore;
   service: NotificationService;
   /**
-   * Shared secret required on every route except `/health` and `/token`. Omit
-   * only for local development — this endpoint can send pushes to your whole
-   * user base.
+   * Shared secret for `/notify`, and for `/devices` and the SignalWire webhook
+   * unless `deviceAuth` / `signalWireSignature` authenticate them instead. Not
+   * required on `/health`, `/token` or `/swml/*`. Omit only for local
+   * development — this endpoint can send pushes to your whole user base.
    */
   apiToken?: string;
+  /**
+   * Per-user auth for `/devices` (`DEVICE_AUTH=caller`): the same seam as
+   * `/token`. Set, `/devices` is mounted before the `API_TOKEN` guard, and each
+   * request may touch only the authenticated user's devices. This is what lets
+   * an app register itself without holding `API_TOKEN`.
+   */
+  deviceAuth?: AuthenticateCaller;
+  /**
+   * SignalWire signature check (`SIGNALWIRE_SIGNING_KEY`). Set, the SignalWire
+   * webhook is mounted before the `API_TOKEN` guard behind this check, since
+   * SignalWire signs its requests and cannot send a bearer token.
+   */
+  signalWireSignature?: RequestHandler;
+  /** Structured log line, for the webhook's diagnostics. */
+  log?: (message: string, meta?: Record<string, unknown>) => void;
   /**
    * Subscriber-token endpoint. Omitted when the space credentials are absent,
    * in which case `/token` 503s with an explanation rather than 404ing, so the
@@ -34,13 +53,21 @@ export interface AppOptions {
   swmlRoutes?: Router;
 }
 
+/**
+ * Compares two secrets in time that depends on neither. Both are hashed
+ * first, so the comparison is always of 32 bytes and reveals no length.
+ */
+function sameSecret(provided: string, expected: string): boolean {
+  const digest = (value: string) => createHash('sha256').update(value, 'utf8').digest();
+  return timingSafeEqual(digest(provided), digest(expected));
+}
+
 function requireApiToken(apiToken: string) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const header = req.header('authorization') ?? '';
     const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
 
-    // Length check first so the comparison below cannot leak length by timing.
-    if (provided.length !== apiToken.length || provided !== apiToken) {
+    if (!sameSecret(provided, apiToken)) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
@@ -56,6 +83,9 @@ export function createApp({
   store,
   service,
   apiToken,
+  deviceAuth,
+  signalWireSignature,
+  log,
   tokenRoutes,
   swmlRoutes
 }: AppOptions): Express {
@@ -86,13 +116,28 @@ export function createApp({
     app.use('/swml', swmlRoutes);
   }
 
+  // Routes that authenticate on their own terms come before the shared guard.
+  if (deviceAuth) {
+    app.use('/devices', createDeviceRoutes(store, { authenticateCaller: deviceAuth }));
+  }
+  if (signalWireSignature) {
+    app.use('/webhooks/signalwire', signalWireSignature, createSignalWireWebhook(service, log));
+  }
+
   if (apiToken) {
     app.use(requireApiToken(apiToken));
   }
 
-  app.use('/devices', createDeviceRoutes(store));
+  if (!deviceAuth) {
+    app.use('/devices', createDeviceRoutes(store));
+  }
   app.use('/notify', createNotifyRoutes(service));
-  app.use('/webhooks/signalwire', createSignalWireWebhook(service));
+  if (!signalWireSignature) {
+    // Without a signing key the webhook stays behind API_TOKEN, which
+    // SignalWire cannot send: only a caller you control (your own RELAY app,
+    // or SWML with custom headers) can reach it then.
+    app.use('/webhooks/signalwire', createSignalWireWebhook(service, log));
+  }
 
   app.use((req, res) => {
     res.status(404).json({ error: `No route for ${req.method} ${req.path}` });
