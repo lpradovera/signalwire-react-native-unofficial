@@ -84,40 +84,33 @@ function variablesFrom(body: Record<string, unknown>): Record<string, unknown> {
   return { ...params, ...vars, ...nested };
 }
 
+/** SignalWire's request: `params` (or the body itself), and `params.call`. */
+function paramsAndCall(body: Record<string, unknown>): {
+  params: Record<string, unknown>;
+  call: Record<string, unknown>;
+} {
+  const params = (body.params ?? body) as Record<string, unknown>;
+  return { params, call: (params.call ?? {}) as Record<string, unknown> };
+}
+
+/** The first non-empty string among `candidates`. */
+function firstString(candidates: readonly unknown[]): string | undefined {
+  return candidates.find((value): value is string => typeof value === 'string' && value.length > 0);
+}
+
 /** Reads the call SID from whichever field SignalWire used. */
 function callSidFrom(body: Record<string, unknown>): string | undefined {
-  const params = (body.params ?? body) as Record<string, unknown>;
-  const call = (params.call ?? {}) as Record<string, unknown>;
-  for (const candidate of [call.call_id, call.id, params.call_id, params.callSid, params.CallSid]) {
-    if (typeof candidate === 'string' && candidate.length > 0) {
-      return candidate;
-    }
-  }
-  return undefined;
+  const { params, call } = paramsAndCall(body);
+  return firstString([call.call_id, call.id, params.call_id, params.callSid, params.CallSid]);
 }
 
 /** Reads the caller's identity, which becomes the name on the CallKit screen. */
 function callerFrom(body: Record<string, unknown>): { from?: string; fromName?: string } {
-  const params = (body.params ?? body) as Record<string, unknown>;
-  const call = (params.call ?? {}) as Record<string, unknown>;
-
-  let from: string | undefined;
-  for (const candidate of [call.from, params.from, params.From, params.from_number]) {
-    if (typeof candidate === 'string' && candidate.length > 0) {
-      from = candidate;
-      break;
-    }
-  }
-
-  let fromName: string | undefined;
-  for (const candidate of [call.from_name, params.from_name, params.CallerName, call.caller_name]) {
-    if (typeof candidate === 'string' && candidate.length > 0) {
-      fromName = candidate;
-      break;
-    }
-  }
-
-  return { from, fromName };
+  const { params, call } = paramsAndCall(body);
+  return {
+    from: firstString([call.from, params.from, params.From, params.from_number]),
+    fromName: firstString([call.from_name, params.from_name, params.CallerName, call.caller_name])
+  };
 }
 
 /**
@@ -138,8 +131,11 @@ function subscriberFromCaller(body: Record<string, unknown>): string | undefined
   // found nothing here, so the caller looked unidentifiable and the bridge
   // fell back to a configured default — which rejected a perfectly good token
   // as wrong-subscriber.
+  // SIP and Fabric addresses escape what they cannot hold (an email's "@",
+  // a space), while the token was minted for the reference as written, so
+  // compare the unescaped form.
   if (from.startsWith('sip:')) {
-    const user = from.slice(4).split('@')[0];
+    const user = unescapeReference(from.slice(4).split('@')[0]);
     return user && user.length > 0 ? user : undefined;
   }
 
@@ -147,19 +143,25 @@ function subscriberFromCaller(body: Record<string, unknown>): string | undefined
     return undefined;
   }
   const segments = (from.split('?')[0] ?? from).split('/').filter(Boolean);
-  return segments[segments.length - 1];
+  return unescapeReference(segments[segments.length - 1]);
+}
+
+/** Percent-decodes a reference; one that is not valid escaping is kept as is. */
+function unescapeReference(raw: string | undefined): string | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
 }
 
 /** Reads the dialled destination, to decide who to ring. */
 function calledAddressFrom(body: Record<string, unknown>): string | undefined {
-  const params = (body.params ?? body) as Record<string, unknown>;
-  const call = (params.call ?? {}) as Record<string, unknown>;
-  for (const candidate of [call.to, params.to, params.To, params.to_number]) {
-    if (typeof candidate === 'string' && candidate.length > 0) {
-      return candidate;
-    }
-  }
-  return undefined;
+  const { params, call } = paramsAndCall(body);
+  return firstString([call.to, params.to, params.To, params.to_number]);
 }
 
 /**
