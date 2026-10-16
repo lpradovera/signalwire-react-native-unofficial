@@ -61,6 +61,6 @@ export default defineConfig({
     '@react-native-async-storage/async-storage',
     '@react-native-community/netinfo',
     '@react-native-firebase/messaging',
-    '@expo/config-plugins'
+    'expo/config-plugins'
   ]
 });

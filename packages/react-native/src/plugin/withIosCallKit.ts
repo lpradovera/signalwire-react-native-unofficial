@@ -1,6 +1,6 @@
-import { withEntitlementsPlist, withInfoPlist } from '@expo/config-plugins';
+import { withEntitlementsPlist, withInfoPlist } from 'expo/config-plugins';
 
-import type { ConfigPlugin } from '@expo/config-plugins';
+import type { ConfigPlugin } from 'expo/config-plugins';
 
 export interface IosOptions {
   microphonePermission: string;

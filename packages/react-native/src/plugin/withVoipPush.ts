@@ -1,7 +1,7 @@
 import { VOIP_PUSH_SOURCE } from './voipPushSource';
 import { withObjcSource } from './withObjcSource';
 
-import type { ConfigPlugin } from '@expo/config-plugins';
+import type { ConfigPlugin } from 'expo/config-plugins';
 
 /**
  * Injects the native VoIP push hook (`SignalWireVoipPush.m`).

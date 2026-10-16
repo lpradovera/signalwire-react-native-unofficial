@@ -13,6 +13,8 @@ jest.mock('@signalwire/js', () => {
   const { EMPTY } = jest.requireActual('rxjs');
   return {
     SignalWire: class {
+      // A started client: the provider destroys it at once (see destroyClient).
+      session = {};
       errors$ = EMPTY;
       destroy(): void {}
     },

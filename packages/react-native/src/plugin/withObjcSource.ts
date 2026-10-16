@@ -1,9 +1,9 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-import { withDangerousMod, withXcodeProject } from '@expo/config-plugins';
+import { withDangerousMod, withXcodeProject } from 'expo/config-plugins';
 
-import type { ConfigPlugin } from '@expo/config-plugins';
+import type { ConfigPlugin } from 'expo/config-plugins';
 
 /**
  * Writes a generated Objective-C file next to the AppDelegate and adds it to

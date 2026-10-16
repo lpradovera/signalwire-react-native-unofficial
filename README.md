@@ -117,8 +117,8 @@ so the two UI packages are siblings by name only and share no code.
 
 `./ringing` is deliberately separate from `./callkit`: the latter imports
 `react-native-callkeep`, which constructs a `NativeEventEmitter` at import
-time. A component library that only wants to *draw* ringing calls should not be
-forced to install native call UI.
+time, and `./ringing` loads none of it. The main entry still imports
+callkeep (see [Install](#install)), so an app needs it installed either way.
 
 ## Repository layout
 
@@ -215,9 +215,20 @@ npm install @signalwire/react-native@alpha @signalwire/js rxjs \
   react-native-webrtc \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
-  react-native-url-polyfill
+  react-native-url-polyfill \
+  react-native-callkeep \
+  react-native-incall-manager \
+  @react-native-community/netinfo
 # for the call-screen components: also @signalwire/react-native-ui@alpha
 ```
+
+All of these are needed, the last three included: the main entry imports
+them. `SignalWireProvider` loads the native call bridge, which imports
+`react-native-callkeep` and, for audio routing, `react-native-incall-manager`;
+`createReactNativePlatform()` imports `@react-native-community/netinfo` for
+network-loss detection. Without one of them installed, Metro cannot bundle the
+app: `Unable to resolve module react-native-callkeep` (or the other two).
+They are native modules, so rebuild the app after installing them.
 
 `@signalwire/react` comes with `@signalwire/react-native` as a dependency.
 The four `@signalwire/*` packages of this repository are released together at
@@ -256,16 +267,18 @@ matches the glob too. npm records a `file:` dependency for each tarball.
 Copying the tarballs (or the unpacked packages) into the app, under
 `vendor/` say, keeps the install reproducible on another machine and in CI.
 
-Optional, each unlocking one feature:
+What each native peer is for:
 
-| Package | Unlocks |
+| Package | What uses it |
 | --- | --- |
-| `react-native-callkeep` | `@signalwire/react-native/callkit` — native call UI |
-| `react-native-incall-manager` | `@signalwire/react-native/audio` — speaker/earpiece/headset/Bluetooth routing (iOS beyond speaker on/off: see [Audio routes on iOS](#audio-routes-on-ios)) |
+| `react-native-callkeep` | Native call UI (CallKit, ConnectionService); `@signalwire/react-native/callkit` |
+| `react-native-incall-manager` | Speaker/earpiece/headset/Bluetooth routing; `@signalwire/react-native/audio` (iOS beyond speaker on/off: see [Audio routes on iOS](#audio-routes-on-ios)) |
 | `@react-native-community/netinfo` | Network-loss detection and SDK reconnection |
 
-Importing a subpath without its peer throws `MissingPeerDependencyError`, which
-names the package and the install command.
+`MissingPeerDependencyError`, which names the package and the fix, is for a
+peer that is installed but not linked, such as a dev client not rebuilt since
+the package was added. A peer that is not installed fails the bundle, as
+above.
 
 **This package has a little native code on iOS** (`ios/`, pod
 `SignalWireReactNative`): the system audio output button,
@@ -647,8 +660,12 @@ not natively linked. Install it and rebuild the native app (`npx expo prebuild
 the audio session. The bridge gates on `didActivateAudioSession`; if you start
 media yourself, wait for that event too.
 
-**Network loss is not detected** — `@react-native-community/netinfo` is not
-installed. The platform logs a warning and continues with reduced resilience.
+**Network loss is not detected** — check for `Network monitoring unavailable,
+continuing with reduced resilience` in the log: the NetInfo shim could not
+start, and the line carries the reason. Also check the app did not pass
+`platform={{ netInfo: false }}` to the provider (or `netInfo: false` to
+`createReactNativePlatform()`). (`@react-native-community/netinfo`
+itself must be installed, or the app does not bundle; see [Install](#install).)
 
 ## Development
 
