@@ -50,7 +50,8 @@ export interface CallEntry {
  * - `'declined'`: the user declined a push before its SDK call existed.
  * - `'duplicate'`: a second native display of a call already shown.
  */
-export type CallEndReason = 'missed' | 'remote' | 'local' | 'failed' | 'declined' | 'duplicate';
+/** `'busy'`: refused because another call is live (one call at a time). */
+export type CallEndReason = 'missed' | 'remote' | 'local' | 'failed' | 'declined' | 'duplicate' | 'busy';
 
 /** Everything the registry needs from the native layer. */
 export interface CallRegistryHost {
@@ -66,4 +67,12 @@ export interface CallRegistryOptions {
   host: CallRegistryHost;
   /** How long a push entry may wait for its SDK call, in ms. Default 45000. */
   fusionTimeoutMs?: number;
+  /**
+   * Refuse an incoming call as busy, without showing it, while another call
+   * is live. Default false. The CallKit bridge sets it on Android, where a
+   * second call held RINGING by a self-managed Telecom connection rang with
+   * nothing on screen. iOS keeps CallKit's own waiting-call screen (End &
+   * Accept / Decline).
+   */
+  refuseIncomingWhileBusy?: boolean;
 }
