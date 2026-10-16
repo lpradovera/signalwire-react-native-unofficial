@@ -71,6 +71,11 @@
   then it renders nothing. It writes nothing to the audio session.
 - `CallControls` shows it on iOS. `showRoutePicker` defaults to
   `showAudioRoute`, so an app that hid audio routing doesn't get it.
+- The button shows only with incall-manager's iOS routes (the upstream
+  change, or `docs/patches/`), and `isAudioRoutePickerAvailable()` says so.
+  Released incall-manager 4.3.0 neither reports a choice made there nor
+  keeps it, so on 4.3.0 it renders nothing and `CallControls` offers speaker
+  on/off.
 - VoiceOver reads the button as one element, a button with its
   `accessibilityLabel` (default "Audio output"); before, it read AVKit's
   inner "AirPlay" button and the label went unused. `activeTintColor` is
