@@ -47,6 +47,12 @@ withCompletionHandler:(void (^)(void))completion
 }
 ```
 
+This is the shape only. The generated hook (below) also accepts each payload
+field only as a string, replaces a missing or malformed `uuid` with a minted
+lowercase one, sets callkeep up natively if JavaScript has never run
+`RNCallKeep.setup()`, and caches each push for JavaScript; a hand-written
+handler needs the same, or a malformed push gets the app terminated.
+
 Your push payload **must** include the SignalWire `call_id`. The JS side reads it
 from callkeep's `didDisplayIncomingCall` event and calls
 `getCallKit().reportIncomingPush({ callId, from, fromName })`, which is how
@@ -54,8 +60,10 @@ from callkeep's `didDisplayIncomingCall` event and calls
 
 Expo generates a Swift `AppDelegate`, and Swift cannot import RNCallKeep
 (callkeep#856), so the plugin generates an Objective-C category instead of
-patching that file. Bare projects should do the same: copy
-`packages/react-native/src/plugin/voipPushSource.ts` into the app target.
+patching that file. Bare projects should do the same: copy the Objective-C from
+`packages/react-native/src/plugin/voipPushSource.ts` in this repository (the
+npm package ships only `dist`) into the app target, and copy it again on
+upgrade.
 
 ## iOS: calling back from Recents and Siri
 

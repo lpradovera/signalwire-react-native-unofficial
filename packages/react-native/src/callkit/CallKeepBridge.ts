@@ -25,10 +25,11 @@ import { logger } from '@signalwire/react';
 import { CallInProgressError } from '../errors';
 import { assertPeerModule } from '../platform/peers';
 import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
-import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
+import { forgetPendingVoipCall, getPendingVoipCalls } from '../push/voipToken';
 import { CALLKIT_BRIDGE_KEY } from './bridgeKey';
 import { CallRegistry, DEFAULT_FUSION_TIMEOUT_MS, INBOUND_ANSWER } from './CallRegistry';
 
+import type { PendingCall } from '../push/voipToken';
 import type { CallEndReason, CallRegistryHost, PushPayload } from './types';
 
 /** The `didDisplayIncomingCall` payload, which callkeep types loosely. */
@@ -443,7 +444,9 @@ export class CallKeepBridge {
         this.withAudioRoutes('debug', (audio) => audio.expectSession(live));
       });
     try {
-      await this.adoptPendingNativeCall();
+      for (const pending of await getPendingVoipCalls()) {
+        await this.adoptPendingNativeCall(pending);
+      }
     } finally {
       this.adoptingLaunchPush = false;
     }
@@ -838,11 +841,10 @@ export class CallKeepBridge {
    * nothing: no bridge is dialled and the caller waits on a parked leg until
    * it times out.
    */
-  private async adoptPendingNativeCall(): Promise<void> {
-    const pending = await getPendingVoipCall();
-    if (!pending?.uuid) {
-      return;
-    }
+  private async adoptPendingNativeCall(pending: PendingCall): Promise<void> {
+    // Forgotten whether or not it is adopted here: the native cache outlives
+    // this JS context, and the next setup() in the process would adopt it again.
+    await forgetPendingVoipCall(pending.uuid);
     if (this.registry.entryForUuid(pending.uuid)) {
       return;
     }
@@ -850,7 +852,6 @@ export class CallKeepBridge {
     const { uuid, callId, handle, callerName, ...rest } = pending;
     logger.debug(`Adopting pending native call ${uuid} from the launch push`);
     this.adoptPushed(uuid, callId, handle ?? 'Unknown', callerName ?? 'Incoming call', rest);
-    await clearPendingVoipCall();
   }
 
   /** Replays the events callkeep buffered while JavaScript was starting. */
@@ -1014,6 +1015,9 @@ export class CallKeepBridge {
       localizedCallerName,
       fields
     );
+    // The native side caches each displayed VoIP push for a cold start;
+    // this one has been seen.
+    void forgetPendingVoipCall(callUUID);
   }
 
   /**
