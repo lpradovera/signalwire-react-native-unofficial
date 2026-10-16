@@ -100,6 +100,7 @@ export function CallControls({
 const ROUTE_LABELS: Record<AudioRoute, string> = {
   speaker: 'Speaker',
   earpiece: 'Earpiece',
+  headset: 'Headset',
   bluetooth: 'Bluetooth'
 };
 
