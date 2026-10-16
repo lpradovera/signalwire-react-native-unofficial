@@ -213,6 +213,33 @@ describe('SignalWireProvider observer wiring', () => {
     expect(live).toBe(1);
   });
 
+  it('binds an inline observer that returns no unbind once per client', () => {
+    // The 0.1.0 contract: bindClient is called once and returns nothing. Such
+    // a binding can't be undone, so binding each render's new observer
+    // object stacked one more subscription per render.
+    const bindings: unknown[] = [];
+    const make = (): CallObserver => ({
+      bindClient: (client) => {
+        bindings.push(client);
+      }
+    });
+    const tree = (observer: CallObserver, credentials = credentialProvider): React.JSX.Element => (
+      <SignalWireProvider credentialProvider={credentials as never} observer={observer}>
+        <Probe />
+      </SignalWireProvider>
+    );
+
+    const view = render(tree(make()));
+    view.rerender(tree(make()));
+    view.rerender(tree(make()));
+    view.rerender(tree(make()));
+    expect(bindings).toEqual([harness]);
+
+    // A new client is a new binding.
+    view.rerender(tree(make(), { authenticate: jest.fn(async () => ({ token: 'u' })) }));
+    expect(bindings).toEqual([harness, harness]);
+  });
+
   it('unbinds the observer when the provider unmounts', () => {
     const unbind = jest.fn();
     const view = render(
