@@ -6,7 +6,9 @@
  *
  * Expo and React Native are not built here, so the few of their types the
  * template uses are stubbed with the signatures they have in Expo SDK 54 and
- * React Native 0.81. Needs Xcode; skipped elsewhere.
+ * React Native 0.81. Needs Xcode; skipped elsewhere, except where
+ * SW_REQUIRE_SWIFTC=1 (CI's macOS job) makes a missing Xcode a failure, so the
+ * suite can't pass by skipping where it is meant to run.
  */
 const assert = require('node:assert/strict');
 const { execFileSync, spawnSync } = require('node:child_process');
@@ -28,7 +30,12 @@ const hasSwiftc = (() => {
     return false;
   }
 })();
-const skip = !hasSwiftc && 'needs Xcode (xcrun swiftc)';
+const required = process.env.SW_REQUIRE_SWIFTC === '1';
+const skip = !hasSwiftc && !required && 'needs Xcode (xcrun swiftc)';
+
+test('Xcode is available where the Swift type-check is required', { skip: !required }, () => {
+  assert.ok(hasSwiftc, 'SW_REQUIRE_SWIFTC=1, but `xcrun --sdk iphonesimulator --find swiftc` found no swiftc');
+});
 
 const STUBS = `import UIKit
 
@@ -93,7 +100,7 @@ let source;
 let dir;
 
 before(async () => {
-  if (skip) return;
+  if (!hasSwiftc) return;
   const root = makeProject('swift');
   const { appDelegate } = await prebuild(root, [withSceneLifecycle]);
   // @UIApplicationMain is an error in Swift 6, in the template's code; an app on Swift 6 uses @main.
