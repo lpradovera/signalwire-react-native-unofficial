@@ -87,9 +87,13 @@ function peek<T>(observable$: Observable<T>): Peeked<T> {
  * its "Connecting…" screen with a healthy authenticated WebSocket underneath.
  */
 export function useObservable<T>(observable$: Observable<T> | undefined, initialValue: T): T {
-  // Survives store rebuilds and re-subscriptions.
+  // The current source's latest value, once it has emitted. Survives
+  // re-subscriptions to the same source; reset when the source changes.
   const snapshotRef = useRef<T>(initialValue);
   const hasEmittedRef = useRef(false);
+  // The caller's synchronous getter, read live until the source emits.
+  const initialRef = useRef(initialValue);
+  initialRef.current = initialValue;
 
   // The subscribe callback reads the latest observable through a ref rather
   // than closing over it, so it can stay referentially stable (see below).
@@ -111,6 +115,13 @@ export function useObservable<T>(observable$: Observable<T> | undefined, initial
   const sourceKey = rootSource(observable$);
 
   const store = useMemo<ObservableStore<T>>(() => {
+    // A different source (another call, another client, or none): the old
+    // one's value no longer applies. Kept, it outlived the swap: a healthy
+    // call B showed call A's error, whose errors$ never emits, and call={null}
+    // kept the last call's status. Until the new source emits, the caller's
+    // getter (initialValue) is the value.
+    hasEmittedRef.current = false;
+    snapshotRef.current = initialRef.current;
     const source = sourceRef.current;
     if (source) {
       const peeked = peek(source);
@@ -136,7 +147,7 @@ export function useObservable<T>(observable$: Observable<T> | undefined, initial
         });
         return () => subscription.unsubscribe();
       },
-      getSnapshot: (): T => snapshotRef.current
+      getSnapshot: (): T => (hasEmittedRef.current ? snapshotRef.current : initialRef.current)
     };
     // `sourceKey` is not read inside the callback — it exists purely to force a
     // re-subscription when the underlying subject changes. That is exactly the
