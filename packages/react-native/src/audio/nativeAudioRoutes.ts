@@ -1,7 +1,9 @@
-import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
-import { Observable, shareReplay } from 'rxjs';
+import { NativeModules, Platform } from 'react-native';
+import InCallManager from 'react-native-incall-manager';
+import { BehaviorSubject, Observable, filter } from 'rxjs';
 
 import { logger } from '@signalwire/react';
+import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
 
 /** Audio routes by react-native-incall-manager's names. */
 const NAMES = ['EARPIECE', 'SPEAKER_PHONE', 'WIRED_HEADSET', 'BLUETOOTH'] as const;
@@ -23,11 +25,19 @@ export const NO_AUDIO_DEVICES: AudioDeviceStatus = { available: [], selected: nu
 
 const DEVICE_CHANGED = 'onAudioDeviceChanged';
 
-/** The parts of incall-manager's iOS native module that its iOS routes add. */
-interface IncallNativeRoutes {
+/**
+ * How long the native subscription outlives its last subscriber. A hook's
+ * first render subscribes and unsubscribes at once to read the current value,
+ * then subscribes again from its effect: without the grace period each mount
+ * would connect twice (two reads, and incall-manager resets its event dedup
+ * on every disconnect).
+ */
+const RELEASE_DELAY_MS = 1000;
+
+/** The parts of incall-manager's JS API that its iOS routes add. */
+interface IncallRoutesApi {
   getAudioDeviceStatus(): Promise<unknown>;
-  addListener(event: string): void;
-  removeListeners(count: number): void;
+  addListener(event: string, listener: (raw: unknown) => void): { remove(): void };
 }
 
 function isName(value: unknown): value is AudioDeviceName {
@@ -35,23 +45,35 @@ function isName(value: unknown): value is AudioDeviceName {
 }
 
 /**
- * incall-manager's native module, when it has iOS audio routes
- * (`chooseAudioRoute`, `getAudioDeviceStatus`, `onAudioDeviceChanged`).
- * Released versions (through 4.3.0) have them on Android only; the upstream
- * change, or the patch in docs/patches, adds them on iOS. `null` off iOS.
+ * incall-manager's JS API, when it has iOS audio routes (`chooseAudioRoute`,
+ * `getAudioDeviceStatus`, `onAudioDeviceChanged`). Released versions (through
+ * 4.3.0) have them on Android only; the upstream change, or the patch in
+ * docs/patches, adds them on iOS. `null` off iOS.
+ *
+ * Both halves are checked: the native module (an app rebuilt with the
+ * routes) and the JS wrapper (an older JS bundle over a rebuilt app, or the
+ * reverse, has only one of them and is treated as having no routes).
  */
-function incallNativeRoutes(): IncallNativeRoutes | null {
+function incallRoutes(): IncallRoutesApi | null {
   if (Platform.OS !== 'ios') {
     return null;
   }
-  const native = (NativeModules as Record<string, Partial<IncallNativeRoutes> | undefined> | undefined)
+  const native = (NativeModules as Record<string, { getAudioDeviceStatus?: unknown } | undefined> | undefined)
     ?.InCallManager;
-  return typeof native?.getAudioDeviceStatus === 'function' ? (native as IncallNativeRoutes) : null;
+  const api = InCallManager as unknown as Partial<IncallRoutesApi> | undefined;
+  if (
+    typeof native?.getAudioDeviceStatus !== 'function' ||
+    typeof api?.getAudioDeviceStatus !== 'function' ||
+    typeof api.addListener !== 'function'
+  ) {
+    return null;
+  }
+  return api as IncallRoutesApi;
 }
 
 /** Whether this iOS app's incall-manager can choose and report routes beyond speaker on/off. */
 export function hasIosAudioRoutes(): boolean {
-  return incallNativeRoutes() !== null;
+  return incallRoutes() !== null;
 }
 
 /** Reads the native status payload: `availableAudioDeviceList` arrives as a JSON string. */
@@ -77,41 +99,122 @@ export function parseAudioDeviceStatus(raw: unknown): AudioDeviceStatus {
 }
 
 /**
- * The current audio devices. iOS only, and only with an incall-manager that
- * has iOS routes: resolves `null` otherwise.
+ * The process-wide device feed: one native subscription and one parse per
+ * event, shared by the route controller and every `useAudioDevices`, in every
+ * bundle copy of this package.
  */
-export async function getAudioDeviceStatus(): Promise<AudioDeviceStatus | null> {
-  const native = incallNativeRoutes();
-  return native ? parseAudioDeviceStatus(await native.getAudioDeviceStatus()) : null;
+interface DeviceFeed {
+  /** The latest status; `null` while nothing is known (not connected). */
+  readonly status$: BehaviorSubject<AudioDeviceStatus | null>;
+  subscribers: number;
+  listener: { remove(): void } | null;
+  release: ReturnType<typeof setTimeout> | null;
+}
+
+const FEED_GLOBAL = '__signalwireRNAudioDevices';
+
+function deviceFeed(): DeviceFeed {
+  return processGlobal<DeviceFeed>(FEED_GLOBAL, () => ({
+    status$: new BehaviorSubject<AudioDeviceStatus | null>(null),
+    subscribers: 0,
+    listener: null,
+    release: null
+  }));
 }
 
 /**
- * The audio devices, kept current: the status once on subscribe, then each
- * `onAudioDeviceChanged`. Shared, so every subscriber (the route controller,
- * each `useAudioDevices`) sees the same status from one native subscription
- * and one parse per event. Never emits without iOS routes.
+ * Reads the status and makes it the feed's current one. incall-manager
+ * answers the read on the same serial queue it sends its events from, so the
+ * answer is at least as new as every event that reached JavaScript before
+ * it, and every event after it is newer.
+ */
+async function readInto(feed: DeviceFeed | undefined, routes: IncallRoutesApi): Promise<AudioDeviceStatus> {
+  const status = parseAudioDeviceStatus(await routes.getAudioDeviceStatus());
+  if (feed?.listener) {
+    feed.status$.next(status);
+  }
+  return status;
+}
+
+function connect(feed: DeviceFeed, routes: IncallRoutesApi): void {
+  feed.subscribers += 1;
+  if (feed.release !== null) {
+    clearTimeout(feed.release);
+    feed.release = null;
+  }
+  if (feed.listener) {
+    return;
+  }
+  feed.listener = routes.addListener(DEVICE_CHANGED, (raw: unknown) => {
+    feed.status$.next(parseAudioDeviceStatus(raw));
+  });
+  readInto(feed, routes).catch((error: unknown) => logger.warn('Failed to read the audio devices:', error));
+}
+
+function disconnect(feed: DeviceFeed): void {
+  feed.subscribers -= 1;
+  if (feed.subscribers > 0 || feed.release !== null) {
+    return;
+  }
+  feed.release = setTimeout(() => {
+    feed.release = null;
+    if (feed.subscribers === 0 && feed.listener) {
+      feed.listener.remove();
+      feed.listener = null;
+      // Nothing follows the devices now: the next subscriber must not be
+      // handed this status as current.
+      feed.status$.next(null);
+    }
+  }, RELEASE_DELAY_MS);
+}
+
+/**
+ * Reads the audio devices now, and hands the result to every
+ * {@link audioDevices$} subscriber. iOS only, and only with an incall-manager
+ * that has iOS routes: resolves `null` otherwise.
  *
- * The event is subscribed through a NativeEventEmitter on incall-manager's
- * module: on iOS, RCTEventEmitter sends only to those.
+ * The status follows headsets and cars only while a call's session runs
+ * (between incall-manager's `start()` and `stop()`); outside a call it
+ * describes the app's own audio session, which usually lists only the
+ * receiver, the speaker and the current media output.
+ */
+export async function getAudioDeviceStatus(): Promise<AudioDeviceStatus | null> {
+  const routes = incallRoutes();
+  return routes ? readInto(peekProcessGlobal<DeviceFeed>(FEED_GLOBAL), routes) : null;
+}
+
+/**
+ * The audio devices: the current status on subscribe, then each
+ * `onAudioDeviceChanged`. Shared process-wide, so every subscriber sees the
+ * same status from one native subscription and one parse per event. Never
+ * emits without iOS routes. incall-manager reports changes only while a
+ * call's session runs, so outside a call this holds the last status read.
  */
 export const audioDevices$: Observable<AudioDeviceStatus> = new Observable<AudioDeviceStatus>((subscriber) => {
-  const native = incallNativeRoutes();
-  if (!native) {
+  const routes = incallRoutes();
+  if (!routes) {
     return undefined;
   }
-  let heard = false;
-  const subscription = new NativeEventEmitter(native).addListener(DEVICE_CHANGED, (raw: unknown) => {
-    heard = true;
-    subscriber.next(parseAudioDeviceStatus(raw));
-  });
-  native
-    .getAudioDeviceStatus()
-    .then((raw) => {
-      // A change that arrived while this was in flight is newer than it.
-      if (!heard && !subscriber.closed) {
-        subscriber.next(parseAudioDeviceStatus(raw));
-      }
-    })
-    .catch((error: unknown) => logger.warn('Failed to read the audio devices:', error));
-  return () => subscription.remove();
-}).pipe(shareReplay({ bufferSize: 1, refCount: true }));
+  const feed = deviceFeed();
+  connect(feed, routes);
+  const subscription = feed.status$
+    .pipe(filter((status): status is AudioDeviceStatus => status !== null))
+    .subscribe(subscriber);
+  return () => {
+    subscription.unsubscribe();
+    disconnect(feed);
+  };
+});
+
+/** Test seam: drops the device feed and its native subscription at once. */
+export function resetAudioDevicesForTesting(): void {
+  const feed = peekProcessGlobal<DeviceFeed>(FEED_GLOBAL);
+  if (feed) {
+    if (feed.release !== null) {
+      clearTimeout(feed.release);
+    }
+    feed.listener?.remove();
+    feed.status$.complete();
+  }
+  dropProcessGlobal(FEED_GLOBAL);
+}

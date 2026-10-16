@@ -97,7 +97,6 @@ export function CallControls({
           <AudioRoutePickerButton
             testID="sw-route-picker"
             tintColor={theme.colors.text}
-            activeTintColor={theme.colors.accent}
           />
         </View>
       ) : null}
