@@ -55,6 +55,17 @@ barrel registers all fourteen. For the same reason this package is deliberately
 **not** marked `sideEffects: false`; doing so would let bundlers drop the
 `customElements.define` call and the element would silently never upgrade.
 
+Each subpath also registers what its element renders. A
+`@signalwire/web-components` subpath defines only its own tag, so
+`<sw-call-controls>` on its own would render a bare, never-upgraded
+`<sw-ui-control-bar>` with no buttons. `/call-controls` therefore also imports
+the control bar, split button, drop-up and icon; `/call-widget` and
+`/click-to-call` import everything the widget renders.
+
+`/device-selector` loads the whole `@signalwire/web-components` package: the
+upstream `sw-device-selector` subpath points at a file that no 4.0.0 RC ships,
+so the selector can only be imported from the package root.
+
 ## Components
 
 | Import path | Element | Events |
@@ -99,11 +110,15 @@ package's internals. Override the CSS custom properties it defines to restyle.
 Wrappers are generated, not hand-written — fourteen near-identical files drift
 otherwise:
 
-1. Add an entry to `scripts/components.json`.
+1. Add an entry to `scripts/components.json`. `registers` lists the other
+   `@signalwire/web-components` elements it renders.
 2. `npm run generate` — writes the wrapper, the barrel, and the `exports` map.
 3. Commit the output. Consumers never run codegen.
 
 `src/manifest.test.ts` fails if the manifest, the generated files and the
-`exports` map fall out of step.
+`exports` map fall out of step. `test/entries.test.mjs` loads every built entry
+point against the installed `@signalwire/web-components` and fails when an
+entry cannot be imported or leaves an element it renders unregistered, which
+is also what to rerun after upgrading `@signalwire/web-components`.
 
 MIT
