@@ -25,4 +25,7 @@ export { useObservable } from './useObservable';
 
 export type { CallObserver, SignalWirePlatform } from './types';
 
+export { TokenFetchError } from './tokenSource';
+export type { FetchToken, FetchedToken, TokenState, TokenStatus } from './tokenSource';
+
 export { logger } from './logger';

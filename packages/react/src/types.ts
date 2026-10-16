@@ -12,6 +12,14 @@ export interface SignalWirePlatform {
   readonly options: SignalWireOptions;
   /** Releases anything the platform holds. Must be safe to call twice. */
   dispose(): void;
+  /**
+   * Calls `listener` each time the app returns to the foreground; returns a
+   * function that stops it. `SignalWireProvider` uses it to renew a
+   * `fetchToken` token that ran out while the app was suspended. Optional:
+   * without it the provider watches the document's `visibilitychange`, which
+   * is the browser's foreground signal.
+   */
+  watchForeground?(listener: () => void): () => void;
 }
 
 /**
