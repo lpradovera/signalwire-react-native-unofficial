@@ -71,10 +71,10 @@ describe('CallControls', () => {
   it('shows Mute while unmuted and Unmute while muted', async () => {
     const call = createCall();
     await render(<CallControls call={call as never} />);
-    expect(screen.getByTestId('sw-mute').props.accessibilityLabel).toBe('Mute');
+    expect(screen.getByText('Mute')).toBeTruthy();
 
     await act(async () => call._audioMuted$.next(true));
-    expect(screen.getByTestId('sw-mute').props.accessibilityLabel).toBe('Unmute');
+    expect(screen.getByText('Unmute')).toBeTruthy();
   });
 
   it('mutes through the SDK rather than local state', async () => {
