@@ -1,6 +1,7 @@
 import { useObservable, useSignalWire } from '@signalwire/react-native';
+import { CallOverlayHost } from '@signalwire/react-native-ui';
 import React, { useEffect, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { Address, Call } from '@signalwire/js';
 
@@ -21,6 +22,7 @@ export function HomeScreen({
   // an empty directory for a frame even when addresses are already loaded.
   const addresses = useObservable<Address[]>(directory?.addresses$, directory?.addresses ?? []);
   const [destination, setDestination] = useState('');
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   // The directory starts empty and does not fetch on its own — `addresses$` is
   // a BehaviorSubject seeded with []. Without this the list is permanently
@@ -67,10 +69,28 @@ export function HomeScreen({
     <View style={styles.root}>
       <View style={styles.header}>
         <Text style={styles.name}>{user?.displayName ?? user?.email ?? 'Connected'}</Text>
-        <Pressable onPress={() => void disconnect()}>
-          <Text style={styles.link}>Disconnect</Text>
-        </Pressable>
+        <View style={styles.links}>
+          <Pressable onPress={() => setAboutOpen(true)} testID="about">
+            <Text style={styles.link}>About</Text>
+          </Pressable>
+          <Pressable onPress={() => void disconnect()}>
+            <Text style={styles.link}>Disconnect</Text>
+          </Pressable>
+        </View>
       </View>
+
+      {/* An app Modal with its own CallOverlayHost: a call that rings while
+          it is open draws its sheet over it, not behind it. */}
+      <Modal visible={aboutOpen} animationType="slide" onRequestClose={() => setAboutOpen(false)}>
+        <View style={styles.about}>
+          <Text style={styles.name}>SignalWire RN Example</Text>
+          <Text style={styles.empty}>Signed in as {user?.displayName ?? user?.email ?? 'unknown'}</Text>
+          <Pressable style={styles.button} onPress={() => setAboutOpen(false)}>
+            <Text style={styles.buttonLabel}>Close</Text>
+          </Pressable>
+        </View>
+        {aboutOpen ? <CallOverlayHost /> : null}
+      </Modal>
 
       {error ? <Text style={styles.error}>{error.message}</Text> : null}
       {dialError ? <Text style={styles.error}>Dial failed: {dialError}</Text> : null}
@@ -110,6 +130,8 @@ const styles = StyleSheet.create({
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   name: { color: '#f8fafc', fontSize: 16, fontWeight: '600' },
   link: { color: '#60a5fa', fontSize: 14 },
+  links: { flexDirection: 'row', gap: 16 },
+  about: { backgroundColor: '#0b1020', flex: 1, gap: 16, justifyContent: 'center', padding: 24 },
   error: { color: '#f87171', fontSize: 13 },
   input: { backgroundColor: '#1e293b', borderRadius: 12, color: '#f8fafc', padding: 14 },
   button: { backgroundColor: '#2563eb', borderRadius: 12, padding: 14 },
