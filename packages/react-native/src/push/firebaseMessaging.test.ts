@@ -170,6 +170,43 @@ describe('reporting that push is off', () => {
   });
 });
 
+/*
+ * The build Len tested: Firebase linked, no google-services.json, and native
+ * modules that read without throwing, so the modular API resolves and every
+ * getMessaging() throws "No Firebase App '[DEFAULT]' has been created". The
+ * warning came from getMessagingInstance on each use: at launch
+ * (registerAndroidCallPush) and again when the push token was first watched.
+ */
+describe('reporting that push is off when Firebase has no default app', () => {
+  it('warns once however often the messaging instance is asked for', () => {
+    const { loadFirebaseMessaging, getMessagingInstance } = load();
+    const log = spyOnLogger();
+    const firebase = loadFirebaseMessaging();
+    expect(firebase).toBeDefined();
+
+    expect(getMessagingInstance(firebase!)).toBeUndefined();
+    expect(getMessagingInstance(firebase!)).toBeUndefined();
+    expect(getMessagingInstance(firebase!)).toBeUndefined();
+
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(log.warn.mock.calls[0].join(' ')).toMatch(/no default app; Android push is off/);
+  });
+
+  it('warns once for the launch registration and the token watch together', () => {
+    load();
+    const log = spyOnLogger();
+    const { registerAndroidCallPush } = require('./androidCallPush');
+    const { watchPushToken } = require('./pushToken');
+
+    registerAndroidCallPush();
+    const stop = watchPushToken(() => undefined);
+    stop();
+
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(log.warn.mock.calls[0].join(' ')).toMatch(/Android push is off/);
+  });
+});
+
 describe('loadFirebaseMessaging', () => {
   it('uses RNFB 22.x as installed, whose default export is the namespaced messaging()', () => {
     const real = jest.requireActual('@react-native-firebase/messaging');
