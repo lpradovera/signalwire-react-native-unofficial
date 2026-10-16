@@ -87,7 +87,7 @@ async function harness(
     swmlRoutes: createSwmlRoutes({ tokens, service, callEnder, ...swmlOptions })
   });
   const server = await new Promise<Server>((resolve) => {
-    const listening = app.listen(0, () => resolve(listening));
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
   servers.push(server);
   const address = server.address();
