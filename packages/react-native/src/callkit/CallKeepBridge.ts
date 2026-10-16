@@ -659,7 +659,12 @@ export class CallKeepBridge {
         if (!participant) {
           return;
         }
-        void (muted ? participant.mute() : participant.unmute());
+        // The SDK refuses member RPCs until the member's call context has
+        // arrived (ParticipantNotReadyError), so a mute toggled during setup
+        // can reject.
+        (muted ? participant.mute() : participant.unmute()).catch((error: unknown) => {
+          logger.warn('Native mute failed:', error);
+        });
       }
     );
 

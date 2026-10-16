@@ -1,6 +1,9 @@
+import { ParticipantNotReadyError } from '@signalwire/js';
 import RNCallKeep from 'react-native-callkeep';
 import InCallManager from 'react-native-incall-manager';
 import { BehaviorSubject, Subject } from 'rxjs';
+
+import { logger } from '@signalwire/react';
 
 import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
 import { CallKeepBridge } from './CallKeepBridge';
@@ -191,6 +194,28 @@ describe('CallKeepBridge', () => {
     callkeep.__emit('didPerformSetMutedCallAction', { callUUID: uuid, muted: false });
 
     expect(call.self.unmute).toHaveBeenCalled();
+  });
+
+  // Since @signalwire/js 4.0.0-rc.5, member RPCs fail fast with
+  // ParticipantNotReadyError until the member's call context has arrived, so a
+  // CallKit mute toggled during setup rejects. That must be caught and logged,
+  // not left as an unhandled rejection.
+  it('logs a native mute the SDK refuses instead of leaving it unhandled', async () => {
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    await bridge.setup({ appName: 'Demo' });
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient(createClient(incoming$) as never);
+    const uuid = bridge.reportIncomingPush({ callId: 'c1' });
+    const call = createCall('c1');
+    const refusal = new ParticipantNotReadyError('member-1');
+    call.self.mute.mockRejectedValueOnce(refusal);
+    incoming$.next([call]);
+
+    callkeep.__emit('didPerformSetMutedCallAction', { callUUID: uuid, muted: true });
+    await new Promise<void>((resolve) => setImmediate(() => resolve()));
+
+    expect(warn).toHaveBeenCalledWith('Native mute failed:', refusal);
+    warn.mockRestore();
   });
 
   it('reports the native call ended when the SDK call disconnects', async () => {
