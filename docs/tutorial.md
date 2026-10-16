@@ -224,8 +224,9 @@ summary:
   `aps-environment` entitlement. The config plugin adds the entitlement; without
   it iOS still issues a token and APNs still reports `delivered`, and nothing
   arrives.
-- **Android:** Firebase, `@react-native-firebase` **v22** (v23+ needs the New
-  Architecture), a high-priority **data** message, and `registerAndroidCallPush()`.
+- **Android:** Firebase, `@react-native-firebase` 22 or later (the example
+  pins v22.4.0, the verified line), a high-priority **data** message, and
+  `registerAndroidCallPush()`.
 
 Register the device token wherever your app knows who the user is:
 
