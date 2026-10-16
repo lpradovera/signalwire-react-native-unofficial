@@ -97,8 +97,8 @@ after `dispose()` needs (React Native's removes its NetInfo and AppState shims).
 A platform object is shared by every client and disposed when the provider
 unmounts; React.StrictMode's simulated unmount disposes it too.
 
-This boundary is enforced by lint: an import of `react-native`, `react-native-*`
-or `@react-native-*` inside this package fails the build.
+This boundary is enforced by lint: an import of `react-native`, `react-native-*`,
+`@react-native-*` or `@react-native/*` inside this package fails the build.
 
 ## Video
 
