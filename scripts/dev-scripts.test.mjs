@@ -1,10 +1,10 @@
-// Tests for scripts/dev.sh, run in a scratch directory
+// Tests for scripts/dev.sh and scripts/trace.sh, run in a scratch directory
 // under the repository's .tmp/. dev.sh is sourced (which defines its functions
 // without running them) and driven with listeners on ports the OS picks, so no
 // service is started, no real port is touched, and tailscale is never asked
 // to change anything. Every listener started here is closed by the test.
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 const devSh = join(repo, 'scripts', 'dev.sh');
+const traceSh = join(repo, 'scripts', 'trace.sh');
 const sandbox = join(repo, '.tmp', 'dev-scripts-test');
 
 const hasLsof = spawnSync('lsof', ['-v']).error === undefined;
@@ -134,5 +135,81 @@ describe('dev.sh', () => {
       assert.match(result.stdout, /left alone/);
       assert.equal(foreign.alive(), true);
     });
+  });
+});
+
+describe('trace.sh', () => {
+  const dir = join(sandbox, 'trace');
+  const pad = (n) => String(n).padStart(2, '0');
+  // Local time, as `log show --style compact` prints it.
+  const local = (d) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const hms = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const ago = (ms) => new Date(Date.now() - ms);
+  const MIN = 60_000;
+
+  const recent = ago(2 * MIN);
+  const recent2 = ago(1 * MIN);
+  // Yesterday, a minute later on the clock than now: inside the window by
+  // HH:MM:SS alone, a day outside it in fact.
+  const yesterday = new Date(Date.now() - 24 * 60 * MIN + MIN);
+  const old = ago(3 * 60 * MIN);
+
+  let out;
+  before(() => {
+    mkdirSync(dir, { recursive: true });
+    const offset = (d) => {
+      const m = -d.getTimezoneOffset();
+      return `${m >= 0 ? '+' : '-'}${pad(Math.floor(Math.abs(m) / 60))}${pad(Math.abs(m) % 60)}`;
+    };
+    writeFileSync(
+      join(dir, 'device-console.log'),
+      [
+        `${local(recent)}.123 Df SignalWireRNExample[1:2] [SignalWireVoipPush] compact recent`,
+        `${local(recent2)}.456789${offset(recent2)} 0x1a2b     Default     0x0                  321    0    SignalWireRNExample: [SignalWireVoipPush] default recent`,
+        `${local(yesterday)}.000 Df SignalWireRNExample[1:2] [SignalWireVoipPush] compact yesterday`,
+        `${local(old)}.000 Df SignalWireRNExample[1:2] [SignalWireVoipPush] compact old`
+      ].join('\n') + '\n'
+    );
+    writeFileSync(
+      join(dir, 'server.log'),
+      [
+        JSON.stringify({ at: recent.toISOString(), message: 'Parked caller and pushed', callSid: 'sid-recent' }),
+        JSON.stringify({ at: yesterday.toISOString(), message: 'Parked caller and pushed', callSid: 'sid-yesterday' }),
+        JSON.stringify({ message: 'Bridge token rejected', reason: 'expired' })
+      ].join('\n') + '\n'
+    );
+    writeFileSync(join(dir, 'metro.log'), ' LOG  [example] Adopted bridge call abc\n');
+    out = execFileSync('bash', [traceSh, '5'], { encoding: 'utf8', env: { ...process.env, SW_SCRATCH: dir } });
+  });
+
+  const timeline = () => out.split('--- no timestamp')[0];
+  const untimed = () => out.split('--- no timestamp')[1] ?? '';
+
+  test('places device lines of both log show styles on the timeline', () => {
+    assert.match(timeline(), new RegExp(`${hms(recent)} device  SignalWireRNExample\\[1:2\\] \\[SignalWireVoipPush\\] compact recent`));
+    assert.match(timeline(), new RegExp(`${hms(recent2)} device  SignalWireRNExample: \\[SignalWireVoipPush\\] default recent`));
+  });
+
+  test('keeps out events from another day, even at a later clock time', () => {
+    assert.doesNotMatch(out, /compact yesterday|sid-yesterday|compact old/);
+  });
+
+  test('orders by time across sources', () => {
+    const lines = timeline().trim().split('\n').slice(1);
+    assert.deepEqual(
+      lines.map((l) => l.slice(9)),
+      [
+        'device  SignalWireRNExample[1:2] [SignalWireVoipPush] compact recent',
+        'server  Parked caller and pushed sid-recent',
+        'device  SignalWireRNExample: [SignalWireVoipPush] default recent'
+      ]
+    );
+  });
+
+  test('lists lines without a time apart, never stamped with the current time', () => {
+    assert.match(untimed(), /js {6}Adopted bridge call abc/);
+    assert.match(untimed(), /server {2}Bridge token rejected expired/);
+    assert.doesNotMatch(timeline(), /Adopted bridge call|Bridge token rejected/);
   });
 });
