@@ -82,10 +82,7 @@ library reads them); routing through Telecom works without it.
   on foreground and on a call push when near or past expiry; failures retry
   with a capped backoff (1 s doubling to 30 s); a 401 or 403 stops and is
   reported. See `docs/tokens.md`.
-- After a suspension past the token's expiry, the client's socket waits (at
-  most 5 s) until a new token has been fetched and the SDK has taken it, so the
-  reconnect is not refused with the expired one first. Each renewal is logged
-  at info, without the token.
+- Each renewal is logged at info, without the token.
 - New `useSignalWire().tokenStatus` (`'fetching' | 'ready' | 'renewing' |
   'retrying' | 'unauthorized'`, with `expiresAt` and `error`; `null` with a
   `credentialProvider`), `TokenFetchError`, and the types `FetchToken`,

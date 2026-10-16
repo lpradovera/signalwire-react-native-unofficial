@@ -43,17 +43,16 @@ The provider:
   Native, `visibilitychange` in a browser) and when a call push arrives
   (with `callKit`), a token near or past its expiry is renewed at once, and a
   fetch waiting out its backoff is retried at once.
-- **Reconnects with a fresh token.** A socket that died while the app was
-  suspended is reconnected the moment the app runs again, with the token the
-  SDK holds. When that token is past its expiry (or within 5 s of it), the
-  client's socket waits until a new token has been fetched and the SDK has
-  taken it, at most 5 s, so the reconnect is not refused first
-  ("Authentication failed, expired token" / -32003 "Requester validation
-  failed"). The provider does this by wrapping the client's
-  `webSocketConstructor` (yours, if you pass one in `options`).
 - **Logs each renewal** at info: `Token renewed; it expires at <time>`, never
   the token. The SDK logger's default level is warn; call
   `setLogLevel('info')` from `@signalwire/js` to see it (the example app does).
+- **After a suspension past the token's expiry** the SDK's first reconnect
+  tries to resume the old session, and the server refuses it whatever token
+  it carries: the expired one ("Authentication failed, expired token",
+  -32002) or a fresh one (-32003, "Requester validation failed"). The SDK
+  then drops the resume state and connects afresh with a valid token, on its
+  own, in well under a second. Only the SDK can skip that first attempt (no
+  public API drops the resume state), so the refusal stays in the log.
 - **Retries.** A failed fetch is retried after 1 s, 2 s, 4 s and so on, up to
   every 30 s, until it succeeds. It never gives up on its own: a network drop
   at renewal time costs a delay, not the session.
