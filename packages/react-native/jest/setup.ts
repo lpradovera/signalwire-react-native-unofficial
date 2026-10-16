@@ -12,3 +12,10 @@ jest.mock('@react-native-community/netinfo', () => ({
   addEventListener: jest.fn(() => jest.fn()),
   fetch: jest.fn(() => Promise.resolve({ isConnected: true, isInternetReachable: true }))
 }));
+
+// incall-manager's native module, linked (released, without iOS routes). The
+// audio controller checks for it the way an app's build would have it.
+{
+  const { NativeModules } = require('react-native');
+  NativeModules.InCallManager ??= { start: jest.fn() };
+}

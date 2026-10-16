@@ -11,6 +11,8 @@ import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteControll
 import { CallKeepBridge } from './CallKeepBridge';
 
 const nativeModules: { SignalWireVoipPush?: Record<string, unknown> } = {};
+// The audio controller checks that incall-manager's native module is linked.
+Object.assign(nativeModules, { InCallManager: { start: () => undefined } });
 jest.mock('react-native', () => ({
   Platform: { OS: 'ios' },
   get NativeModules() {
