@@ -56,7 +56,10 @@ function getNativeView(): HostComponent<AudioRoutePickerButtonProps> | null {
  * Renders nothing on Android, on iOS without incall-manager's iOS routes, or
  * when the app was built before this version of the package (native code
  * needs a rebuild). Size it with `style`;
- * the default is 44 × 44, the minimum touch target. VoiceOver reads it as a
+ * the default is 44 × 44, the minimum touch target. A background, corner
+ * radius and padding in `style` apply to the button itself (React Native's
+ * New Architecture draws them on the view around the native picker, and the
+ * padding insets the icon). VoiceOver reads it as a
  * button with `accessibilityLabel` (default "Audio output").
  */
 export function AudioRoutePickerButton({
