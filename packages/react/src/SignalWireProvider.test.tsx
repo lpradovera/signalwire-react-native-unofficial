@@ -9,7 +9,7 @@ import type { CallObserver, SignalWirePlatform } from './types';
 
 const harness = {
   // A started client: destroy() tears it down at once (see destroyClient).
-  session: {},
+  session: { calls: [] as unknown[] },
   destroy: jest.fn(),
   dial: jest.fn(async () => ({ id: 'call-1' })),
   isConnected$: new BehaviorSubject(false),
@@ -38,6 +38,7 @@ function Probe(): React.JSX.Element {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  harness.session.calls = [];
   constructed.length = 0;
   harness.isConnected$.next(false);
   harness.isRegistered$.next(false);
@@ -466,5 +467,97 @@ describe('SignalWireProvider error after a reconnect', () => {
     await act(async () => harness.isRegistered$.next(true));
 
     expect(screen.getByTestId('state').textContent).toBe('error:Call creation failed');
+  });
+});
+
+describe('SignalWireProvider unmounting during a call', () => {
+  // The provider unmounts when the app's root goes away: on Android, Back on
+  // the root screen destroys the activity and React Native unmounts the tree.
+  // Destroying the client closes its socket, so a call still up then could
+  // never send its bye and stayed up on SignalWire.
+  function liveCall(status = 'connected', hangup: () => Promise<void> = async () => undefined) {
+    const status$ = new BehaviorSubject(status);
+    return {
+      status$,
+      get status() {
+        return status$.value;
+      },
+      hangup: jest.fn(hangup)
+    };
+  }
+
+  function mounted(platform?: SignalWirePlatform) {
+    return render(
+      <SignalWireProvider credentialProvider={credentialProvider as never} platform={platform}>
+        <Probe />
+      </SignalWireProvider>
+    );
+  }
+
+  it('hangs up a live call before destroying the client, then disposes the platform', async () => {
+    const order: string[] = [];
+    let finishBye: () => void = () => undefined;
+    const call = liveCall('connected', () => new Promise<void>((done) => (finishBye = done)));
+    call.hangup.mockImplementation(() => {
+      order.push('hangup');
+      return new Promise<void>((done) => (finishBye = done));
+    });
+    harness.session.calls = [call];
+    harness.destroy.mockImplementation(() => order.push('destroy'));
+    const platform = { options: {}, dispose: jest.fn(() => order.push('dispose')) };
+
+    mounted(platform).unmount();
+    expect(order).toEqual(['hangup']);
+
+    await act(async () => finishBye());
+    expect(order).toEqual(['hangup', 'destroy', 'dispose']);
+  });
+
+  it('leaves ended calls alone and destroys at once', () => {
+    const ended = liveCall('disconnected');
+    harness.session.calls = [ended, liveCall('destroyed'), liveCall('failed')];
+
+    mounted().unmount();
+
+    expect(ended.hangup).not.toHaveBeenCalled();
+    expect(harness.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for a call that is already hanging up, rather than cutting its bye off", async () => {
+    const leaving = liveCall('disconnecting');
+    harness.session.calls = [leaving];
+
+    mounted().unmount();
+    expect(leaving.hangup).not.toHaveBeenCalled();
+    expect(harness.destroy).not.toHaveBeenCalled();
+
+    await act(async () => leaving.status$.next('disconnected'));
+    expect(harness.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('destroys the client anyway when the hangup never settles', async () => {
+    jest.useFakeTimers();
+    try {
+      harness.session.calls = [liveCall('connected', () => new Promise<void>(() => undefined))];
+
+      mounted().unmount();
+      expect(harness.destroy).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(5000);
+      });
+      expect(harness.destroy).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('destroys the client when the hangup fails', async () => {
+    harness.session.calls = [liveCall('connected', async () => Promise.reject(new Error('gone')))];
+
+    mounted().unmount();
+    await act(async () => undefined);
+
+    expect(harness.destroy).toHaveBeenCalledTimes(1);
   });
 });
