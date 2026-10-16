@@ -213,3 +213,26 @@ describe('ApnsVoipSender: errors', () => {
     assert.equal(seen.length, 2);
   });
 });
+
+describe('ApnsVoipSender: a stream that ends without a response (server-36)', () => {
+  it('says the stream was closed, with its code, instead of "APNs 0: (no body)"', async () => {
+    behaviour = (stream) => stream.close(http2.constants.NGHTTP2_NO_ERROR);
+    const error = (await rejection(sender().send(device(), payload))) as Error;
+    assert.doesNotMatch(error.message, /APNs 0/);
+    assert.match(error.message, /no response/i);
+    assert.match(error.message, /NO_ERROR|code 0/);
+  });
+
+  it('carries the reason Apple puts in a GOAWAY frame', async () => {
+    behaviour = (stream) => {
+      stream.session?.goaway(
+        http2.constants.NGHTTP2_NO_ERROR,
+        0,
+        Buffer.from(JSON.stringify({ reason: 'Shutdown' }))
+      );
+    };
+    const error = (await rejection(sender().send(device(), payload))) as Error;
+    assert.match(error.message, /GOAWAY/);
+    assert.match(error.message, /Shutdown/);
+  });
+});
