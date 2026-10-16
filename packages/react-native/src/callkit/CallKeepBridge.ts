@@ -4,6 +4,7 @@ import {
   BehaviorSubject,
   EMPTY,
   filter,
+  finalize,
   firstValueFrom,
   of,
   Subject,
@@ -35,6 +36,7 @@ interface LoadedEvent {
   data: unknown;
 }
 import type { Call, SignalWire } from '@signalwire/js';
+import type { Subscription } from 'rxjs';
 
 const TICK_INTERVAL_MS = 2000;
 const AUDIO_SESSION_TIMEOUT_MS = 3000;
@@ -101,6 +103,8 @@ export class CallKeepBridge {
    * handleLoadedEvents); they are applied when that entry is adopted.
    */
   private readonly deferredReplay = new Map<string, Array<'answer' | 'end'>>();
+  /** The clients whose inbound calls are mirrored; see {@link bindClient}. */
+  private readonly boundClients = new Map<SignalWire, Subscription>();
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
   /**
@@ -226,14 +230,23 @@ export class CallKeepBridge {
    *
    * A client with no `isConnected$` (older SDKs, and the mocks in this
    * package's tests) is treated as already connected.
+   *
+   * Binding a client that is already bound does nothing. Returns the unbind:
+   * after it, the client's inbound calls no longer reach CallKit (the
+   * provider calls it when `callKit` is turned off).
    */
-  bindClient(client: SignalWire): void {
+  bindClient(client: SignalWire): () => void {
+    const existing = this.boundClients.get(client);
+    if (existing) {
+      return () => existing.unsubscribe();
+    }
     const connected$ = client.isConnected$ ?? of(true);
 
-    connected$
+    const subscription = connected$
       .pipe(
         switchMap(() => client.session?.incomingCalls$ ?? EMPTY),
-        takeUntil(this.destroyed$)
+        takeUntil(this.destroyed$),
+        finalize(() => this.boundClients.delete(client))
       )
       .subscribe((calls) => {
         for (const call of calls) {
@@ -245,6 +258,10 @@ export class CallKeepBridge {
           }
         }
       });
+    if (!subscription.closed) {
+      this.boundClients.set(client, subscription);
+    }
+    return () => subscription.unsubscribe();
   }
 
   /**
