@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import RNCallKeep, { CONSTANTS } from 'react-native-callkeep';
-import { EMPTY, of, Subject, switchMap, takeUntil } from 'rxjs';
+import { EMPTY, filter, of, Subject, switchMap, take, takeUntil } from 'rxjs';
 
 import { getAudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
@@ -35,16 +35,21 @@ const ANDROID_CALL_PERMISSIONS = ['android.permission.READ_PHONE_NUMBERS'];
 
 /** Call statuses after which the native entry must be torn down. */
 // 'ended' is what the SDK actually reports — the wire shows call_state
-// created -> answered -> ending -> ended, and none of the three names below
-// ever appear. Without it a remote hangup never reached reportRemoteEnded, so
-// the native entry outlived the call and the user had to end it by hand.
-// The original three are kept: they cost nothing and this list is observed.
-const TERMINAL_STATUSES = new Set<string>([
-  'ended',
-  'disconnected',
-  'destroyed',
-  'failed'
-]);
+// created -> answered -> ending -> ended. Without it a remote hangup never
+// reached reportRemoteEnded, so the native entry outlived the call and the
+// user had to end it by hand.
+//
+// 'disconnecting' is the app's own hangup(): the SDK reaches 'destroyed'
+// only once the bye settles, up to its RPC timeout on a bad network, and
+// until then the CallKit call, the entry and the audio session stayed up.
+//
+// 'disconnected' is NOT here. The SDK merges the peer connection's state
+// into status$, and 'disconnected' is what an ICE blip (Wi-Fi to cellular)
+// produces before the SDK's recovery restores the call. Ending the native
+// call there left a connected SDK call with no CallKit call and no audio.
+// A call that does not recover ends 'failed' (all recovery attempts
+// exhausted), and a remote bye always reaches 'destroyed'.
+const TERMINAL_STATUSES = new Set<string>(['ended', 'disconnecting', 'destroyed', 'failed']);
 
 export interface CallKitSetupOptions {
   appName: string;
@@ -93,6 +98,16 @@ export class CallKeepBridge {
    * ends, by whichever path. See {@link startAudio}.
    */
   private audioUuid: string | null = null;
+  /**
+   * A CallKit mute set before the entry's call has a self participant (a
+   * bridge call still being placed, a call not yet joined), applied when the
+   * participant appears. See {@link handleSetMuted}.
+   */
+  private readonly pendingMute = new Map<string, boolean>();
+  /** Native hold requests per call, applied one after another. */
+  private readonly holdQueue = new Map<Call, Promise<void>>();
+  /** The hold state the bridge last applied, for an SDK that hides its own. */
+  private readonly heldByBridge = new Map<Call, boolean>();
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     const host: CallRegistryHost = {
@@ -342,6 +357,13 @@ export class CallKeepBridge {
 
   /** Registers an outbound call with the native UI. Returns its UUID. */
   trackCall(call: Call, handle: string, displayName: string): string {
+    // Tracked already (the app tracked a call the provider's observer also
+    // tracks): a second status watch would report it connected twice and
+    // start two audio waits.
+    const known = this.registry.uuidForCall(call);
+    if (known !== undefined) {
+      return known;
+    }
     const claimed = this.pendingBridgeUuid;
     if (claimed !== null) {
       this.pendingBridgeUuid = null;
@@ -528,19 +550,15 @@ export class CallKeepBridge {
       }
     );
 
-    RNCallKeep.addEventListener('didToggleHoldCallAction', ({ callUUID }: { callUUID: string }) => {
-      void this.registry.entryForUuid(callUUID)?.call?.toggleHold();
-    });
+    RNCallKeep.addEventListener(
+      'didToggleHoldCallAction',
+      ({ callUUID, hold }: { callUUID: string; hold: boolean }) => this.handleSetHeld(callUUID, hold)
+    );
 
     RNCallKeep.addEventListener(
       'didPerformSetMutedCallAction',
-      ({ callUUID, muted }: { callUUID: string; muted: boolean }) => {
-        const participant = this.registry.entryForUuid(callUUID)?.call?.self;
-        if (!participant) {
-          return;
-        }
-        void (muted ? participant.mute() : participant.unmute());
-      }
+      ({ callUUID, muted }: { callUUID: string; muted: boolean }) =>
+        this.handleSetMuted(callUUID, muted)
     );
 
     // iOS only. Starting media before this fires yields a silent call.
@@ -552,6 +570,90 @@ export class CallKeepBridge {
 
     // A provider reset ends every call and its session.
     RNCallKeep.addEventListener('didResetProvider', () => this.handleProviderReset());
+  }
+
+  /**
+   * Applies the hold state CallKit asked for.
+   *
+   * The action carries the state (`hold: true|false`), and the SDK offers
+   * only `toggleHold()`, which flips a private flag once the hold RPC
+   * resolves. Toggling blindly applied the request inverted whenever the two
+   * disagreed: after an in-app hold (which CallKit never hears of), after a
+   * hold RPC that failed (callkeep fulfils the action at once), or for a hold
+   * and resume sent before the first RPC settled. So the state is compared
+   * first, and the requests for one call run one after another.
+   */
+  private handleSetHeld(uuid: string, hold: boolean): void {
+    const call = this.registry.entryForUuid(uuid)?.call;
+    if (!call) {
+      return;
+    }
+    const previous = this.holdQueue.get(call) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      const held = this.isHeld(call);
+      if (held === hold) {
+        return;
+      }
+      try {
+        await call.toggleHold();
+        this.heldByBridge.set(call, hold);
+      } catch (error) {
+        logger.warn(`Could not ${hold ? 'hold' : 'resume'} call ${uuid}:`, error);
+        // CallKit already shows the requested state; tell it the real one.
+        if (this.registry.isLive(uuid) && typeof RNCallKeep.setOnHold === 'function') {
+          RNCallKeep.setOnHold(uuid, held);
+        }
+      }
+    });
+    this.holdQueue.set(call, next);
+    void next.finally(() => {
+      if (this.holdQueue.get(call) === next) {
+        this.holdQueue.delete(call);
+      }
+    });
+  }
+
+  /**
+   * The call's hold state. @signalwire/js keeps it in a private field that
+   * `toggleHold()` flips, which is also what an in-app hold changes; read it
+   * when it is there, else what this bridge last applied.
+   */
+  private isHeld(call: Call): boolean {
+    const own = (call as unknown as { _holdState?: unknown })._holdState;
+    return typeof own === 'boolean' ? own : (this.heldByBridge.get(call) ?? false);
+  }
+
+  /**
+   * Applies a CallKit mute, or keeps it until the call has a self participant.
+   *
+   * An answered push has no call for the whole bridge dial, and an SDK call
+   * has no `self` until it is joined. A mute tapped then was dropped while
+   * CallKit showed Mute on, and the microphone went live when the call
+   * connected. The last state asked for is applied when the participant
+   * appears (see {@link watchCallStatus}).
+   */
+  private handleSetMuted(uuid: string, muted: boolean): void {
+    if (!this.registry.isLive(uuid)) {
+      return;
+    }
+    const participant = this.registry.entryForUuid(uuid)?.call?.self;
+    if (!participant) {
+      logger.debug(`Keeping the native ${muted ? 'mute' : 'unmute'} for ${uuid} until it joins`);
+      this.pendingMute.set(uuid, muted);
+      return;
+    }
+    this.pendingMute.delete(uuid);
+    this.applyMute(uuid, participant, muted);
+  }
+
+  private applyMute(
+    uuid: string,
+    participant: { mute(): Promise<void>; unmute(): Promise<void> },
+    muted: boolean
+  ): void {
+    void (muted ? participant.mute() : participant.unmute()).catch((error: unknown) => {
+      logger.warn(`Could not ${muted ? 'mute' : 'unmute'} call ${uuid}:`, error);
+    });
   }
 
   /**
@@ -662,6 +764,21 @@ export class CallKeepBridge {
   }
 
   private watchCallStatus(call: Call): void {
+    // A native mute made before the call had a self participant.
+    call.self$
+      ?.pipe(filter(Boolean), take(1), takeUntil(this.destroyed$))
+      .subscribe((participant) => {
+        const uuid = this.registry.uuidForCall(call);
+        const muted = uuid === undefined ? undefined : this.pendingMute.get(uuid);
+        if (uuid === undefined || muted === undefined) {
+          return;
+        }
+        this.pendingMute.delete(uuid);
+        if (this.registry.isLive(uuid)) {
+          this.applyMute(uuid, participant, muted);
+        }
+      });
+
     call.status$.pipe(takeUntil(this.destroyed$)).subscribe((status) => {
       const uuid = this.registry.uuidForCall(call);
       if (!uuid) {
@@ -681,6 +798,7 @@ export class CallKeepBridge {
       }
       if (TERMINAL_STATUSES.has(status)) {
         // Ends the entry, which releases its audio if it owns the session.
+        this.pendingMute.delete(uuid);
         this.registry.reportRemoteEnded(uuid);
       }
     });

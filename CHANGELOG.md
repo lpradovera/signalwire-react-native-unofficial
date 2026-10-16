@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### CallKit actions do what the user asked
+
+- A transient `'disconnected'` (an ICE blip, Wi-Fi to cellular) no longer
+  ends the CallKit call. The SDK recovers from it, and ending the native call
+  there left a connected call with no CallKit UI and no audio session. A call
+  that does not recover ends `'failed'`. The example's call screen stays up
+  through it too.
+- The app's own hangup ends the CallKit call at once (`'disconnecting'`),
+  instead of after the bye settles, up to its 5 s timeout.
+- CallKit's hold carries the state it wants, and the bridge applies that
+  state instead of toggling: an in-app hold, a failed hold RPC, or a hold and
+  resume sent together no longer invert every later native hold. Requests for
+  one call run in order, and a failed one tells CallKit the real state
+  (`setOnHold`). A failed hold is no longer an unhandled rejection.
+- A CallKit mute made before the call has a self participant (while a bridge
+  call is being placed, or before an SDK call is joined) is applied when the
+  participant appears, instead of being dropped while CallKit shows Mute on.
+- Declining a ringing inbound SDK call in CallKit, or in the app through
+  `rejectIncomingFromApp`, rejects it (`verto.bye` USER_BUSY), as it does with
+  callKit off, instead of hanging it up with no cause.
+- `trackCall()` for a call it already tracks returns its uuid and does not
+  watch it a second time.
+
 ### CallKit audio belongs to its call
 
 - The audio session belongs to the call it was started for. Another call
