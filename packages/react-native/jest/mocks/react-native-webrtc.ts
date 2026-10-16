@@ -1,10 +1,14 @@
 import React from 'react';
 import { View } from 'react-native';
 
+/** Like the real module: no getConfiguration, which the provider must add. */
 export class RTCPeerConnection {
   public onicecandidate: unknown = null;
   addTrack = jest.fn();
   close = jest.fn();
+  // Prototype methods, as in the real module, so a subclass can override them.
+  setConfiguration(): void {}
+  restartIce(): void {}
 }
 
 export class MediaStream {
