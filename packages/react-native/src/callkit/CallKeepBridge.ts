@@ -29,6 +29,8 @@ import type { Call, SignalWire } from '@signalwire/js';
 const TICK_INTERVAL_MS = 2000;
 const AUDIO_SESSION_TIMEOUT_MS = 3000;
 const HANDLE_TYPE = 'generic';
+/** A handle callkeep's updateDisplay can re-send as a phone number unchanged in meaning. */
+const PHONE_NUMBER = /^\+?[0-9]+$/;
 
 /** Runtime permissions callkeep's ConnectionService needs on Android. */
 const ANDROID_CALL_PERMISSIONS = ['android.permission.READ_PHONE_NUMBERS'];
@@ -613,10 +615,21 @@ export class CallKeepBridge {
    * call, CallKit is told (`CXCallUpdate.hasVideo`, through callkeep's
    * `updateDisplay`, which also re-sends the name and handle). Android's
    * ConnectionService takes no type update from callkeep.
+   *
+   * Only for a caller whose handle is a phone number: callkeep's
+   * updateDisplay takes no handle type and always rebuilds the remote handle
+   * as CXHandleTypePhoneNumber, while the entry was reported generic, so a
+   * `sip:` or Fabric address would turn into a "phone number" in CallKit and
+   * Recents (and on a call-back). Such a call stays shown as voice; its audio
+   * still starts with the bridge call's media.
    */
   private showBoundCallType(uuid: string): void {
     const entry = this.registry.entryForUuid(uuid);
     if (Platform.OS !== 'ios' || !entry || !this.reportsVideo(uuid)) {
+      return;
+    }
+    if (!PHONE_NUMBER.test(entry.handle)) {
+      logger.debug(`Not marking ${uuid} as video: updateDisplay would make "${entry.handle}" a phone number`);
       return;
     }
     if (typeof RNCallKeep.updateDisplay !== 'function') {
