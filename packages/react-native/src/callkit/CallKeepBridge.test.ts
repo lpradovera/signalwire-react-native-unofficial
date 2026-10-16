@@ -438,6 +438,43 @@ describe('CallKeepBridge', () => {
     }
   );
 
+  it("takes an inbound call's media from how the registry answers it", async () => {
+    // One source: were the registry's answer to take video, the bridge must
+    // not go on showing and starting the call as voice.
+    const isolated = {} as {
+      Bridge: typeof CallKeepBridge;
+      callkeep: typeof callkeep;
+      incall: typeof InCallManager;
+    };
+    jest.isolateModules(() => {
+      jest.doMock('./CallRegistry', () => ({
+        ...jest.requireActual<typeof import('./CallRegistry')>('./CallRegistry'),
+        INBOUND_ANSWER: { audio: true, video: true }
+      }));
+      isolated.Bridge = (require('./CallKeepBridge') as typeof import('./CallKeepBridge')).CallKeepBridge;
+      isolated.callkeep = (require('react-native-callkeep') as { default: typeof callkeep }).default;
+      isolated.incall = (require('react-native-incall-manager') as { default: typeof InCallManager }).default;
+    });
+    jest.dontMock('./CallRegistry');
+    // The controller lives on globalThis; dropped, the isolated copy makes its own.
+    resetAudioRouteControllerForTesting();
+    const videoBridge = new isolated.Bridge();
+    await videoBridge.setup({ appName: 'Demo', supportsVideo: true });
+    const incoming$ = new Subject<unknown[]>();
+    videoBridge.bindClient(createClient(incoming$) as never);
+
+    incoming$.next([{ ...createCall('in-answered-video'), mediaDirections: VOICE }]);
+    const display = isolated.callkeep.displayIncomingCall as jest.Mock;
+    const uuid = display.mock.calls[0]?.[0] as string;
+    expect(display).toHaveBeenCalledWith(uuid, '+15551234', 'Ada', 'generic', true);
+    isolated.callkeep.__emit('answerCall', { callUUID: uuid });
+    await Promise.resolve();
+
+    expect(isolated.incall.start).toHaveBeenCalledWith({ media: 'video' });
+    videoBridge.destroy();
+    resetAudioRouteControllerForTesting();
+  });
+
   it('keeps a pushed call on the receiver when a video caller’s call fuses', async () => {
     resetAudioRouteControllerForTesting();
     await bridge.setup({ appName: 'Demo', supportsVideo: true });

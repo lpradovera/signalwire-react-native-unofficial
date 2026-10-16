@@ -38,6 +38,16 @@ const DEFAULT_FUSION_TIMEOUT_MS = 45_000;
  * had already accepted was reported as missed.
  */
 const ANSWERED_TIMEOUT_MS = 60_000;
+
+/**
+ * How the registry answers every inbound call (see runIntent). CallKeepBridge
+ * reads it for an inbound call's CallKit type and audio mode, so the two
+ * cannot drift apart. Not exported from the package's entry points.
+ */
+export const INBOUND_ANSWER: Readonly<{ audio: boolean; video: boolean }> = {
+  audio: true,
+  video: false
+};
 const UNKNOWN_HANDLE = 'Unknown';
 const UNKNOWN_NAME = 'Unknown caller';
 
@@ -460,8 +470,8 @@ export class CallRegistry {
         // m-lines before answering; matching the offer automatically belongs
         // in the SDK. With CallKit on, an in-app answer is routed through
         // the native UI too, so every inbound call is answered here, as voice;
-        // CallKeepBridge shows and starts it as a voice call to match.
-        call.answer({ audio: true, video: false });
+        // CallKeepBridge shows and starts it with INBOUND_ANSWER's media.
+        call.answer({ ...INBOUND_ANSWER });
       } else {
         call.reject();
       }
