@@ -17,6 +17,16 @@
   racing): the registry never holds a call CallKit refused.
 - New optional `CallObserver.beforeOutgoingCall(destination)` in
   `@signalwire/react`: `dial()` calls it first, and a throw refuses the dial.
+- On Android, an incoming call while another call is live (a ringing one
+  included) is refused as busy and not shown: the SDK call is rejected
+  (`reject()`, a `verto.bye` with `USER_BUSY`, SIP 486), and a push for it is
+  not reported to Telecom, so its SDK call is rejected when it arrives.
+  Telecom held such a call RINGING with nothing on screen, so it rang where
+  nobody could see or answer it. iOS is unchanged: CallKit shows a second
+  call with its own End & Accept and Decline.
+- Example: `EXPO_PUBLIC_SW_DEV_DIAL_AGAIN=<address>` adds a dev-only
+  "Dial again" button to the call screen, which shows the second dial being
+  refused.
 
 ### CallKit audio belongs to its call
 
