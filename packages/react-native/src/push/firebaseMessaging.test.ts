@@ -6,7 +6,12 @@
  */
 import type { RnfbNativeState } from '../../jest/rnfb';
 
-const mockNative: RnfbNativeState & { linked: boolean } = { apps: [], calls: [], linked: true };
+const mockNative: RnfbNativeState & { linked: boolean; constantsThrow: boolean } = {
+  apps: [],
+  calls: [],
+  linked: true,
+  constantsThrow: false
+};
 let mockShape: 'as-installed' | 'named-only' | 'throws' = 'as-installed';
 const mockEvaluations: string[] = [];
 
@@ -15,7 +20,19 @@ jest.mock('react-native', () => {
   const { installRnfbNatives } = jest.requireActual('../../jest/rnfb');
   Object.defineProperty(RN.Platform, 'OS', { configurable: true, get: () => 'android' });
   Object.defineProperty(RN.Platform, 'Version', { configurable: true, get: () => 34 });
-  if (mockNative.linked) {
+  if (mockNative.constantsThrow) {
+    // A build that links Firebase without a google-services.json: reading the
+    // module runs its getConstants(), which calls FirebaseMessaging.getInstance().
+    installRnfbNatives(RN.NativeModules, mockNative);
+    Object.defineProperty(RN.NativeModules, 'RNFBMessagingModule', {
+      configurable: true,
+      get: () => {
+        throw new Error(
+          "Exception in HostObject::get for prop 'RNFBMessagingModule': java.lang.IllegalStateException: Default FirebaseApp is not initialized in this process"
+        );
+      }
+    });
+  } else if (mockNative.linked) {
     installRnfbNatives(RN.NativeModules, mockNative);
   } else {
     delete RN.NativeModules.RNFBAppModule;
@@ -24,23 +41,20 @@ jest.mock('react-native', () => {
   return RN;
 });
 
-jest.mock(
-  '@react-native-firebase/messaging',
-  () => {
-    mockEvaluations.push(mockShape);
-    if (mockShape === 'throws') {
-      throw new Error('Native module RNFBAppModule not found.');
-    }
-    const real = jest.requireActual('@react-native-firebase/messaging');
-    if (mockShape === 'named-only') {
-      // A Firebase release without the namespaced default export.
-      const named = { ...real };
-      delete named.default;
-      return named;
-    }
-    return real;
+jest.mock('@react-native-firebase/messaging', () => {
+  mockEvaluations.push(mockShape);
+  if (mockShape === 'throws') {
+    throw new Error('Native module RNFBAppModule not found.');
   }
-);
+  const real = jest.requireActual('@react-native-firebase/messaging');
+  if (mockShape === 'named-only') {
+    // A Firebase release without the namespaced default export.
+    const named = { ...real };
+    delete named.default;
+    return named;
+  }
+  return real;
+});
 
 function load(): typeof import('./firebaseMessaging') {
   jest.resetModules();
@@ -51,6 +65,7 @@ beforeEach(() => {
   mockNative.apps = [];
   mockNative.calls = [];
   mockNative.linked = true;
+  mockNative.constantsThrow = false;
   mockShape = 'as-installed';
   mockEvaluations.length = 0;
 });
@@ -86,6 +101,16 @@ describe('loadFirebaseMessaging', () => {
     mockNative.linked = false;
     const messaging = load().loadFirebaseMessaging();
     expect(messaging).toBeUndefined();
+    expect(mockEvaluations).toEqual([]);
+  });
+
+  it('survives a native module that throws when read (no google-services.json)', () => {
+    // Seen on the emulator: the throw escaped registerAndroidCallPush() in the
+    // entry file, so "main" was never registered and the app died at launch.
+    mockNative.constantsThrow = true;
+    const { loadFirebaseMessaging } = load();
+    expect(() => loadFirebaseMessaging()).not.toThrow();
+    expect(loadFirebaseMessaging()).toBeUndefined();
     expect(mockEvaluations).toEqual([]);
   });
 
