@@ -361,6 +361,7 @@ runtime:
   reads as a crash on answer rather than a missing grant. This package requests
   it during `setup()`.
 - **`POST_NOTIFICATIONS`** (Android 13+) for anything you want to show.
+  `getFcmToken()` and `watchPushToken()` ask for it before reading the token.
 
 The plugin also declares callkeep's `VoiceConnectionService` with
 `android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"`.
