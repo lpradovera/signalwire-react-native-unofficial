@@ -144,10 +144,14 @@ sudo apt-get install -y openjdk-17-jdk-headless
 
 export ANDROID_HOME=$HOME/Android/Sdk
 mkdir -p $ANDROID_HOME/cmdline-tools
-curl -sSLo /tmp/cmdtools.zip \
-  https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-unzip -q -o /tmp/cmdtools.zip -d $ANDROID_HOME/cmdline-tools
-mv -f $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+# Downloaded next to where it is unpacked, not into the shared /tmp, and
+# stopped on failure, so a stale or foreign zip is never extracted.
+curl -fsSLo $ANDROID_HOME/cmdline-tools/cmdtools.zip \
+  https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip &&
+  unzip -q -o $ANDROID_HOME/cmdline-tools/cmdtools.zip -d $ANDROID_HOME/cmdline-tools &&
+  rm $ANDROID_HOME/cmdline-tools/cmdtools.zip &&
+  rm -rf $ANDROID_HOME/cmdline-tools/latest &&
+  mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
 
 export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
@@ -256,8 +260,9 @@ toolchain images rather than whatever AGP resolves to locally.
 
 ## 3. Tier 2 — iOS
 
-**Requires macOS.** Nothing on the iOS path — CallKit, VoIP push, `Info.plist`
-at runtime — has been executed on any machine yet. It is entirely unvalidated.
+**Requires macOS.** Device results are recorded in the sign-off table in
+[`docs/device-testing.md`](docs/device-testing.md); read it for what has and has
+not been confirmed on hardware.
 
 ```bash
 cd example
@@ -413,22 +418,23 @@ rather than a re-download.
 
 Before checklist items 5–7 can work at all:
 
-1. Add the `AppDelegate` PushKit hook from `docs/native-setup.md`. The Expo
-   plugin deliberately does not inject it (regex-patching Expo's Swift
-   `AppDelegate` fails silently, which is worse than not generating it). Without
-   it, a cold-start push cannot reach CallKit in time and iOS kills the process.
-
-   **Use the Objective-C category, not a Swift `import RNCallKeep`.** On RN 0.81
-   that import fails with "no such module" — callkeep's podspec does not expose
-   a consumable Swift module, and bridging headers do not work around it
-   ([callkeep#856](https://github.com/react-native-webrtc/react-native-callkeep/issues/856),
-   open and unassigned since Aug 2025). The ObjC route is the only one known to
-   work.
+1. **Nothing to add for the PushKit hook.** The Expo plugin generates it
+   (`SignalWireVoipPush.m`, an Objective-C category, added to Compile Sources)
+   on every prebuild with `enableVoipPush`, which the example sets; see
+   [`docs/push-setup.md` §1d](docs/push-setup.md#1d-the-native-pushkit-hook--generated-for-you).
+   `npm run verify:prebuild` asserts it is generated and compiled. Do **not**
+   also add the hook to the `AppDelegate` by hand: that is a second PushKit
+   path beside the generated registry. (It is Objective-C because a Swift
+   `import RNCallKeep` fails with "no such module" on RN 0.81 —
+   [callkeep#856](https://github.com/react-native-webrtc/react-native-callkeep/issues/856).)
 2. Xcode → Signing & Capabilities → add **Push Notifications** and **Background
    Modes** (Voice over IP + Audio). Push Notifications requires a **paid** Apple
    Developer Program membership; a free personal team cannot enable it, so
    items 5–7 are unreachable without one.
-3. Create a VoIP services certificate and wire it to your push sender.
+3. Create an APNs auth key (`.p8`) and give it to the push sender
+   (`docs/push-setup.md` §1a); one key covers VoIP pushes, sandbox and
+   production. A VoIP Services `.p12` certificate is only for vendors that
+   require one.
 
 **CallKit does not work in the iOS Simulator.** Items 3–7 need a real device.
 
@@ -455,8 +461,9 @@ the token store and the sender are all yours, and the payload must **carry
 `call_id`**. The package
 owns neither half by design; `reportIncomingPush({ callId, from, fromName })` is
 the entire contract. Without `call_id` the registry falls back to "the single
-unmatched inbound call within 20s" and logs a warning — which breaks as soon as
-two calls overlap, and is exactly what scenario 12 is designed to catch.
+push entry with no call id, while it waits" (the fusion timeout, 45 s by
+default) and logs a warning — which breaks as soon as two calls overlap, and is
+exactly what scenario 12 is designed to catch.
 
 ### The single most valuable observation
 
@@ -469,12 +476,20 @@ real Hermes runtime in one shot. If it red-screens on startup, capture the stack
 
 ## 5. Failure triage
 
+Several rows below name `[SignalWireRN]` log lines (`Android call push
+registered`, `Adopting pending native call …`, `Buffering "answer" for …`).
+Those are **debug** lines, and `@signalwire/js` logs at `warn` by default, so
+none of them prints until you raise the level: run the example with
+`EXPO_PUBLIC_SW_WIRE_LOG=1` (trace level, plus every WebSocket frame), or call
+`setLogLevel('debug')` from `@signalwire/js` in your own app. With the default
+level, a missing line means nothing.
+
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| Android cold start: the app wakes and comes forward, but no incoming call is shown | The dev client starts a **second JS runtime** for the activity. The headless FCM task created the entry in the first one, and the registry singleton lives on `globalThis`, which is per-runtime — so the UI context has no entry. Look for two `Android call push registered` lines from the same pid | Expected in a **development** build. A release build runs one context, so the entry survives. Verify cold start on a release build before believing it is broken |
+| Android cold start: the app wakes and comes forward, but no incoming call is shown | The dev client starts a **second JS runtime** for the activity. The headless FCM task created the entry in the first one, and the registry singleton lives on `globalThis`, which is per-runtime — so the UI context has no entry. With debug logging on (see above), look for two `Android call push registered` lines from the same pid | Expected in a **development** build. A release build runs one context, so the entry survives. Verify cold start on a release build before believing it is broken |
 | Android: `am force-stop` then a push does nothing at all | force-stop puts the app in Android's *stopped state*, where the system withholds FCM and broadcasts until a manual launch. It does not model a user swiping the app away | Background it (`KEYCODE_HOME`), then `am kill`. Check `dumpsys package <id> \| grep stopped=` — it must be `false` |
-| Cold start: CallKit rings, the user answers, nothing dials, caller stays parked | The `didDisplayIncomingCall` event fired before JavaScript existed. callkeep's `didLoadWithEvents` replay does **not** fire on iOS in this version, so the registry has no entry and `applyIntent` returns silently — no log, because there is nothing to log against | The native module caches each push (as it already does the token); `setup()` adopts them via `getPendingCalls()` and forgets each one it has seen. Look for `Adopting pending native call <uuid> from the launch push` |
-| Cold start: the answer reaches JS but no bridge is dialled | `answerRequested$` was a plain `Subject`, so an answer applied before React mounts reached no subscriber | It replays outstanding answers to late subscribers. Distinguish from the row above by whether `Buffering "answer" for …` appears: present means the entry existed, absent means it did not |
+| Cold start: CallKit rings, the user answers, nothing dials, caller stays parked | The `didDisplayIncomingCall` event fired before JavaScript existed. callkeep's `didLoadWithEvents` replay does **not** fire on iOS in this version, so the registry has no entry and `applyIntent` returns silently — no log, because there is nothing to log against | The native module caches each push (as it already does the token); `setup()` adopts them via `getPendingCalls()` and forgets each one it has seen. With debug logging on, look for `Adopting pending native call <uuid> from the launch push` |
+| Cold start: the answer reaches JS but no bridge is dialled | `answerRequested$` was a plain `Subject`, so an answer applied before React mounts reached no subscriber | It replays outstanding answers to late subscribers. With debug logging on, distinguish from the row above by whether `Buffering "answer" for …` appears: present means the entry existed, absent means it did not |
 | A device fix "does not work" and the logs show no sign of it | Metro served a cached bundle. `iOS Bundled 42ms example/index.js (1 module)` is the tell — a real bundle is ~1200 modules | Restart Metro with `--clear` and confirm the module count **before** testing on device. This has cost two full test cycles |
 | `Call create timeout` in a browser, with no call in SignalWire's logs and no webhook hit | An unanswered microphone prompt. The SDK takes local media before sending the invite, so `getUserMedia` never settles and the invite is never sent. The prompt is browser chrome, so it is invisible in a screenshot | Grant the mic for the origin. Permissions are per-origin: a grant on `localhost:5173` does **not** apply to `127.0.0.1:5173`. Check with `navigator.permissions.query({name:'microphone'})` — `"prompt"` means nothing was ever granted |
 | VoIP push reports `delivered: 1` from APNs but no CallKit UI and no app-side log | The build is signed without `aps-environment`. iOS still issues a PushKit token and registration succeeds, so nothing looks wrong from the server | The plugin adds the entitlement when `enableVoipPush` is set; `expo prebuild` regenerating the file cannot drop it. Confirm with `codesign -d --entitlements -` on the built `.app`, and watch the `[SignalWireVoipPush]` NSLog lines via `devicectl device process launch --console` |

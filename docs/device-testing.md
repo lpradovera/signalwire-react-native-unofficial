@@ -93,13 +93,19 @@ the lock screen connects.
 **5. Cold-start VoIP push.**
 Force-quit the app. Send a VoIP push carrying `call_id`.
 Expect: the native call UI appears within about 2 seconds; answering launches
-the app and connects. If the UI does not appear, the `AppDelegate` hook in
-`docs/native-setup.md` is missing or the payload lacks `call_id`.
+the app and connects. The generated hook reports every VoIP push to CallKit,
+with or without `call_id`, so if the UI does not appear the hook is not in the
+build (`SignalWireVoipPush.m` not generated or not compiled — run
+`npm run verify:prebuild`), the build lacks `aps-environment`, or the push never
+reached the device (check the `[SignalWireVoipPush]` lines in the device
+console). A missing `call_id` shows later, as a call that rings but never
+fuses.
 
 **6. Push with no matching call.**
 Send a push whose `call_id` never produces an SDK call.
-Expect: the native call ends itself as a missed call within the fusion timeout
-(20s by default) and leaves no stuck entry in the call log. A stuck CallKit
+Expect: the native call ends itself as a missed call at the fusion timeout
+(45 s by default, plus up to one 2 s tick) and leaves no stuck entry in the call
+log. A stuck CallKit
 entry is what iOS penalises hardest — if you see one, the registry's `tick()`
 is not running.
 
@@ -220,10 +226,16 @@ React Native layer: same SDK, same core, browser WebRTC, same silence. If a
 call reaches "invite successful" and then nothing, check the m-lines offered
 before suspecting the network.
 
-**Still unverified: everything else requiring hardware.** No camera captured,
-no CallKit UI confirmed, and no push delivered.
+**What the Simulator left unverified** was everything requiring hardware: no
+camera captured, no CallKit UI confirmed, and no push delivered. The iPad
+session later the same day signed off rows 1, 3, 5 and 6 below; the remaining
+rows are still open.
 
 ## Sign-off
+
+The Android column is empty: Android has been exercised on an emulator during
+development (see the README's "What is verified"), but no Android scenario has
+been run against this checklist and signed off yet.
 
 | # | Scenario | iOS | Android | Notes |
 | --- | --- | --- | --- | --- |
