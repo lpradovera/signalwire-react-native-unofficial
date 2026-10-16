@@ -1,11 +1,11 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-import { withDangerousMod, withXcodeProject } from '@expo/config-plugins';
+import { IOSConfig, withDangerousMod, withXcodeProject } from '@expo/config-plugins';
 
 import { VOIP_PUSH_SOURCE } from './voipPushSource';
 
-import type { ConfigPlugin } from '@expo/config-plugins';
+import type { ConfigPlugin, XcodeProject } from '@expo/config-plugins';
 
 const SOURCE_NAME = 'SignalWireVoipPush.m';
 
@@ -45,38 +45,26 @@ export const withVoipPush: ConfigPlugin = (config) => {
   ]);
 
   return withXcodeProject(withSource, (projectConfig) => {
-    const project = projectConfig.modResults;
     const projectName = projectConfig.modRequest.projectName;
-    if (!projectName) {
-      return projectConfig;
+    if (projectName) {
+      addVoipSourceToProject(projectConfig.modResults, projectName);
     }
-
-    // Idempotent: prebuild without --clean re-runs mods over an existing
-    // project, and a duplicate build-file entry makes Xcode compile the
-    // translation unit twice, which fails on duplicate symbols.
-    const alreadyAdded = Object.values(
-      (project.hash?.project?.objects?.PBXBuildFile ?? {}) as Record<string, unknown>
-    ).some((entry) => typeof entry === 'object' && JSON.stringify(entry).includes(SOURCE_NAME));
-
-    if (alreadyAdded) {
-      return projectConfig;
-    }
-
-    const group = project.pbxGroupByName(projectName);
-    const groupKey = group
-      ? Object.keys(project.hash.project.objects.PBXGroup as Record<string, unknown>).find(
-          (key) =>
-            (project.hash.project.objects.PBXGroup as Record<string, { name?: string }>)[key]
-              ?.name === projectName
-        )
-      : undefined;
-
-    project.addSourceFile(
-      `${projectName}/${SOURCE_NAME}`,
-      { target: project.getFirstTarget().uuid },
-      groupKey
-    );
-
     return projectConfig;
   });
 };
+
+/**
+ * Adds the hook to the app target's compile sources, in the app's group.
+ *
+ * Idempotent: prebuild without --clean re-runs mods over an existing project,
+ * and a duplicate build-file entry makes Xcode compile the translation unit
+ * twice, which fails on duplicate symbols. Expo's helper skips a file the
+ * group already lists.
+ */
+export function addVoipSourceToProject(project: XcodeProject, projectName: string): void {
+  IOSConfig.XcodeUtils.addBuildSourceFileToGroup({
+    filepath: `${projectName}/${SOURCE_NAME}`,
+    groupName: projectName,
+    project
+  });
+}

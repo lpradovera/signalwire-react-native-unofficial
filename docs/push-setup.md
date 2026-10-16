@@ -156,9 +156,12 @@ JS bundle is not running when the push arrives. Since iOS 13, if you do not
 report the call to CallKit *in the same callback*, the OS terminates your app
 and eventually stops delivering VoIP pushes to it entirely.
 
-**With Expo, the config plugin now generates it.** `enableVoipPush` (the
-default) writes `SignalWireVoipPush.m` into the iOS project and adds it to the
-compile sources. It registers a `PKPushRegistry`, reports incoming pushes
+**With Expo, the config plugin now generates it.** `enableVoipPush` writes
+`SignalWireVoipPush.m` into the iOS project and adds it to the compile sources.
+It is on by default when `enableCallKit` is on and `react-native-callkeep` is
+installed: the hook reports every push through callkeep and cannot build
+without it, so without callkeep prebuild skips it with a warning, and an
+explicit `enableVoipPush: true` fails prebuild instead. It registers a `PKPushRegistry`, reports incoming pushes
 straight to CallKit, and bridges the device token to JavaScript. Nothing to add
 by hand, and `expo prebuild` regenerates it rather than clobbering it.
 
@@ -178,9 +181,11 @@ A generated `.m` that Xcode does not compile is silently ignored, and the
 failure only shows up much later as "pushes do nothing" — which is why the
 check asserts the `pbxproj` reference, not just the file.
 
-**Bare React Native** projects add the equivalent by hand. Copy the source from
-`packages/react-native/src/plugin/voipPushSource.ts` into your app target; it
-has no Expo dependencies.
+**Bare React Native** projects add the equivalent by hand. Copy the Objective-C
+from `packages/react-native/src/plugin/voipPushSource.ts` in this repository
+(the npm package ships only `dist`) into your app target as
+`SignalWireVoipPush.m`; it has no Expo dependencies. Copy it again when you
+upgrade: a hand-copied hook does not receive fixes.
 
 ### 1d-bis. Registering the device token
 

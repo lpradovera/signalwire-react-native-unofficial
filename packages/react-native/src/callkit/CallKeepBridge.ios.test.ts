@@ -339,6 +339,87 @@ describe('CallKeepBridge — the fusion tick timer', () => {
     delete nativeModules.SignalWireVoipPush;
   });
 
+  it('adopts every push that arrived before JavaScript ran', async () => {
+    // A second push (call waiting) inside the JS start-up window replaced
+    // the first in a one-slot cache, and the first call's answer then had no
+    // entry to apply to while CallKit showed it connected.
+    const forgetPendingCall = jest.fn(async () => undefined);
+    nativeModules.SignalWireVoipPush = {
+      getToken: async () => 'tok',
+      getPendingCalls: async () => [
+        { uuid: 'first-uuid', callId: 'c-first', handle: '+15550000001', callerName: 'Ada' },
+        { uuid: 'second-uuid', callId: 'c-second', handle: '+15550000002', callerName: 'Grace' }
+      ],
+      forgetPendingCall
+    };
+
+    const fresh = new CallKeepBridge();
+    await fresh.setup({ appName: 'Demo' });
+
+    expect(fresh.registry.entryForUuid('first-uuid')?.expectedCallId).toBe('c-first');
+    expect(fresh.registry.entryForUuid('second-uuid')?.expectedCallId).toBe('c-second');
+    expect(forgetPendingCall).toHaveBeenCalledWith('first-uuid');
+    expect(forgetPendingCall).toHaveBeenCalledWith('second-uuid');
+    fresh.destroy();
+    delete nativeModules.SignalWireVoipPush;
+  });
+
+  it('forgets a pending call that a replayed display adopted first', async () => {
+    // The cache outlives the JS context. Left behind, the next setup() in the
+    // same process (Updates.reloadAsync, a dev reload) adopted the finished
+    // call again as a ringing push.
+    const forgetPendingCall = jest.fn(async () => undefined);
+    nativeModules.SignalWireVoipPush = {
+      getToken: async () => 'tok',
+      getPendingCalls: async () => {
+        callkeep.__emit('didDisplayIncomingCall', {
+          callUUID: 'replayed-uuid',
+          handle: '+15551234567',
+          localizedCallerName: 'Ada',
+          fromPushKit: '1',
+          payload: { callId: 'c-replayed' }
+        });
+        return [{ uuid: 'replayed-uuid', callId: 'c-replayed' }];
+      },
+      forgetPendingCall
+    };
+
+    const fresh = new CallKeepBridge();
+    await fresh.setup({ appName: 'Demo' });
+
+    expect(fresh.registry.entryForUuid('replayed-uuid')).toBeDefined();
+    expect(forgetPendingCall).toHaveBeenCalledWith('replayed-uuid');
+    fresh.destroy();
+    delete nativeModules.SignalWireVoipPush;
+  });
+
+  it('forgets the cached push for a call displayed while JavaScript runs', async () => {
+    // A warm push is cached natively and adopted from didDisplayIncomingCall;
+    // setup() has already run, so nothing else would ever clear it.
+    const forgetPendingCall = jest.fn(async () => undefined);
+    nativeModules.SignalWireVoipPush = {
+      getToken: async () => 'tok',
+      getPendingCalls: async () => [],
+      forgetPendingCall
+    };
+
+    const fresh = new CallKeepBridge();
+    await fresh.setup({ appName: 'Demo' });
+    callkeep.__emit('didDisplayIncomingCall', {
+      callUUID: 'warm-uuid',
+      handle: '+15551234567',
+      localizedCallerName: 'Ada',
+      fromPushKit: '1',
+      payload: { callId: 'c-warm' }
+    });
+    await Promise.resolve();
+
+    expect(fresh.registry.entryForUuid('warm-uuid')).toBeDefined();
+    expect(forgetPendingCall).toHaveBeenCalledWith('warm-uuid');
+    fresh.destroy();
+    delete nativeModules.SignalWireVoipPush;
+  });
+
   it('does not adopt anything when the app was not woken by a push', async () => {
     nativeModules.SignalWireVoipPush = {
       getToken: async () => 'tok',
