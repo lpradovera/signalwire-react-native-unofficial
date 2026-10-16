@@ -2,6 +2,7 @@ import { AppState } from 'react-native';
 
 import { logger } from '@signalwire/react';
 import { installBaseGlobals } from './baseGlobals';
+import { refCounted } from './refCounted';
 
 type Listener = () => void;
 type Visibility = 'visible' | 'hidden';
@@ -11,8 +12,6 @@ interface ShimDocument {
   addEventListener?: (type: string, listener: Listener) => void;
   removeEventListener?: (type: string, listener: Listener) => void;
 }
-
-let installed: (() => void) | null = null;
 
 const toVisibility = (appState: string): Visibility =>
   appState === 'active' ? 'visible' : 'hidden';
@@ -25,13 +24,9 @@ const toVisibility = (appState: string): Visibility =>
  * incoming call banner or a Control Centre pull-down, where media should be
  * treated as backgrounded.
  *
- * Additive and idempotent — never replaces an existing `document`.
+ * Additive — never replaces an existing `document`.
  */
-export function installVisibilityShim(): () => void {
-  if (installed) {
-    return installed;
-  }
-
+function install(): () => void {
   installBaseGlobals();
 
   const root = globalThis as unknown as { document: ShimDocument };
@@ -72,13 +67,16 @@ export function installVisibilityShim(): () => void {
     }
   });
 
-  installed = (): void => {
+  return (): void => {
     subscription.remove();
     listeners.clear();
     root.document.addEventListener = previousAdd;
     root.document.removeEventListener = previousRemove;
-    installed = null;
   };
-
-  return installed;
 }
+
+/**
+ * Installs the shim, or shares the install already in place. Returns this
+ * caller's release; the shim is torn down when the last caller releases.
+ */
+export const installVisibilityShim: () => () => void = refCounted(install);

@@ -95,4 +95,36 @@ describe('installNetworkShim', () => {
     mockListeners[0]?.({ isConnected: null });
     expect(onOffline).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps feeding a second platform when the first one disposes', () => {
+    // Two providers at once, or the new and old provider of a key remount:
+    // React renders the new one before it runs the old one's cleanup.
+    const first = installNetworkShim();
+    uninstall = installNetworkShim();
+    first();
+
+    expect(mockUnsubscribe).not.toHaveBeenCalled();
+    const onOffline = jest.fn();
+    win().addEventListener('offline', onOffline);
+    mockListeners[0]?.({ isConnected: true });
+    mockListeners[0]?.({ isConnected: false });
+    expect(onOffline).toHaveBeenCalledTimes(1);
+    expect(nav().onLine).toBe(false);
+  });
+
+  it('tears down once the last platform disposes, and each handle counts once', () => {
+    const first = installNetworkShim();
+    const second = installNetworkShim();
+    first();
+    first();
+    expect(mockUnsubscribe).not.toHaveBeenCalled();
+    second();
+    expect(mockUnsubscribe).toHaveBeenCalledTimes(1);
+
+    // A stale handle run later does not touch a newer install.
+    uninstall = installNetworkShim();
+    second();
+    expect(mockUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(mockListeners).toHaveLength(2);
+  });
 });

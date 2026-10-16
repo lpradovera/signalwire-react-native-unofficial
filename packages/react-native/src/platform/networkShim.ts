@@ -2,6 +2,7 @@ import NetInfo from '@react-native-community/netinfo';
 
 import { logger } from '@signalwire/react';
 import { installBaseGlobals } from './baseGlobals';
+import { refCounted } from './refCounted';
 import { assertPeerModule } from './peers';
 
 type Listener = () => void;
@@ -11,8 +12,6 @@ interface ShimTarget {
   removeEventListener?: (type: string, listener: Listener) => void;
 }
 
-let installed: (() => void) | null = null;
-
 /**
  * Feeds NetInfo connectivity into the globals the SDK's `NetworkMonitor` probes:
  * `window.addEventListener('online' | 'offline')` and `navigator.onLine`.
@@ -21,13 +20,9 @@ let installed: (() => void) | null = null;
  * (`SignalWire.ts:993`), but guards every access with `typeof`, so feeding
  * those globals is the only way to supply real data without forking the SDK.
  *
- * Additive and idempotent — never replaces an existing `window` or `navigator`.
+ * Additive — never replaces an existing `window` or `navigator`.
  */
-export function installNetworkShim(): () => void {
-  if (installed) {
-    return installed;
-  }
-
+function install(): () => void {
   assertPeerModule(
     NetInfo as object | undefined,
     '@react-native-community/netinfo',
@@ -84,13 +79,16 @@ export function installNetworkShim(): () => void {
     dispatch(next ? 'online' : 'offline');
   });
 
-  installed = (): void => {
+  return (): void => {
     stopNetInfo();
     listeners.clear();
     root.window.addEventListener = previousAdd;
     root.window.removeEventListener = previousRemove;
-    installed = null;
   };
-
-  return installed;
 }
+
+/**
+ * Installs the shim, or shares the install already in place. Returns this
+ * caller's release; the shim is torn down when the last caller releases.
+ */
+export const installNetworkShim: () => () => void = refCounted(install);
