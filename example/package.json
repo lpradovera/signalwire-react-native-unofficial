@@ -16,7 +16,7 @@
     "@react-native-community/netinfo": "11.4.1",
     "@react-native-firebase/app": "^22.4.0",
     "@react-native-firebase/messaging": "^22.4.0",
-    "@signalwire/js": "^4.0.0-rc.2",
+    "@signalwire/js": "^4.0.0-rc.5",
     "@signalwire/react": "*",
     "@signalwire/react-native": "*",
     "@signalwire/react-native-ui": "*",
