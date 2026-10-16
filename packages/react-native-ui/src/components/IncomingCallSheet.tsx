@@ -1,6 +1,6 @@
-import { useIncomingCalls } from '@signalwire/react';
+import { logger, useIncomingCalls } from '@signalwire/react';
 import { useRingingPushes } from '@signalwire/react-native/ringing';
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Modal, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { useSignalWireTheme } from '../theme/ThemeProvider';
@@ -33,11 +33,53 @@ export interface IncomingCallSheetProps {
 }
 
 /**
+ * The calls in `calls` that are still ringing and that the user has not
+ * already answered or declined from this sheet.
+ *
+ * The SDK's incoming list holds an inbound call until it is destroyed: it is
+ * still there once answered, while it is connected, and while it hangs up.
+ * `status` is the synchronous truth; each call's `status$` only tells us when
+ * to read it again. The SDK moves the status on only after the answer's SDP or
+ * the decline's bye completes, so the calls acted on here are hidden at once.
+ */
+function useRingingCalls(calls: Call[]): {
+  ringing: Call[];
+  markHandled(call: Call): void;
+  unmarkHandled(call: Call): void;
+} {
+  const [, setVersion] = useState(0);
+  const [handled, setHandled] = useState<ReadonlySet<Call>>(() => new Set());
+
+  useEffect(() => {
+    const subscriptions = calls.map((call) =>
+      call.status$.subscribe(() => setVersion((version) => version + 1))
+    );
+    return () => subscriptions.forEach((subscription) => subscription.unsubscribe());
+  }, [calls]);
+
+  const markHandled = useCallback((call: Call) => {
+    setHandled((previous) => new Set(previous).add(call));
+  }, []);
+  const unmarkHandled = useCallback((call: Call) => {
+    setHandled((previous) => {
+      const next = new Set(previous);
+      next.delete(call);
+      return next;
+    });
+  }, []);
+
+  const ringing = calls.filter((call) => call.status === 'ringing' && !handled.has(call));
+  return { ringing, markHandled, unmarkHandled };
+}
+
+/**
  * In-app inbound call sheet.
  *
  * With CallKit enabled the native screen usually gets there first; this covers
- * the foreground case and apps running without native call UI. Renders nothing
- * when no call is pending, so it is safe to mount permanently.
+ * the foreground case and apps running without native call UI. It shows only a
+ * call that is still ringing, and goes away as soon as the user answers or
+ * declines it, so it is safe to mount permanently, over a call in progress too:
+ * a second inbound call then gets the sheet.
  */
 export function IncomingCallSheet({
   answerWith = { audio: true, video: false },
@@ -48,8 +90,9 @@ export function IncomingCallSheet({
 }: IncomingCallSheetProps): React.JSX.Element | null {
   const theme = useSignalWireTheme();
   const { calls, answer, reject } = useIncomingCalls();
+  const { ringing: ringingCalls, markHandled, unmarkHandled } = useRingingCalls(calls);
   const { ringing, answer: answerPush, reject: rejectPush } = useRingingPushes();
-  const call = calls[0];
+  const call = ringingCalls[0];
   // The SDK call wins when both exist: they are the same call once it has
   // fused, and the SDK object is the one that can actually be answered.
   const push = call ? undefined : includeNativePushes ? ringing[0] : undefined;
@@ -95,6 +138,7 @@ export function IncomingCallSheet({
               style={styles.action}
               onPress={() => {
                 if (call) {
+                  markHandled(call);
                   void reject(call).then(() => onRejected?.(call));
                 } else if (push) {
                   rejectPush(push.uuid);
@@ -108,7 +152,15 @@ export function IncomingCallSheet({
               style={styles.action}
               onPress={() => {
                 if (call) {
-                  void answer(call, answerWith).then(() => onAnswered?.(call));
+                  markHandled(call);
+                  answer(call, answerWith).then(
+                    () => onAnswered?.(call),
+                    (error: unknown) => {
+                      // Offer it again if it is still ringing.
+                      logger.warn('Answering the incoming call failed:', error);
+                      unmarkHandled(call);
+                    }
+                  );
                 } else if (push) {
                   // The same intent a native answer applies, so both paths
                   // converge and whatever places the call picks it up.

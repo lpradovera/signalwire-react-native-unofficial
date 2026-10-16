@@ -15,6 +15,11 @@ jest.mock('@signalwire/react-native/ringing', () => ({
 
 const incomingCalls$ = new BehaviorSubject<unknown[]>([]);
 
+/** A call double that is still ringing, as the sheet requires. */
+function ringingCall<T extends object>(fields: T): T & { status: 'ringing'; status$: BehaviorSubject<string> } {
+  return { status: 'ringing', status$: new BehaviorSubject('ringing'), ...fields };
+}
+
 async function renderSheet(props: Record<string, unknown> = {}): Promise<void> {
   await render(
     <SignalWireContext.Provider
@@ -40,19 +45,19 @@ describe('IncomingCallSheet', () => {
   });
 
   it('shows the caller name', async () => {
-    incomingCalls$.next([{ id: 'a', fromName: 'Ada Lovelace', answer: jest.fn(), reject: jest.fn() }]);
+    incomingCalls$.next([ringingCall({ id: 'a', fromName: 'Ada Lovelace', answer: jest.fn(), reject: jest.fn() })]);
     await renderSheet();
     expect(screen.getByText('Ada Lovelace')).toBeTruthy();
   });
 
   it('falls back to the handle, then to a placeholder', async () => {
-    incomingCalls$.next([{ id: 'a', from: '+15551234', answer: jest.fn(), reject: jest.fn() }]);
+    incomingCalls$.next([ringingCall({ id: 'a', from: '+15551234', answer: jest.fn(), reject: jest.fn() })]);
     await renderSheet();
     expect(screen.getByText('+15551234')).toBeTruthy();
   });
 
   it('answers audio-only by default — an answer cannot add an m-line', async () => {
-    const call = { id: 'a', answer: jest.fn(async () => undefined), reject: jest.fn() };
+    const call = ringingCall({ id: 'a', answer: jest.fn(async () => undefined), reject: jest.fn() });
     incomingCalls$.next([call]);
     await renderSheet();
 
@@ -63,7 +68,7 @@ describe('IncomingCallSheet', () => {
   });
 
   it('honours answerWith', async () => {
-    const call = { id: 'a', answer: jest.fn(async () => undefined), reject: jest.fn() };
+    const call = ringingCall({ id: 'a', answer: jest.fn(async () => undefined), reject: jest.fn() });
     incomingCalls$.next([call]);
     await renderSheet({ answerWith: { audio: true, video: false } });
 
@@ -74,7 +79,7 @@ describe('IncomingCallSheet', () => {
   });
 
   it('rejects on decline', async () => {
-    const call = { id: 'a', answer: jest.fn(), reject: jest.fn(async () => undefined) };
+    const call = ringingCall({ id: 'a', answer: jest.fn(), reject: jest.fn(async () => undefined) });
     incomingCalls$.next([call]);
     await renderSheet();
 
