@@ -1,6 +1,6 @@
 import RNCallKeep from 'react-native-callkeep';
 import InCallManager from 'react-native-incall-manager';
-import { BehaviorSubject, Subject } from 'rxjs';
+import { BehaviorSubject, Observable, Subject } from 'rxjs';
 
 import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
 import { CallKeepBridge } from './CallKeepBridge';
@@ -296,6 +296,34 @@ describe('CallKeepBridge', () => {
     second$.next([createCall('c2')]);
 
     expect(RNCallKeep.displayIncomingCall).toHaveBeenCalled();
+  });
+
+  it('stops showing SDK calls in CallKit once the client is unbound', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    const incoming$ = new Subject<unknown[]>();
+    const unbind = bridge.bindClient(createClient(incoming$) as never);
+
+    unbind();
+    incoming$.next([createCall('c1')]);
+
+    expect(RNCallKeep.displayIncomingCall).not.toHaveBeenCalled();
+  });
+
+  it('subscribes to a client once however often it is bound', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    let subscriptions = 0;
+    const incoming$ = new Subject<unknown[]>();
+    const counted$ = new Observable<unknown[]>((subscriber) => {
+      subscriptions += 1;
+      return incoming$.subscribe(subscriber);
+    });
+    const client = { session: { incomingCalls$: counted$ } };
+
+    bridge.bindClient(client as never);
+    bridge.bindClient(client as never);
+    bridge.bindClient(client as never);
+
+    expect(subscriptions).toBe(1);
   });
 
   it('starts the audio session when an outbound call connects', async () => {
