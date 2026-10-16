@@ -8,10 +8,10 @@ import { getLogger } from '@signalwire/js';
 import { logger } from './logger';
 
 describe('logger', () => {
-  it('prefixes every level with [SignalWireRN]', () => {
+  it('prefixes every level with [SignalWire React]', () => {
     const sdkLogger = (getLogger as jest.Mock)();
     logger.warn('storage unavailable', 42);
-    expect(sdkLogger.warn).toHaveBeenCalledWith('[SignalWireRN]', 'storage unavailable', 42);
+    expect(sdkLogger.warn).toHaveBeenCalledWith('[SignalWire React]', 'storage unavailable', 42);
   });
 
   it('forwards debug, info and error too', () => {
@@ -19,8 +19,8 @@ describe('logger', () => {
     logger.debug('d');
     logger.info('i');
     logger.error('e');
-    expect(sdkLogger.debug).toHaveBeenCalledWith('[SignalWireRN]', 'd');
-    expect(sdkLogger.info).toHaveBeenCalledWith('[SignalWireRN]', 'i');
-    expect(sdkLogger.error).toHaveBeenCalledWith('[SignalWireRN]', 'e');
+    expect(sdkLogger.debug).toHaveBeenCalledWith('[SignalWire React]', 'd');
+    expect(sdkLogger.info).toHaveBeenCalledWith('[SignalWire React]', 'i');
+    expect(sdkLogger.error).toHaveBeenCalledWith('[SignalWire React]', 'e');
   });
 });
