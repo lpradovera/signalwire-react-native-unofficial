@@ -93,6 +93,10 @@ for (const component of COMPONENTS) {
 }
 
 const barrel = `${BANNER}
+// A client module like every wrapper: esbuild inlines the components into the
+// built barrel and drops their own directives, so it needs its own.
+'use client';
+
 // Importing this barrel registers every element. Prefer the per-component
 // subpath (\`@signalwire/react-ui/call-controls\`) so bundlers only pull what
 // you use — custom-element registration is a side effect and cannot be
