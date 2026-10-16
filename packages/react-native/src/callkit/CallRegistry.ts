@@ -25,7 +25,7 @@ import type { Observable } from 'rxjs';
  * before the user ever saw it. Real phones ring for about 30 seconds, and the
  * server parks its caller for 60. Override with `fusionTimeoutMs`.
  */
-const DEFAULT_FUSION_TIMEOUT_MS = 45_000;
+export const DEFAULT_FUSION_TIMEOUT_MS = 45_000;
 
 /**
  * How long an *answered* entry may wait for the app to produce its call.

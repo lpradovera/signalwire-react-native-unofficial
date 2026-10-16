@@ -19,7 +19,11 @@
   that; an app's own `didLoadWithEvents` listener still receives the
   dispatch. A replayed answer or end for a launch push whose display event
   isn't in the buffer is held until `setup()` adopts that push, instead of
-  being dropped.
+  being dropped; so is a live answer or end that arrives while `setup()` is
+  still fetching that push. A held answer whose push is never adopted (the
+  launch cache keeps only the last of several pushes) expires after the
+  fusion timeout and its CallKit call is ended as missed, instead of staying
+  answered with nobody on it.
 - `CallKeepBridge.destroy()` removes only the bridge's own callkeep handlers,
   not every handler of each event type in the app. On callkeep 4.3.0-4.3.8,
   whose `addEventListener` returns nothing, it reads each handler's
