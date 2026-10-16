@@ -8,13 +8,18 @@ import type { Storage } from '@signalwire/js';
  */
 export type StorageScope = 'local' | 'session';
 
-/** The subset of AsyncStorage this adapter uses. */
+/**
+ * The subset of AsyncStorage this adapter uses. The bulk remove is
+ * `multiRemove` through AsyncStorage 2.x and `removeMany` from 3.0, which
+ * dropped `multiRemove`; with neither, keys are removed one by one.
+ */
 export interface AsyncStorageLike {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<void>;
   removeItem(key: string): Promise<void>;
   getAllKeys(): Promise<readonly string[]>;
-  multiRemove(keys: readonly string[]): Promise<void>;
+  multiRemove?(keys: readonly string[]): Promise<void>;
+  removeMany?(keys: string[]): Promise<void>;
 }
 
 const NAMESPACE = 'sw-rn';
@@ -37,8 +42,15 @@ async function purgeScope(backing: AsyncStorageLike, scope: StorageScope): Promi
   const prefix = prefixFor(scope);
   const keys = await backing.getAllKeys();
   const matching = keys.filter((key) => key.startsWith(prefix));
-  if (matching.length > 0) {
+  if (matching.length === 0) {
+    return;
+  }
+  if (typeof backing.removeMany === 'function') {
+    await backing.removeMany(matching);
+  } else if (typeof backing.multiRemove === 'function') {
     await backing.multiRemove(matching);
+  } else {
+    await Promise.all(matching.map((key) => backing.removeItem(key)));
   }
 }
 
