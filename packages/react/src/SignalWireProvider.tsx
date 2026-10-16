@@ -1,5 +1,5 @@
 import { SignalWire } from '@signalwire/js';
-import React, { createContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useEffect, useMemo, useState } from 'react';
 
 import { logger } from './logger';
 
@@ -48,8 +48,6 @@ export function SignalWireProvider({
 }: SignalWireProviderProps): React.JSX.Element {
   const [client, setClient] = useState<SignalWire | null>(null);
   const [error, setError] = useState<Error | null>(null);
-  /** The observer the current client was handed, so a later one is bound once. */
-  const boundObserver = useRef<CallObserver | undefined>(undefined);
 
   useEffect(() => {
     const instance = new SignalWire(credentialProvider, {
@@ -59,9 +57,6 @@ export function SignalWireProvider({
 
     setClient(instance);
     setError(null);
-
-    boundObserver.current = observer;
-    observer?.bindClient?.(instance);
 
     const subscription = instance.errors$.subscribe((next) => {
       logger.warn('SDK error:', next);
@@ -85,14 +80,17 @@ export function SignalWireProvider({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [credentialProvider]);
 
-  // An observer that arrives after the client was built (React Native builds
-  // its CallKit observer only once callKit is turned on) still needs the
-  // client, or it never sees inbound calls.
+  // Bound here, not where the client is built: the observer can arrive or
+  // change later (React Native builds its CallKit observer only once callKit
+  // is turned on, and drops it when callKit is turned off). The unbind it
+  // returns runs when it changes or goes away, or the client is replaced, so
+  // a dropped observer stops handling the client's calls.
   useEffect(() => {
-    if (client && observer !== boundObserver.current) {
-      boundObserver.current = observer;
-      observer?.bindClient?.(client);
+    if (!client) {
+      return undefined;
     }
+    const unbind = observer?.bindClient?.(client);
+    return typeof unbind === 'function' ? unbind : undefined;
   }, [client, observer]);
 
   const value = useMemo<SignalWireContextValue>(
