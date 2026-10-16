@@ -141,6 +141,21 @@ const resolved: FirebaseMessaging | Unavailable | undefined =
 let reported = false;
 
 /**
+ * Logs why Android push is off, the first time only: once per app run, from
+ * whichever check found it (Firebase not usable, or no default app). The
+ * entry file's registerAndroidCallPush and the push-token watch both ask, so
+ * without this the same warning was logged at launch and again when the
+ * token was first watched.
+ */
+function reportPushOff(message: string): void {
+  if (reported) {
+    return;
+  }
+  reported = true;
+  logger.warn(message);
+}
+
+/**
  * Firebase messaging's modular API, or undefined when it cannot be used
  * (always, on iOS). Never throws, and never loads a module: see `resolved`.
  *
@@ -152,10 +167,7 @@ export function loadFirebaseMessaging(): FirebaseMessaging | undefined {
   if (resolved === undefined || hasModularApi(resolved)) {
     return resolved;
   }
-  if (!reported) {
-    reported = true;
-    logger.warn(resolved.message);
-  }
+  reportPushOff(resolved.message);
   return undefined;
 }
 
@@ -165,12 +177,13 @@ export function loadFirebaseMessaging(): FirebaseMessaging | undefined {
  * RNFB throws `No Firebase App '[DEFAULT]' has been created` on a build that
  * links Firebase without a google-services.json. That throw reached the entry
  * file through `registerAndroidCallPush()`, before `registerRootComponent`.
+ * Why push is off is logged once per run, as for `loadFirebaseMessaging`.
  */
 export function getMessagingInstance(firebase: FirebaseMessaging): unknown {
   try {
     return firebase.getMessaging();
   } catch (error) {
-    logger.warn(`Firebase has no default app; Android push is off: ${String(error)}`);
+    reportPushOff(`Firebase has no default app; Android push is off: ${firstLine(error)}`);
     return undefined;
   }
 }
