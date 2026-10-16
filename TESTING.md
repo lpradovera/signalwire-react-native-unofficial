@@ -371,8 +371,15 @@ double-conversion) as prebuilt binaries. **Use it.** Without it, CocoaPods
 compiles glog from source by running `./configure`, which blocks forever
 reading a stdin that CocoaPods never writes to.
 
-**Do not add `RCT_USE_PREBUILT_RNCORE=1`.** Precompiled React core is broken on
-this toolchain — the `React-Core-prebuilt` umbrella header pulls in source-tree
+The example runs the New Architecture, where Expo's Podfile turns on
+precompiled React core by itself (`RCT_USE_PREBUILT_RNCORE ||= '1'`). That
+configuration builds and launches on Xcode 27 / the iOS 27 Simulator
+(2026-10-15: clean `expo prebuild`, `RCT_USE_RN_DEP=1 pod install`, Release
+build). The note below is from the old architecture, where the variable was
+off by default and setting it by hand failed.
+
+**Old architecture: do not add `RCT_USE_PREBUILT_RNCORE=1`.** Precompiled React core was broken on
+that toolchain — the `React-Core-prebuilt` umbrella header pulls in source-tree
 headers that are not part of its module, and `-Wnon-modular-include-in-framework-module`
 is promoted to an error:
 
