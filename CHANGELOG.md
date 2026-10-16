@@ -70,7 +70,7 @@
   left.
 - With CallKit, a route chosen before the call's session starts (a tap while
   an outbound call rings) is shown at once and applied when it starts;
-  nothing native is written outside a session. Turning the speaker off
+  nothing native is written for it before then. Turning the speaker off
   again before the session starts is held too, so a video call then starts
   off the speaker. A choice is held only while a call the CallKit bridge
   tracks is live: when the last one ends without a session (an outbound

@@ -110,7 +110,12 @@ both by ear and against the label. With released incall-manager on iOS,
 `'bluetooth'` is ignored with a warning and `route` is what was asked for.
 Also: tap the speaker while an outbound call is still ringing (it should apply
 when the call connects), and start a video call with AirPods connected (it
-should stay on the AirPods).
+should stay on the AirPods). Tap the speaker while an outbound call rings and
+cancel the call: the next call must not start on the speaker. On Android,
+start a video call with a Bluetooth headset connected: the label should read
+"Bluetooth" (from incall-manager's device report), and speaker on then off
+should come back to the headset, not the earpiece (the Android behaviour is
+derived from incall-manager's Java, not yet seen on a device).
 
 **9. Backgrounded call audio.**
 Background the app mid-call.
