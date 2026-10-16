@@ -3,7 +3,13 @@ import React, { useEffect, useRef } from 'react';
 
 import type { Call } from '@signalwire/js';
 
-const TERMINAL = new Set(['disconnected', 'destroyed', 'failed']);
+// Not 'disconnected': Call.status$ merges the peer connection's
+// connectionState, so a Wi-Fi blip surfaces as 'disconnected' and returns to
+// 'connected' on the same call, which the SDK keeps alive to recover.
+// Leaving the screen there left a live call sending the microphone with no
+// End button. A remote hang-up ends 'destroyed'; a call that cannot recover
+// ends 'failed'. Same set as example/src/screens/CallScreen.tsx.
+const TERMINAL = new Set(['destroyed', 'failed']);
 
 /**
  * The web counterpart of SignalWireVideoView: a plain <video> fed from the
