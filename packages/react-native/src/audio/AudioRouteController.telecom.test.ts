@@ -441,6 +441,42 @@ describe('AudioRouteController on Android with Telecom', () => {
     });
   });
 
+  describe("with callkeep's full reports (the routes and the Bluetooth device in each)", () => {
+    beforeEach(() => installTelecom({ fullReports: true }));
+
+    it('takes each report as it comes, without reading the CallAudioState again', async () => {
+      setTelecomState(CALL, { route: 'EARPIECE', available: PHONE });
+      controller.start('audio', CALL);
+      await settle();
+      const reads = callAudioNative.getCallAudioState.mock.calls.length;
+
+      reportTelecom(CALL, { route: 'BLUETOOTH', available: WITH_BT, bluetoothName: 'Pixel Buds' });
+      await settle();
+      expect(controller.route).toBe('bluetooth');
+      reportTelecom(CALL, { route: 'EARPIECE', available: PHONE });
+      await settle();
+      expect(controller.route).toBe('earpiece');
+
+      expect(callAudioNative.getCallAudioState).toHaveBeenCalledTimes(reads);
+    });
+
+    it("knows the routes Telecom offers without the package's reader", async () => {
+      installTelecom({ reader: false, fullReports: true });
+      controller.start('audio', CALL);
+      // The emulator: Telecom offers the call the speaker alone.
+      reportTelecom(CALL, { route: 'SPEAKER', available: ['SPEAKER'] });
+      await settle();
+      expect(controller.route).toBe('speaker');
+
+      controller.setSpeakerOn(false);
+      await settle();
+
+      expect(setAudioRoute).not.toHaveBeenCalled();
+      expect(controller.route).toBe('speaker');
+      expect(callAudioNative.getCallAudioState).not.toHaveBeenCalled();
+    });
+  });
+
   describe('another call taking the session', () => {
     it('follows the call that now has it', async () => {
       setTelecomState(CALL, { route: 'EARPIECE', available: PHONE });
