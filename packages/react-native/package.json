@@ -144,6 +144,7 @@
     "@expo/config-types": "^54.0.10",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/netinfo": "11.4.1",
+    "@react-native/babel-preset": "0.81.5",
     "@signalwire/js": "^4.0.0-rc.2",
     "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^29.5.14",
