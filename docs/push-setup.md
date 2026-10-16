@@ -752,8 +752,18 @@ subscriber check would let any subscriber holding a token join any parked call.
 | Forward opaque payload to JS | generated `SignalWireVoipPush.m` |
 | Adopt the natively-displayed entry | `CallKeepBridge` / `CallRegistry.adoptNativeEntry` |
 | Ask the app to dial | `CallRegistry.answerRequested$` |
-| Attach the placed call | `CallRegistry.bindCall` |
+| Claim the entry for the dial | `CallKeepBridge.beginBridgeDial(uuid)` before dialling, `endBridgeDial()` once the dial settles |
+| Attach the placed call | `CallKeepBridge.bindBridgeCall(uuid, call)` |
 | Example wiring | `example/src/useBridgeAnswer.ts` |
+
+Attach the call with `getCallKit().bindBridgeCall`, not
+`getCallKit().registry.bindCall`. The bridge's version also watches the
+call's status: a pushed call's audio session starts when that call connects,
+and its connect and remote hang-up reach CallKit from the same watch.
+`CallRegistry.bindCall` only attaches the call, so the session never starts
+(no proximity sensor, no route control) and CallKit never hears the call
+end. Without `beginBridgeDial`, the dial is reported to CallKit as a second,
+outgoing call while the answered one is live, and CallKit rejects it.
 
 ### Running it
 

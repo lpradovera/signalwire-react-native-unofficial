@@ -343,97 +343,264 @@ describe('CallKeepBridge', () => {
     expect(InCallManager.start).toHaveBeenCalled();
   });
 
-  /*
-   * `supportsVideo` says the native UI may offer video. It is not a property of
-   * any one call: an audio dial is an audio call. Reported as video, Android
-   * Telecom gave every call a video state, and the audio session started in
-   * incall-manager's 'video' mode, whose default route is the speaker.
-   */
-  describe('with supportsVideo', () => {
-    beforeEach(() => resetAudioRouteControllerForTesting());
+  /** The SDK's own answer to "does this call carry video": WebRTCCall.mediaDirections. */
+  const VOICE = { audio: 'sendrecv', video: 'inactive' };
+  const VIDEO = { audio: 'sendrecv', video: 'sendrecv' };
 
-    it('shows an incoming call as audio: the native answer is audio-only', async () => {
-      await bridge.setup({ appName: 'Demo', supportsVideo: true });
-      const uuid = bridge.reportIncomingPush({ callId: 'c1', from: '+15551234', fromName: 'Ada' });
-      expect(RNCallKeep.displayIncomingCall).toHaveBeenCalledWith(
-        uuid,
-        '+15551234',
-        'Ada',
-        'generic',
-        false
-      );
-    });
+  it('starts a voice call in voice mode even when the app supports video', async () => {
+    // The mode used to follow the app's supportsVideo, so every call from a
+    // video-capable app started in video mode, on the loudspeaker.
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo', supportsVideo: true });
 
-    it('starts an audio dial as an audio call', async () => {
-      await bridge.setup({ appName: 'Demo', supportsVideo: true });
-      const uuid = bridge.trackCall(createCall('c1') as never, '/public/room', 'Support');
-      expect(RNCallKeep.startCall).toHaveBeenCalledWith(
-        uuid,
-        '/public/room',
-        'Support',
-        'generic',
-        false
-      );
-    });
+    const call = { ...createCall('voice-1'), mediaDirections: VOICE };
+    const uuid = bridge.trackCall(call as never, '/public/agent', 'Agent');
+    call.status$.next('connected');
+    await Promise.resolve();
 
-    it('starts a video dial as a video call', async () => {
-      await bridge.setup({ appName: 'Demo', supportsVideo: true });
-      const uuid = bridge.trackCall(createCall('c1') as never, '/public/room', 'Support', true);
-      expect(RNCallKeep.startCall).toHaveBeenCalledWith(
-        uuid,
-        '/public/room',
-        'Support',
-        'generic',
-        true
-      );
-    });
+    expect(RNCallKeep.startCall).toHaveBeenCalledWith(uuid, '/public/agent', 'Agent', 'generic', false);
+    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
+    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(false);
+  });
 
-    it('starts an audio call on the earpiece', async () => {
-      await bridge.setup({ appName: 'Demo', supportsVideo: true });
-      const call = createCall('out-1');
-      bridge.trackCall(call as never, '/public/room', 'Support');
-      call.status$.next('connected');
-      await Promise.resolve();
+  it('starts a video call in video mode, on the loudspeaker', async () => {
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo', supportsVideo: true });
 
-      expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
-      expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(false);
-    });
+    const call = { ...createCall('video-1'), mediaDirections: VIDEO };
+    const uuid = bridge.trackCall(call as never, '/public/room', 'Room');
+    call.status$.next('connected');
+    await Promise.resolve();
 
-    it('starts a video call on the speaker', async () => {
-      await bridge.setup({ appName: 'Demo', supportsVideo: true });
-      const call = createCall('out-1');
-      bridge.trackCall(call as never, '/public/room', 'Support', true);
-      call.status$.next('connected');
-      await Promise.resolve();
+    expect(RNCallKeep.startCall).toHaveBeenCalledWith(uuid, '/public/room', 'Room', 'generic', true);
+    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
+    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(true);
+  });
 
-      expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
-      expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(true);
-    });
+  it('counts video in either direction, receive-only included, as a video call', async () => {
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo', supportsVideo: true });
 
-    it('starts an answered incoming call on the earpiece', async () => {
-      await bridge.setup({ appName: 'Demo', supportsVideo: true });
+    const call = { ...createCall('recv-1'), mediaDirections: { audio: 'sendrecv', video: 'recvonly' } };
+    const uuid = bridge.trackCall(call as never, '/public/room', 'Room');
+
+    expect(RNCallKeep.startCall).toHaveBeenCalledWith(uuid, '/public/room', 'Room', 'generic', true);
+  });
+
+  it('never reports video to a CallKit provider set up without it', async () => {
+    // The provider was configured with supportsVideo false: no video button,
+    // so the call is reported as a voice call even though its audio session
+    // still runs in video mode.
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo' });
+
+    const call = { ...createCall('video-2'), mediaDirections: VIDEO };
+    const uuid = bridge.trackCall(call as never, '/public/room', 'Room');
+    call.status$.next('connected');
+    await Promise.resolve();
+
+    expect(RNCallKeep.startCall).toHaveBeenCalledWith(uuid, '/public/room', 'Room', 'generic', false);
+    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
+  });
+
+  it.each([
+    ['does not report its media', (call: ReturnType<typeof createCall>) => call],
+    [
+      'is destroyed',
+      (call: ReturnType<typeof createCall>) =>
+        Object.defineProperty(call, 'mediaDirections', {
+          get: () => {
+            throw new Error('Main peer connection not found');
+          }
+        })
+    ]
+  ])('starts a call that %s as voice, on the receiver, even when the app supports video', async (_, shape) => {
+    // supportsVideo lets the native UI show video; it never made a call video.
+    // Falling back to it started such a call in 'video' mode, on the speaker,
+    // and reported it to Telecom as a video call (seen on a Pixel 6 Pro).
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo', supportsVideo: true });
+
+    const call = shape(createCall('legacy-1'));
+    const uuid = bridge.trackCall(call as never, '/public/room', 'Room');
+    call.status$.next('connected');
+    await Promise.resolve();
+
+    expect(RNCallKeep.startCall).toHaveBeenCalledWith(uuid, '/public/room', 'Room', 'generic', false);
+    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
+    expect(InCallManager.setForceSpeakerphoneOn).not.toHaveBeenCalledWith(true);
+  });
+
+  it("takes an inbound call's type and audio mode from its own media", async () => {
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo', supportsVideo: true });
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient(createClient(incoming$) as never);
+
+    const call = { ...createCall('in-voice'), mediaDirections: VOICE };
+    incoming$.next([call]);
+    const uuid = (RNCallKeep.displayIncomingCall as jest.Mock).mock.calls[0]?.[0] as string;
+    expect(RNCallKeep.displayIncomingCall).toHaveBeenCalledWith(uuid, '+15551234', 'Ada', 'generic', false);
+
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    await Promise.resolve();
+    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
+  });
+
+  // @signalwire/js 4.0.0-rc.2 reports any offer with a sending m=video as
+  // video: 'sendrecv' before the answer, 'recvonly' after it and once
+  // connected, although the registry answers it { audio: true, video: false }.
+  const OFFERED_VIDEO = { audio: 'sendrecv', video: 'sendrecv' };
+  const ANSWERED_VIDEO_OFFER = { audio: 'sendrecv', video: 'recvonly' };
+
+  it.each([false, true])(
+    'answers an inbound call from a video caller as voice, on the receiver (supportsVideo %s)',
+    async (supportsVideo) => {
+      resetAudioRouteControllerForTesting();
+      await bridge.setup({ appName: 'Demo', supportsVideo });
       const incoming$ = new Subject<unknown[]>();
-      bridge.bindClient({ session: { incomingCalls$: incoming$ } } as never);
-      incoming$.next([createCall('in-1')]);
-      const uuid = (RNCallKeep.displayIncomingCall as jest.Mock).mock.calls[0][0] as string;
+      bridge.bindClient(createClient(incoming$) as never);
+
+      const call = { ...createCall('in-video-offer'), mediaDirections: OFFERED_VIDEO };
+      incoming$.next([call]);
+      const uuid = (RNCallKeep.displayIncomingCall as jest.Mock).mock.calls[0]?.[0] as string;
+      expect(RNCallKeep.displayIncomingCall).toHaveBeenCalledWith(uuid, '+15551234', 'Ada', 'generic', false);
 
       callkeep.__emit('answerCall', { callUUID: uuid });
       await Promise.resolve();
+      call.mediaDirections = ANSWERED_VIDEO_OFFER;
+      call.status$.next('connected');
+      await Promise.resolve();
 
+      expect(call.answer).toHaveBeenCalledWith({ audio: true, video: false });
+      expect(InCallManager.start).toHaveBeenCalledTimes(1);
       expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
+      expect(InCallManager.setForceSpeakerphoneOn).not.toHaveBeenCalledWith(true);
+    }
+  );
+
+  it("takes an inbound call's media from how the registry answers it", async () => {
+    // One source: were the registry's answer to take video, the bridge must
+    // not go on showing and starting the call as voice.
+    const isolated = {} as {
+      Bridge: typeof CallKeepBridge;
+      callkeep: typeof callkeep;
+      incall: typeof InCallManager;
+    };
+    jest.isolateModules(() => {
+      jest.doMock('./CallRegistry', () => ({
+        ...jest.requireActual<typeof import('./CallRegistry')>('./CallRegistry'),
+        INBOUND_ANSWER: { audio: true, video: true }
+      }));
+      isolated.Bridge = (require('./CallKeepBridge') as typeof import('./CallKeepBridge')).CallKeepBridge;
+      isolated.callkeep = (require('react-native-callkeep') as { default: typeof callkeep }).default;
+      isolated.incall = (require('react-native-incall-manager') as { default: typeof InCallManager }).default;
     });
+    jest.dontMock('./CallRegistry');
+    // The controller lives on globalThis; dropped, the isolated copy makes its own.
+    resetAudioRouteControllerForTesting();
+    const videoBridge = new isolated.Bridge();
+    await videoBridge.setup({ appName: 'Demo', supportsVideo: true });
+    const incoming$ = new Subject<unknown[]>();
+    videoBridge.bindClient(createClient(incoming$) as never);
+
+    incoming$.next([{ ...createCall('in-answered-video'), mediaDirections: VOICE }]);
+    const display = isolated.callkeep.displayIncomingCall as jest.Mock;
+    const uuid = display.mock.calls[0]?.[0] as string;
+    expect(display).toHaveBeenCalledWith(uuid, '+15551234', 'Ada', 'generic', true);
+    isolated.callkeep.__emit('answerCall', { callUUID: uuid });
+    await Promise.resolve();
+
+    expect(isolated.incall.start).toHaveBeenCalledWith({ media: 'video' });
+    videoBridge.destroy();
+    resetAudioRouteControllerForTesting();
   });
 
-  it('a video dial without supportsVideo is still reported as audio', async () => {
+  it('keeps a pushed call on the receiver when a video caller’s call fuses', async () => {
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo', supportsVideo: true });
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient(createClient(incoming$) as never);
+    const uuid = bridge.reportIncomingPush({ callId: 'c-fuse', from: '+15551234', fromName: 'Ada' });
+    expect(RNCallKeep.displayIncomingCall).toHaveBeenCalledWith(uuid, '+15551234', 'Ada', 'generic', false);
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    await Promise.resolve();
+
+    const call = { ...createCall('c-fuse'), mediaDirections: ANSWERED_VIDEO_OFFER };
+    incoming$.next([call]);
+    call.status$.next('connected');
+    await Promise.resolve();
+
+    expect(InCallManager.start).toHaveBeenCalledTimes(1);
+    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
+    expect(InCallManager.setForceSpeakerphoneOn).not.toHaveBeenCalledWith(true);
+  });
+
+  it('starts a pushed call’s audio when its call connects, with that call’s media', async () => {
+    // A push answered before its SDK call exists has no media to start with,
+    // and incall-manager's mode can't change once it has started. Its audio
+    // waits for the call placed for it.
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo', supportsVideo: true });
+    const uuid = bridge.reportIncomingPush({ callId: 'c-push', from: '+15551234', fromName: 'Ada' });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+    await Promise.resolve();
+    expect(InCallManager.start).not.toHaveBeenCalled();
+
+    bridge.beginBridgeDial(uuid);
+    const call = { ...createCall('bridge-1'), mediaDirections: VOICE };
+    bridge.trackCall(call as never, '/private/parked', 'Ada');
+    bridge.endBridgeDial();
+    call.status$.next('connected');
+    await Promise.resolve();
+
+    expect(InCallManager.start).toHaveBeenCalledTimes(1);
+    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
+    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(false);
+  });
+
+  it('starts a pushed call whose bridge call is video in video mode', async () => {
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo', supportsVideo: true });
+    const uuid = bridge.reportIncomingPush({ callId: 'c-push-v', from: '+15551234', fromName: 'Ada' });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+
+    const call = { ...createCall('bridge-v'), mediaDirections: VIDEO };
+    expect(bridge.bindBridgeCall(uuid, call as never)).toBe(true);
+    call.status$.next('connected');
+    await Promise.resolve();
+
+    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
+  });
+
+  it('reads a destroyed call’s media without throwing', async () => {
+    // The SDK's mediaDirections getter throws once the call is destroyed.
+    resetAudioRouteControllerForTesting();
     await bridge.setup({ appName: 'Demo' });
-    const uuid = bridge.trackCall(createCall('c1') as never, '/public/room', 'Support', true);
-    expect(RNCallKeep.startCall).toHaveBeenCalledWith(
-      uuid,
-      '/public/room',
-      'Support',
-      'generic',
-      false
-    );
+    const call = createCall('gone');
+    Object.defineProperty(call, 'mediaDirections', {
+      get: () => {
+        throw new Error('Main peer connection not found');
+      }
+    });
+
+    expect(() => bridge.trackCall(call as never, '/public/room', 'Room')).not.toThrow();
+    expect(RNCallKeep.startCall).toHaveBeenCalledWith(expect.any(String), '/public/room', 'Room', 'generic', false);
+  });
+
+  it("leaves a running call's route alone when another call rings", async () => {
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo', supportsVideo: true });
+    const active = { ...createCall('video-3'), mediaDirections: VIDEO };
+    bridge.trackCall(active as never, '/public/room', 'Room');
+    active.status$.next('connected');
+    await Promise.resolve();
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient(createClient(incoming$) as never);
+
+    incoming$.next([{ ...createCall('in-voice-2'), mediaDirections: VOICE }]);
+
+    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(true);
   });
 
   it('routes an in-app answer through CallKit so iOS activates audio', async () => {
