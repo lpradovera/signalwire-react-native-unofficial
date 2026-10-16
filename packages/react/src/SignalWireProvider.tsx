@@ -2,6 +2,7 @@ import { SignalWire } from '@signalwire/js';
 import React, { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { filter, merge } from 'rxjs';
 
+import { gateWebSocket } from './gatedWebSocket';
 import { logger } from './logger';
 import { TokenSource } from './tokenSource';
 
@@ -213,7 +214,7 @@ export function SignalWireProvider({
       ? (clientPlatform?.watchForeground ?? watchDocumentVisible)(() => source.renewIfDue())
       : undefined;
 
-    const clientOptions = { ...clientPlatform?.options, ...options };
+    const clientOptions = withTokenGate({ ...clientPlatform?.options, ...options }, source);
     // One of the two is set: checked above.
     const credentials = (source?.credentialProvider ?? credentialProvider) as CredentialProvider;
     const instance = new SignalWire(
@@ -305,6 +306,28 @@ export function SignalWireProvider({
   );
 
   return <SignalWireContext.Provider value={value}>{children}</SignalWireContext.Provider>;
+}
+
+/**
+ * With `fetchToken`, the client's sockets open only once the token the SDK
+ * holds is fresh ({@link TokenSource.whenTokenFresh}): a socket that died
+ * while the app was suspended is reconnected the moment the app runs again,
+ * and with a token past its expiry the server refused that reconnect before
+ * the SDK's resume refresh had a new one. The app's own `webSocketConstructor`
+ * is wrapped if it passed one, else the global `WebSocket`.
+ */
+function withTokenGate(clientOptions: SignalWireOptions, source: TokenSource | null): SignalWireOptions {
+  const Base =
+    clientOptions.webSocketConstructor ?? (globalThis as { WebSocket?: unknown }).WebSocket;
+  if (!source || typeof Base !== 'function') {
+    return clientOptions;
+  }
+  return {
+    ...clientOptions,
+    webSocketConstructor: gateWebSocket(Base as Parameters<typeof gateWebSocket>[0], () =>
+      source.whenTokenFresh()
+    )
+  };
 }
 
 /** The browser's foreground signal, for platforms without `watchForeground`. */
