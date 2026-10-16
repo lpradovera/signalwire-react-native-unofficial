@@ -139,12 +139,21 @@ describe('POST /token', () => {
     assert.equal(response.status, 502);
   });
 
-  it('passes a SignalWire 401 through as-is', async () => {
-    const built = buildApp({ reply: { status: 401, body: { error: 'bad creds' } } });
-    const response = await post(built);
+  for (const status of [401, 403, 422]) {
+    it(`reports a SignalWire ${status} as a gateway error, not the app's own auth failure (server-18)`, async () => {
+      // The server's project credentials (or its reference mapping) were
+      // refused, not the app's: a 401 here would send the app to re-login.
+      const built = buildApp({ reply: { status, body: { error: 'refused' } } });
+      const response = await post(built);
 
-    assert.equal(response.status, 401);
-  });
+      assert.equal(response.status, 502);
+      const { error } = (await response.json()) as { error: string };
+      assert.match(error, new RegExp(`refused to mint a token \\(${status}\\)`));
+      if (status !== 422) {
+        assert.match(error, /SIGNALWIRE_PROJECT_ID/);
+      }
+    });
+  }
 
   it('fails clearly when the response carries no recognisable token', async () => {
     const built = buildApp({ reply: { status: 200, body: { unexpected: true } } });
