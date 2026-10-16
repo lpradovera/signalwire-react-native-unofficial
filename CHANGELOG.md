@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### React Native: an unlinked WebRTC, session secrets, stale errors, empty caller names
+
+- An installed but unlinked `react-native-webrtc` (a dev client not rebuilt)
+  throws `MissingPeerDependencyError` naming the rebuild, from
+  `createWebRTCApiProvider()` or the first `SignalWireVideoView` render. It
+  used to crash the app's entry file on import, before the guard ran (which
+  checked a member the JS object always has).
+- The storage adapter keeps the SDK's session scope in memory for the life
+  of the process. It used to write it, the cached SAT and the session-resume
+  `authorization_state` included, to plaintext AsyncStorage until the next
+  launch purged it. Session keys an earlier version wrote are still purged.
+- `useSignalWire().error` is cleared when the client is ready again (connected
+  and authenticated), so a transient socket error no longer shows as a current
+  failure for the rest of the session.
+- `IncomingCallSheet` treats an empty caller name as no name and shows the
+  number, then 'Unknown caller'.
+
 ### CallKit audio belongs to its call
 
 - The audio session belongs to the call it was started for. Another call

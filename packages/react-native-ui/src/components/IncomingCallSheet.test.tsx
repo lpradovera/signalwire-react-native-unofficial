@@ -116,4 +116,27 @@ describe('IncomingCallSheet', () => {
 
     expect(screen.queryByText('Ada')).toBeNull();
   });
+  it('falls back to the number when the caller name is empty', async () => {
+    // caller_id_name "" on the invite: '??' kept it, and the header was blank.
+    incomingCalls$.next([{ id: 'a', fromName: '', from: '+15551234', answer: jest.fn(), reject: jest.fn() }]);
+    await renderSheet();
+    expect(screen.getByText('+15551234')).toBeTruthy();
+  });
+
+  it('falls back to a placeholder when both name and number are empty', async () => {
+    incomingCalls$.next([{ id: 'a', fromName: '', from: '', answer: jest.fn(), reject: jest.fn() }]);
+    await renderSheet();
+    expect(screen.getByText('Unknown caller')).toBeTruthy();
+  });
+
+  it('falls back to the number for a pushed call with an empty name', async () => {
+    // A push whose from_name is "" (the support server's POST /notify passes
+    // fromName "" through).
+    mockRingingPushes.length = 0;
+    mockRingingPushes.push({ uuid: 'u1', fromName: '', from: '+15559876' });
+
+    await renderSheet({ includeNativePushes: true });
+
+    expect(screen.getByText('+15559876')).toBeTruthy();
+  });
 });

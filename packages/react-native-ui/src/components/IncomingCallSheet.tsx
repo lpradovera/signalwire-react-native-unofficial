@@ -58,9 +58,11 @@ export function IncomingCallSheet({
     return null;
   }
 
+  // `||`, not `??`: an empty name ("" from caller_id_name, or a push's
+  // from_name) is no name, and the number is the next best thing to show.
   const callerName = call
-    ? (call.fromName ?? call.from ?? 'Unknown caller')
-    : (push?.fromName ?? push?.from ?? 'Unknown caller');
+    ? call.fromName || call.from || 'Unknown caller'
+    : push?.fromName || push?.from || 'Unknown caller';
 
   return (
     <Modal transparent animationType="slide" visible testID={testID}>
