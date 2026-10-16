@@ -8,6 +8,7 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "bundle-check": "expo export --platform ios --platform android --output-dir ./.expo-export-check",
+    "test": "node --import tsx --test $(find src plugins -name '*.test.*')",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "@signalwire/react-native": "*",
     "@signalwire/react-native-ui": "*",
     "expo": "~54.0.0",
+    "expo-application": "~7.0.8",
     "expo-asset": "~12.0.13",
     "expo-constants": "~18.0.13",
     "expo-dev-client": "~6.0.21",
@@ -39,6 +41,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.10",
+    "tsx": "^4.19.2",
     "typescript": "^5.9.3"
   }
 }

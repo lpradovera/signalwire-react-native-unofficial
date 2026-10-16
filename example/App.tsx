@@ -1,24 +1,32 @@
 import { SignalWireProvider, useSignalWire } from '@signalwire/react-native';
 import { getCallKit } from '@signalwire/react-native/callkit';
 import React, { useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { IncomingCallSheet } from './src/components/IncomingCallSheet';
 import { CallScreen } from './src/screens/CallScreen';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { useBridgeAnswer } from './src/useBridgeAnswer';
-import { SUBSCRIBER_REFERENCE } from './src/subscriber';
 import { useDeviceRegistration } from './src/useDeviceRegistration';
 import { useServerToken } from './src/useServerToken';
 
 import type { Call, CredentialProvider } from '@signalwire/js';
 
-function Shell(): React.JSX.Element {
+/** A subscriber token, and the subscriber it was minted for when known. */
+interface Credentials {
+  token: string;
+  reference: string | null;
+}
+
+function Shell({ reference }: { reference: string | null }): React.JSX.Element {
   const { isConnected } = useSignalWire();
   const [activeCall, setActiveCall] = useState<Call | null>(null);
-  // Must match the subscriber reference the token was minted for.
-  useDeviceRegistration(SUBSCRIBER_REFERENCE);
+  // The subscriber the signed-in token was minted for: the server's answer,
+  // or what was entered beside a pasted token. A build-time constant here
+  // registered a pasted token's device under another subscriber.
+  useDeviceRegistration(reference);
   // Answering a parked-caller push means dialling, not answering — see the hook.
   useBridgeAnswer(setActiveCall);
 
@@ -47,44 +55,55 @@ function Shell(): React.JSX.Element {
 }
 
 export default function App(): React.JSX.Element {
-  const [token, setToken] = useState<string | null>(null);
+  const [credentials, setCredentials] = useState<Credentials | null>(null);
   const serverToken = useServerToken();
+  const serverCredentials =
+    serverToken.status === 'ready'
+      ? { token: serverToken.token, reference: serverToken.reference }
+      : null;
 
   // The server token seeds state once; a manual entry always wins after that.
+  const serverTokenValue = serverCredentials?.token;
+  const serverReference = serverCredentials?.reference;
   useEffect(() => {
-    if (serverToken.status === 'ready') {
-      setToken((current) => current ?? serverToken.token);
+    if (serverTokenValue && serverReference) {
+      setCredentials(
+        (current) => current ?? { token: serverTokenValue, reference: serverReference }
+      );
     }
-  }, [serverToken]);
+  }, [serverTokenValue, serverReference]);
 
   // Memoized: a new identity tears down the client and rebuilds it.
+  const token = credentials?.token;
   const credentialProvider = useMemo<CredentialProvider | null>(
     () => (token ? { authenticate: async () => ({ token }) } : null),
     [token]
   );
 
-  if (!credentialProvider) {
-    return (
-      <SafeAreaView style={styles.root}>
-        <ConnectScreen
-          onSubmitToken={setToken}
-          fetching={serverToken.status === 'loading'}
-          fetchError={serverToken.status === 'failed' ? serverToken.error : undefined}
-        />
-      </SafeAreaView>
-    );
-  }
-
+  // react-native-safe-area-context, not React Native's SafeAreaView: that one
+  // is a plain View on Android, where Expo SDK 54 draws edge to edge, so the
+  // header and the call controls sat under the status and navigation bars.
   return (
-    <SafeAreaView style={styles.root}>
-      <SignalWireProvider
-        credentialProvider={credentialProvider}
-        callKit
-        platform={{ netInfo: true }}
-      >
-        <Shell />
-      </SignalWireProvider>
-    </SafeAreaView>
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.root}>
+        {credentialProvider ? (
+          <SignalWireProvider
+            credentialProvider={credentialProvider}
+            callKit
+            platform={{ netInfo: true }}
+          >
+            <Shell reference={credentials?.reference ?? null} />
+          </SignalWireProvider>
+        ) : (
+          <ConnectScreen
+            onSubmitToken={(pasted, reference) => setCredentials({ token: pasted, reference })}
+            fetching={serverToken.status === 'loading'}
+            fetchError={serverToken.status === 'failed' ? serverToken.error : undefined}
+            onRetry={serverToken.retry}
+          />
+        )}
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
