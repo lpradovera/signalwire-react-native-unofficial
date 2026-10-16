@@ -56,11 +56,20 @@ interface SignalWirePlatform {
 interface CallObserver {
   bindClient?(client: SignalWire): void;
   onOutgoingCall?(call: Call, destination: string): void;
+  // Return true to take over an in-app answer/reject (useIncomingCalls).
+  onIncomingAnswer?(call: Call): boolean;
+  onIncomingReject?(call: Call): boolean;
 }
 ```
 
 `@signalwire/react-native` uses the first for its WebRTC/storage/AppState layer
 and the second to attach CallKit. Browser apps need neither.
+
+A host whose native UI rings an inbound call must implement `onIncomingAnswer`
+and `onIncomingReject`: `useIncomingCalls().answer` and `.reject` ask it first,
+and it answers or rejects through the native UI. Answering the SDK directly
+while CallKit still rings leaves a connected call with no audio and a stuck
+native screen.
 
 `platform` may also be a function returning a `SignalWirePlatform`. The
 provider then calls it for every client it builds and disposes that platform
