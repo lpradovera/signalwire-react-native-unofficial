@@ -94,11 +94,11 @@ so the two UI packages are siblings by name only and share no code.
 
 | Import | For |
 | --- | --- |
-| `@signalwire/react-native` | Provider, hooks, video view |
+| `@signalwire/react-native` | Provider, hooks, video view, `displayableName` |
 | `@signalwire/react-native/polyfills` | **Must be line 1** of your entry file |
 | `@signalwire/react-native/callkit` | Native call UI, push tokens, `registerAndroidCallPush` |
 | `@signalwire/react-native/audio` | Speaker / earpiece / Bluetooth routing |
-| `@signalwire/react-native/ringing` | `useRingingPushes`, for drawing your own incoming-call UI |
+| `@signalwire/react-native/ringing` | `useRingingPushes` and `displayableName`, for drawing your own incoming-call UI |
 
 `./ringing` is deliberately separate from `./callkit`: the latter imports
 `react-native-callkeep`, which constructs a `NativeEventEmitter` at import

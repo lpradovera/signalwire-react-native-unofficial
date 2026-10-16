@@ -56,6 +56,16 @@
   binder has unbound it: two providers, or a provider and the app's own
   `getCallKit().bindClient(client)`, no longer unbind each other.
 
+### Readable caller names in the incoming-call sheet
+
+- `IncomingCallSheet` no longer shows the backend's `_undef_` placeholder or
+  a raw Fabric address / SIP URI as the caller: `/private/rn-device-test`
+  shows as `Rn Device Test`, and a call with no usable name or handle shows
+  "Unknown caller".
+- New `displayableName(name)` on `@signalwire/react-native` (and
+  `@signalwire/react-native/ringing`): the same naming CallKit uses, for apps
+  that draw their own call UI.
+
 ## 0.1.0
 
 First release. React Native support for `@signalwire/js` v4 — platform

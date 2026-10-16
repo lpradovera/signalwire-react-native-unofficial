@@ -1,5 +1,5 @@
 import { logger, useIncomingCalls } from '@signalwire/react';
-import { useRingingPushes } from '@signalwire/react-native/ringing';
+import { displayableName, useRingingPushes } from '@signalwire/react-native/ringing';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Modal, Platform, StyleSheet, Text, View } from 'react-native';
 
@@ -101,9 +101,12 @@ export function IncomingCallSheet({
     return null;
   }
 
-  const callerName = call
-    ? (call.fromName ?? call.from ?? 'Unknown caller')
-    : (push?.fromName ?? push?.from ?? 'Unknown caller');
+  // Never the backend's "_undef_" placeholder or a raw Fabric/SIP address.
+  const source = call ?? push;
+  const callerName =
+    displayableName(source?.fromName, 'IncomingCallSheet') ??
+    displayableName(source?.from, 'IncomingCallSheet') ??
+    'Unknown caller';
 
   return (
     <Modal transparent animationType="slide" visible testID={testID}>

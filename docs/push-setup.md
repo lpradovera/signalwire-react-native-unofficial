@@ -352,6 +352,9 @@ Rolling your own? Use `useRingingPushes` from
 `@signalwire/react-native/ringing` — a separate entry point, because the
 `./callkit` barrel pulls in `react-native-callkeep`, which builds a
 `NativeEventEmitter` at import time and would make an optional peer mandatory.
+Name the caller with `displayableName(push.fromName) ?? displayableName(push.from)`
+from the same entry: it drops the backend's `_undef_` placeholder and turns a
+Fabric address or SIP URI into a readable name.
 
 ### 2f. Permissions
 
