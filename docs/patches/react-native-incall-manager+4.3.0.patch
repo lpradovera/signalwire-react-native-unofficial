@@ -127,7 +127,7 @@ index c488a06..3641bb5 100644
          let result = await _InCallManager.chooseAudioRoute(route);
          return result;
 diff --git a/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m b/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m
-index 7c54f6e..124e78b 100644
+index 7c54f6e..4fa94c3 100644
 --- a/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m
 +++ b/node_modules/react-native-incall-manager/ios/RNInCallManager/RNInCallManager.m
 @@ -13,6 +13,8 @@
@@ -249,7 +249,7 @@ index 7c54f6e..124e78b 100644
  
          NSLog(@"RNInCallManager.init(): initialized");
      }
-@@ -113,14 +172,534 @@ - (instancetype)init
+@@ -113,14 +172,539 @@ - (instancetype)init
  
  - (void)dealloc
  {
@@ -605,6 +605,11 @@ index 7c54f6e..124e78b 100644
 +        // --- device or receiver choice made before doesn't pin the input elsewhere.
 +        flag = 0;
 +        [self clearPreferredInputUnlessRoute:output caller:@"followRouteChange()"];
++    } else if (deviceChange && output == nil && flag == 1) {
++        // --- an output outside the four routes (HDMI, line out, a display) took the call from a
++        // --- forced speaker: iOS dropped the override for it. Keeping flag 1 would put the speaker
++        // --- back over it at the next re-apply (a category change, a media services reset).
++        flag = 0;
 +    } else if (deviceChange) {
 +        // --- a device left, and iOS chose what follows from the flag (the media's default
 +        // --- after a device, the receiver after "speaker off"). Nothing to follow.
@@ -629,8 +634,8 @@ index 7c54f6e..124e78b 100644
 +/**
 + * An output-only device (mic-less headphones, A2DP) has no input to find it by, and only a
 + * forced speaker can hide it. Looks under the override, putting it back if the device isn't there.
-+ * Only while the speaker has the call (`route`): the flag can outlive the override (a device change
-+ * to HDMI or AirPlay keeps flag 1), and putting the override back then would move the call.
++ * Only while the speaker has the call (`route`): the flag can outlive the override (a forced
++ * speaker set while HDMI or AirPlay had the call), and putting the override back then would move it.
 + */
 +- (BOOL)isOutputUnderSpeakerOverride:(NSString *)audioRoute route:(AVAudioSessionRouteDescription *)route
 +{
@@ -787,7 +792,7 @@ index 7c54f6e..124e78b 100644
  }
  
  RCT_EXPORT_METHOD(start:(NSString *)mediaType
-@@ -140,7 +719,11 @@ - (void)dealloc
+@@ -140,7 +724,11 @@ - (void)dealloc
      }
      NSLog(@"RNInCallManager.start() start InCallManager. media=%@, type=%@, mode=%@", _media, _media, _incallAudioMode);
      [self storeOriginalAudioSetup];
@@ -799,7 +804,7 @@ index 7c54f6e..124e78b 100644
      [self startAudioSessionNotification];
      [self audioSessionSetCategory:_incallAudioCategory
                            options:0
-@@ -150,6 +733,17 @@ - (void)dealloc
+@@ -150,6 +738,17 @@ - (void)dealloc
      [self audioSessionSetActive:YES
                          options:0
                       callerMemo:NSStringFromSelector(_cmd)];
@@ -817,7 +822,7 @@ index 7c54f6e..124e78b 100644
  
      if (ringbackUriType.length > 0) {
          NSLog(@"RNInCallManager.start() play ringback first. type=%@", ringbackUriType);
-@@ -178,20 +772,46 @@ - (void)dealloc
+@@ -178,20 +777,46 @@ - (void)dealloc
          return;
      } else {
          NSLog(@"RNInCallManager.stop(): stop InCallManager");
@@ -865,7 +870,7 @@ index 7c54f6e..124e78b 100644
  RCT_EXPORT_METHOD(turnScreenOn)
  {
      NSLog(@"RNInCallManager.turnScreenOn(): ios doesn't support turnScreenOn()");
-@@ -278,9 +898,9 @@ - (void)dealloc
+@@ -278,9 +903,9 @@ - (void)dealloc
  
  RCT_EXPORT_METHOD(setForceSpeakerphoneOn:(int)flag)
  {
@@ -877,7 +882,7 @@ index 7c54f6e..124e78b 100644
  }
  
  RCT_EXPORT_METHOD(setMicrophoneMute:(BOOL)enable)
-@@ -442,19 +1062,19 @@ - (void)updateAudioRoute
+@@ -442,19 +1067,19 @@ - (void)updateAudioRoute
      NSLog(@"RNInCallManager.updateAudioRoute(): [Enter] forceSpeakerOn flag=%d media=%@ category=%@ mode=%@", _forceSpeakerOn, _media, _audioSession.category, _audioSession.mode);
      //self.debugAudioSession()
  
@@ -901,7 +906,7 @@ index 7c54f6e..124e78b 100644
          if ([_media isEqualToString:@"video"]) {
              audioMode = AVAudioSessionModeVideoChat;
              [self stopProximitySensor];
-@@ -462,35 +1082,23 @@ - (void)updateAudioRoute
+@@ -462,35 +1087,23 @@ - (void)updateAudioRoute
      } else if (_forceSpeakerOn == -1) {
          // --- force off
          overrideAudioPort = AVAudioSessionPortOverrideNone;
@@ -941,7 +946,7 @@ index 7c54f6e..124e78b 100644
      if (![_audioSession.category isEqualToString:_incallAudioCategory]) {
          [self audioSessionSetCategory:_incallAudioCategory
                                options:0
-@@ -507,14 +1115,44 @@ - (void)updateAudioRoute
+@@ -507,14 +1120,44 @@ - (void)updateAudioRoute
      } else {
          NSLog(@"RNInCallManager.updateAudioRoute() did NOT change audio mode");
      }
@@ -987,7 +992,7 @@ index 7c54f6e..124e78b 100644
      if (currentRoute != nil) {
          NSArray<AVAudioSessionPortDescription *> *routes = [routeType isEqualToString:@"input"]
              ? currentRoute.inputs
-@@ -582,11 +1220,72 @@ - (void)stopBusytone
+@@ -582,11 +1225,72 @@ - (void)stopBusytone
  
  - (BOOL)isWiredHeadsetPluggedIn
  {
@@ -1065,7 +1070,7 @@ index 7c54f6e..124e78b 100644
  }
  
  - (void)audioSessionSetCategory:(NSString *)audioCategory
-@@ -662,8 +1361,9 @@ - (void)restoreOriginalAudioSetup
+@@ -662,8 +1366,9 @@ - (void)restoreOriginalAudioSetup
      }
  
      NSLog(@"RNInCallManager.startProximitySensor()");
@@ -1076,7 +1081,7 @@ index 7c54f6e..124e78b 100644
      });
  
      // --- in case it didn't deallocate when ViewDidUnload
-@@ -671,15 +1371,20 @@ - (void)restoreOriginalAudioSetup
+@@ -671,15 +1376,20 @@ - (void)restoreOriginalAudioSetup
                   name:UIDeviceProximityStateDidChangeNotification
                 object:nil];
  
@@ -1101,7 +1106,7 @@ index 7c54f6e..124e78b 100644
          }
      }];
  
-@@ -693,8 +1398,9 @@ - (void)restoreOriginalAudioSetup
+@@ -693,8 +1403,9 @@ - (void)restoreOriginalAudioSetup
      }
  
      NSLog(@"RNInCallManager.stopProximitySensor()");
@@ -1112,7 +1117,7 @@ index 7c54f6e..124e78b 100644
      });
  
      // --- remove all no matter what object
-@@ -710,6 +1416,7 @@ - (void)startAudioSessionNotification
+@@ -710,6 +1421,7 @@ - (void)startAudioSessionNotification
      NSLog(@"RNInCallManager.startAudioSessionNotification() starting...");
      [self startAudioSessionInterruptionNotification];
      [self startAudioSessionRouteChangeNotification];
@@ -1120,7 +1125,7 @@ index 7c54f6e..124e78b 100644
      [self startAudioSessionMediaServicesWereLostNotification];
      [self startAudioSessionMediaServicesWereResetNotification];
      [self startAudioSessionSilenceSecondaryAudioHintNotification];
-@@ -720,6 +1427,7 @@ - (void)stopAudioSessionNotification
+@@ -720,6 +1432,7 @@ - (void)stopAudioSessionNotification
      NSLog(@"RNInCallManager.startAudioSessionNotification() stopping...");
      [self stopAudioSessionInterruptionNotification];
      [self stopAudioSessionRouteChangeNotification];
@@ -1128,7 +1133,7 @@ index 7c54f6e..124e78b 100644
      [self stopAudioSessionMediaServicesWereLostNotification];
      [self stopAudioSessionMediaServicesWereResetNotification];
      [self stopAudioSessionSilenceSecondaryAudioHintNotification];
-@@ -737,6 +1445,8 @@ - (void)startAudioSessionInterruptionNotification
+@@ -737,6 +1450,8 @@ - (void)startAudioSessionInterruptionNotification
                   name:AVAudioSessionInterruptionNotification
                 object:nil];
  
@@ -1137,7 +1142,7 @@ index 7c54f6e..124e78b 100644
      _audioSessionInterruptionObserver = [self startObserve:AVAudioSessionInterruptionNotification
                                                      object:nil
                                                       queue:nil
-@@ -748,14 +1458,27 @@ - (void)startAudioSessionInterruptionNotification
+@@ -748,14 +1463,27 @@ - (void)startAudioSessionInterruptionNotification
  
          //NSUInteger rawValue = notification.userInfo[AVAudioSessionInterruptionTypeKey].unsignedIntegerValue;
          NSNumber *interruptType = [notification.userInfo objectForKey:@"AVAudioSessionInterruptionTypeKey"];
@@ -1166,7 +1171,7 @@ index 7c54f6e..124e78b 100644
      }];
  
      _isAudioSessionInterruptionRegistered = YES;
-@@ -787,89 +1510,140 @@ - (void)startAudioSessionRouteChangeNotification
+@@ -787,89 +1515,140 @@ - (void)startAudioSessionRouteChangeNotification
                       name: AVAudioSessionRouteChangeNotification
                     object: nil];
  
@@ -1378,7 +1383,7 @@ index 7c54f6e..124e78b 100644
  - (void)stopAudioSessionRouteChangeNotification
  {
      if (!_isAudioSessionRouteChangeRegistered) {
-@@ -884,6 +1658,61 @@ - (void)stopAudioSessionRouteChangeNotification
+@@ -884,6 +1663,61 @@ - (void)stopAudioSessionRouteChangeNotification
      _isAudioSessionRouteChangeRegistered = NO;
  }
  
@@ -1440,7 +1445,7 @@ index 7c54f6e..124e78b 100644
  - (void)startAudioSessionMediaServicesWereLostNotification
  {
      if (_isAudioSessionMediaServicesWereLostRegistered) {
-@@ -937,17 +1766,109 @@ - (void)startAudioSessionMediaServicesWereResetNotification
+@@ -937,17 +1771,109 @@ - (void)startAudioSessionMediaServicesWereResetNotification
                   name:AVAudioSessionMediaServicesWereResetNotification
                 object:nil];
  
@@ -1550,7 +1555,7 @@ index 7c54f6e..124e78b 100644
  - (void)stopAudioSessionMediaServicesWereResetNotification
  {
      if (!_isAudioSessionMediaServicesWereResetRegistered) {
-@@ -1188,7 +2109,10 @@ - (void)audioPlayerDidFinishPlaying:(AVAudioPlayer *)player
+@@ -1188,7 +2114,10 @@ - (void)audioPlayerDidFinishPlaying:(AVAudioPlayer *)player
              || [filename isEqualToString:_defaultBusytoneUri.URLByDeletingPathExtension.lastPathComponent]) {
          //[self stopBusytone];
          NSLog(@"RNInCallManager.audioPlayerDidFinishPlaying(): busytone finished, invoke stop()");
