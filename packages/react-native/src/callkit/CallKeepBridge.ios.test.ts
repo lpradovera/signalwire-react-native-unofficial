@@ -10,7 +10,10 @@ import { Subject } from 'rxjs';
 import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
 import { CallKeepBridge } from './CallKeepBridge';
 
-const nativeModules: { SignalWireVoipPush?: Record<string, unknown> } = {};
+const nativeModules: {
+  SignalWireVoipPush?: Record<string, unknown>;
+  RNCallKeep?: Record<string, unknown>;
+} = { RNCallKeep: { setup: () => undefined } };
 jest.mock('react-native', () => ({
   Platform: { OS: 'ios' },
   get NativeModules() {

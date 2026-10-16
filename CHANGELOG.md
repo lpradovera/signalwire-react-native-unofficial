@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### CallKit setup
+
+- Overlapping `setup()` calls share one handshake. The guard was read before
+  the first await and set after it, so two calls in one run (two effects in
+  one commit, StrictMode) both registered every listener, and each answer,
+  DTMF digit and hold was delivered twice. A failed setup can be retried.
+- Every CallKit listener is registered when the bridge is created, not in
+  `setup()`. On iOS the first listener starts callkeep's observing, after
+  which callkeep sends actions live instead of buffering them, so an answer or
+  an end made between `getCallKit()` and a later `setup()` was lost.
+- `setup()` checks callkeep's native module rather than its JS wrapper, which
+  always has `setup`: an installed but unlinked callkeep now throws
+  `MissingPeerDependencyError` instead of a TypeError, here and later from
+  every outbound call.
+
 ### CallKit audio belongs to its call
 
 - The audio session belongs to the call it was started for. Another call

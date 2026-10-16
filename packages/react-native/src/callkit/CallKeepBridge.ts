@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { NativeModules, Platform } from 'react-native';
 import RNCallKeep, { CONSTANTS } from 'react-native-callkeep';
 import { EMPTY, of, Subject, switchMap, takeUntil } from 'rxjs';
 
@@ -83,6 +83,8 @@ export class CallKeepBridge {
   private readonly destroyed$ = new Subject<void>();
   private supportsVideo = false;
   private isSetup = false;
+  /** The one setup() in flight or done; see {@link setup}. */
+  private setupPromise: Promise<void> | null = null;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private releaseAudioGate: (() => void) | null = null;
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
@@ -119,12 +121,15 @@ export class CallKeepBridge {
       .pipe(takeUntil(this.destroyed$))
       .subscribe(() => this.releaseAudioIfOwnerEnded());
 
-    // Registered here, not in setup(): callkeep flushes the events it buffered
-    // while JavaScript was starting as soon as the bundle finishes loading,
-    // which can be before an app gets around to calling setup(). A listener
-    // added later receives nothing, and on a cold start that is every event
-    // the call has had so far — the incoming-call display and the user's
-    // answer both happen before React mounts.
+    // Every listener is registered here, not in setup(): callkeep flushes the
+    // events it buffered while JavaScript was starting as soon as the bundle
+    // finishes loading, which can be before an app gets around to calling
+    // setup(). A listener added later receives nothing, and on a cold start
+    // that is every event the call has had so far — the incoming-call display
+    // and the user's answer both happen before React mounts. And on iOS the
+    // first listener starts callkeep's observing, after which it sends every
+    // CallKit action live instead of buffering it: an answer or an end made
+    // between this constructor and a later setup() reached no listener.
     // Guarded: callkeep is an optional peer, and this runs in the constructor
     // — before setup() has had a chance to assert it is installed. An app that
     // only wants the SDK, with no native call UI, must not crash on import.
@@ -132,17 +137,32 @@ export class CallKeepBridge {
       RNCallKeep.addEventListener('didLoadWithEvents', (events) =>
         this.handleLoadedEvents(events as LoadedEvent[])
       );
+      this.registerNativeListeners();
     }
   }
 
-  /** Performs the native handshake. Call once, from the app entry file. */
-  async setup(options: CallKitSetupOptions): Promise<void> {
-    if (this.isSetup) {
-      return;
-    }
+  /**
+   * Performs the native handshake. Call once, from the app entry file.
+   *
+   * Overlapping calls share one handshake: the guard used to be read before
+   * the await and set after it, so two calls in one run both went through.
+   * A failed setup can be retried.
+   */
+  setup(options: CallKitSetupOptions): Promise<void> {
+    this.setupPromise ??= this.performSetup(options).catch((error: unknown) => {
+      this.setupPromise = null;
+      throw error;
+    });
+    return this.setupPromise;
+  }
 
+  private async performSetup(options: CallKitSetupOptions): Promise<void> {
+    // The native module, not the JS wrapper: callkeep's default export is a
+    // class instance that always has `setup`, so an installed but unlinked
+    // callkeep passed the wrapper check and failed later with a TypeError,
+    // in setup() and in every startCall the observer made.
     assertPeerModule(
-      RNCallKeep as unknown as object | undefined,
+      (NativeModules as Record<string, object | undefined> | undefined)?.RNCallKeep,
       'react-native-callkeep',
       'native call UI',
       'setup'
@@ -188,7 +208,6 @@ export class CallKeepBridge {
     } as never);
 
     RNCallKeep.setAvailable(true);
-    this.registerNativeListeners();
     this.isSetup = true;
     await this.adoptPendingNativeCall();
     logger.debug('CallKit ready');
@@ -385,6 +404,7 @@ export class CallKeepBridge {
     }
     this.registry.destroy();
     this.isSetup = false;
+    this.setupPromise = null;
   }
 
   // ---------------------------------------------------------------- internals
@@ -427,22 +447,8 @@ export class CallKeepBridge {
     }
 
     const { uuid, callId, handle, callerName, ...rest } = pending;
-    const data: Record<string, string> = {};
-    for (const [key, value] of Object.entries(rest)) {
-      if (typeof value === 'string') {
-        data[key] = value;
-      }
-    }
-
     logger.debug(`Adopting pending native call ${uuid} from the launch push`);
-    this.registry.adoptNativeEntry({
-      uuid,
-      callId: callId && callId.length > 0 ? callId : undefined,
-      from: handle ?? 'Unknown',
-      fromName: callerName ?? 'Incoming call',
-      data: Object.keys(data).length > 0 ? data : undefined
-    });
-    this.ensureTicking();
+    this.adoptPushed(uuid, callId, handle ?? 'Unknown', callerName ?? 'Incoming call', rest);
     await clearPendingVoipCall();
   }
 
@@ -491,29 +497,47 @@ export class CallKeepBridge {
   }
 
   private handleDidDisplayIncomingCall(event: DisplayEvent): void {
-    {
-      const { callUUID, handle, localizedCallerName, fromPushKit, payload } = event;
-        const fields = (payload ?? {}) as Record<string, unknown>;
-        if (fromPushKit !== '1') {
-          return;
-        }
-        const data: Record<string, string> = {};
-        for (const [key, value] of Object.entries(fields)) {
-          if (key !== 'callId' && typeof value === 'string') {
-            data[key] = value;
-          }
-        }
-        const callId = typeof fields.callId === 'string' ? fields.callId : undefined;
-        logger.debug(`Native push displayed ${callUUID}`);
-        this.registry.adoptNativeEntry({
-          uuid: callUUID,
-          callId: callId && callId.length > 0 ? callId : undefined,
-          from: handle,
-          fromName: localizedCallerName,
-          data: Object.keys(data).length > 0 ? data : undefined
-        });
-        this.ensureTicking();
+    const { callUUID, handle, localizedCallerName, fromPushKit, payload } = event;
+    if (fromPushKit !== '1') {
+      return;
     }
+    const { callId, ...fields } = (payload ?? {}) as Record<string, unknown>;
+    logger.debug(`Native push displayed ${callUUID}`);
+    this.adoptPushed(
+      callUUID,
+      typeof callId === 'string' ? callId : undefined,
+      handle,
+      localizedCallerName,
+      fields
+    );
+  }
+
+  /**
+   * Adopts a call the native side already displayed: from the launch push's
+   * cache or from callkeep's display event. The push's other string fields
+   * become the entry's data.
+   */
+  private adoptPushed(
+    uuid: string,
+    callId: string | undefined,
+    from: string,
+    fromName: string,
+    fields: Record<string, unknown>
+  ): void {
+    const data: Record<string, string> = {};
+    for (const [key, value] of Object.entries(fields)) {
+      if (typeof value === 'string') {
+        data[key] = value;
+      }
+    }
+    this.registry.adoptNativeEntry({
+      uuid,
+      callId: callId && callId.length > 0 ? callId : undefined,
+      from,
+      fromName,
+      data: Object.keys(data).length > 0 ? data : undefined
+    });
+    this.ensureTicking();
   }
 
   private registerRemainingListeners(): void {
