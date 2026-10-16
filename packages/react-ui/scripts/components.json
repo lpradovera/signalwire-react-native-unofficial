@@ -3,62 +3,110 @@
     "tag": "sw-call-media",
     "className": "SwCallMedia",
     "name": "CallMedia",
+    "registers": [],
     "events": {}
   },
   {
     "tag": "sw-self-media",
     "className": "SwSelfMedia",
     "name": "SelfMedia",
+    "registers": [],
     "events": {}
   },
   {
     "tag": "sw-local-camera",
     "className": "SwLocalCamera",
     "name": "LocalCamera",
+    "registers": [
+      "sw-ui-icon"
+    ],
     "events": {}
   },
   {
     "tag": "sw-call-status",
     "className": "SwCallStatus",
     "name": "CallStatus",
+    "registers": [],
     "events": {}
   },
   {
     "tag": "sw-call-provider",
     "className": "SwCallProvider",
     "name": "CallProvider",
+    "registers": [],
     "events": {}
   },
   {
     "tag": "sw-call-dialpad",
     "className": "SwCallDialpad",
     "name": "CallDialpad",
-    "events": {}
+    "registers": [
+      "sw-ui-dialpad",
+      "sw-ui-icon"
+    ],
+    "events": {
+      "onDigitPress": "sw-digit-press",
+      "onDial": "sw-dial"
+    }
   },
   {
     "tag": "sw-audio-level",
     "className": "SwAudioLevel",
     "name": "AudioLevel",
+    "registers": [],
     "events": {}
   },
   {
     "tag": "sw-click-to-call",
     "className": "SwClickToCall",
     "name": "ClickToCall",
-    "events": {}
+    "registers": [
+      "sw-call-widget",
+      "sw-call-controls",
+      "sw-call-media",
+      "sw-local-camera",
+      "sw-ui-background",
+      "sw-ui-call-layout",
+      "sw-ui-content-drawer",
+      "sw-ui-control-bar",
+      "sw-ui-dropup",
+      "sw-ui-icon",
+      "sw-ui-modal",
+      "sw-ui-responsive-container",
+      "sw-ui-split-button",
+      "sw-ui-transcript-view"
+    ],
+    "events": {
+      "onCallEnded": "sw-call-ended",
+      "onCallHangup": {
+        "event": "sw-call-hangup",
+        "from": "sw-call-controls"
+      },
+      "onDial": "sw-dial"
+    }
   },
   {
     "tag": "sw-call-controls",
     "className": "SwCallControls",
     "name": "CallControls",
+    "registers": [
+      "sw-ui-control-bar",
+      "sw-ui-dropup",
+      "sw-ui-icon",
+      "sw-ui-split-button"
+    ],
     "events": {
-      "onCallHangup": "sw-call-hangup"
+      "onCallHangup": {
+        "event": "sw-call-hangup",
+        "from": "sw-call-controls"
+      }
     }
   },
   {
     "tag": "sw-participants",
     "className": "SwParticipants",
     "name": "Participants",
+    "registers": [],
     "events": {
       "onParticipantMuteAudio": "sw-participant-mute-audio",
       "onParticipantMuteVideo": "sw-participant-mute-video",
@@ -69,6 +117,9 @@
     "tag": "sw-participant-controls",
     "className": "SwParticipantControls",
     "name": "ParticipantControls",
+    "registers": [
+      "sw-ui-icon"
+    ],
     "events": {
       "onParticipantPinToggle": "sw-participant-pin-toggle",
       "onParticipantVolumeChange": "sw-participant-volume-change"
@@ -78,6 +129,9 @@
     "tag": "sw-directory",
     "className": "SwDirectory",
     "name": "Directory",
+    "registers": [
+      "sw-ui-icon"
+    ],
     "events": {
       "onAddressSelect": "sw-address-select",
       "onDial": "sw-dial"
@@ -87,6 +141,7 @@
     "tag": "sw-device-selector",
     "className": "SwDeviceSelector",
     "name": "DeviceSelector",
+    "module": "@signalwire/web-components",
     "events": {
       "onDeviceChange": "sw-device-change"
     }
@@ -95,9 +150,27 @@
     "tag": "sw-call-widget",
     "className": "SwCallWidget",
     "name": "CallWidget",
+    "registers": [
+      "sw-call-controls",
+      "sw-call-media",
+      "sw-local-camera",
+      "sw-ui-call-layout",
+      "sw-ui-content-drawer",
+      "sw-ui-control-bar",
+      "sw-ui-dropup",
+      "sw-ui-icon",
+      "sw-ui-modal",
+      "sw-ui-responsive-container",
+      "sw-ui-split-button",
+      "sw-ui-transcript-view"
+    ],
     "events": {
+      "onAddressEvent": "signalwire-address:event",
       "onCallEnded": "sw-call-ended",
-      "onCallHangup": "sw-call-hangup",
+      "onCallHangup": {
+        "event": "sw-call-hangup",
+        "from": "sw-call-controls"
+      },
       "onContentDrawerClose": "sw-content-drawer-close",
       "onDial": "sw-dial",
       "onDisplayContent": "sw-display-content",
