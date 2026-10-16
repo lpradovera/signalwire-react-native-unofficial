@@ -174,9 +174,10 @@ export class AudioRouteController {
   private beforeSpeaker: RouteState = DEFAULT_ROUTE;
   private session: Session | null = null;
   /**
-   * The user's last route action before start(), applied when it runs: a
-   * choice, or speaker-off back to the default (not a choice, but it keeps a
-   * video call off the speaker).
+   * The user's last route action not yet applied, because it came before
+   * the session or before its first status: a choice, or speaker-off back to
+   * the default (not a choice, but it keeps a video call off the speaker).
+   * Applied by the session's first status.
    */
   private early: RouteState | null = null;
   /** A call that will start a session is live; see {@link expectSession}. */
