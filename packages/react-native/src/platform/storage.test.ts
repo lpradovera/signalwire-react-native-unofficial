@@ -28,10 +28,47 @@ describe('ReactNativeStorage', () => {
 
     expect(await storage.getItem('token', 'local')).toBe('A');
     expect(await storage.getItem('token', 'session')).toBe('B');
-    expect(Object.keys(backing.dump()).sort()).toEqual([
-      'sw-rn:local:token',
-      'sw-rn:session:token'
-    ]);
+    expect(Object.keys(backing.dump())).toEqual(['sw-rn:local:token']);
+  });
+
+  it('keeps session-scoped values in memory, never on disk', async () => {
+    // The SDK keeps its bearer secrets in session scope (the cached SAT,
+    // the resume authorization_state). Written to AsyncStorage they sat in
+    // plaintext in the app sandbox (and Android Auto Backup) until the next
+    // cold start's purge, although that purge already made a session value
+    // live exactly as long as the process.
+    const backing = createMemoryStorage();
+    const setItem = jest.spyOn(backing, 'setItem');
+    const storage = new ReactNativeStorage(backing);
+
+    await storage.setItem('sw:cached_credential', '{"token":"sat"}');
+
+    expect(await storage.getItem('sw:cached_credential')).toBe('{"token":"sat"}');
+    expect(setItem).not.toHaveBeenCalled();
+    expect(backing.dump()).toEqual({});
+  });
+
+  it('clears session-scoped values', async () => {
+    const storage = new ReactNativeStorage(createMemoryStorage());
+    await storage.setItem('a', '1', 'session');
+    await storage.setItem('b', '2', 'local');
+
+    await storage.clear('session');
+
+    expect(await storage.getItem('a', 'session')).toBeNull();
+    expect(await storage.getItem('b', 'local')).toBe('2');
+  });
+
+  it('serves session scope even when the backing store fails', async () => {
+    const backing = createMemoryStorage();
+    backing.setItem = async () => {
+      throw new Error('disk full');
+    };
+    const storage = new ReactNativeStorage(backing);
+
+    await storage.setItem('token', 'A', 'session');
+
+    expect(await storage.getItem('token', 'session')).toBe('A');
   });
 
   it('purges leftover session keys once per process on construction', async () => {

@@ -1,7 +1,8 @@
 import React from 'react';
-import { RTCView } from 'react-native-webrtc';
 
 import { useCall } from '@signalwire/react';
+
+import { loadReactNativeWebRTC } from '../platform/reactNativeWebRTC';
 
 import type { Call } from '@signalwire/js';
 import type { StyleProp, ViewStyle } from 'react-native';
@@ -47,6 +48,8 @@ export function SignalWireVideoView({
     return null;
   }
 
+  // Loaded here, not imported: see loadReactNativeWebRTC.
+  const { RTCView } = loadReactNativeWebRTC('video rendering');
   return (
     <RTCView
       testID="signalwire-video"
