@@ -684,3 +684,67 @@ describe('CallKeepBridge — binding a bridge call twice', () => {
     expect(RNCallKeep.reportEndCallWithUUID).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('CallKeepBridge on iOS — a call CallKit refused to show', () => {
+  let bridge: CallKeepBridge;
+
+  beforeEach(async () => {
+    resetAudioRouteControllerForTesting();
+    jest.clearAllMocks();
+    callkeep.__reset();
+    bridge = new CallKeepBridge();
+    await bridge.setup({ appName: 'Demo' });
+  });
+
+  afterEach(() => bridge.destroy());
+
+  function refuse(callUUID: string, fromPushKit: '0' | '1', errorCode = 'FilteredByDoNotDisturb') {
+    callkeep.__emit('didDisplayIncomingCall', {
+      error: 'The operation couldn’t be completed.',
+      errorCode,
+      callUUID,
+      handle: '+1555',
+      localizedCallerName: 'Ada',
+      fromPushKit,
+      payload: fromPushKit === '1' ? { callId: 'c-refused' } : ''
+    });
+  }
+
+  it('answers and declines in the app through the SDK, not CallKit, which has no such call', () => {
+    // A Focus mode that does not allow the caller: CallKit refuses the
+    // display, so an answer or decline requested from CallKit fails (only
+    // NSLogged) and the in-app Accept and Decline did nothing.
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient({ session: { incomingCalls$: incoming$ } } as never);
+    const call = createCall('c1');
+    incoming$.next([call]);
+    const uuid = bridge.registry.uuidForCall(call as never)!;
+
+    refuse(uuid, '0');
+
+    expect(bridge.answerIncomingFromApp(call as never)).toBe(false);
+    expect(bridge.rejectIncomingFromApp(call as never)).toBe(false);
+    expect(RNCallKeep.answerIncomingCall).not.toHaveBeenCalled();
+    expect(RNCallKeep.rejectCall).not.toHaveBeenCalled();
+  });
+
+  it('does not adopt a PushKit call CallKit refused as a ringing push', () => {
+    refuse('pushed-1', '1');
+
+    expect(bridge.registry.entryForUuid('pushed-1')).toBeUndefined();
+  });
+
+  it('ends a push entry the app reported when CallKit refuses it', () => {
+    const uuid = bridge.reportIncomingPush({ callId: 'c2' });
+
+    refuse(uuid, '0');
+
+    expect(bridge.registry.isLive(uuid)).toBe(false);
+  });
+
+  it('treats an already-displayed uuid as shown, not refused', () => {
+    refuse('pushed-2', '1', 'CallUUIDAlreadyExists');
+
+    expect(bridge.registry.entryForUuid('pushed-2')?.state).toBe('pending-push');
+  });
+});
