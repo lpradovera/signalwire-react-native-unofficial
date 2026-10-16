@@ -8,6 +8,7 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "bundle-check": "expo export --platform ios --platform android --output-dir ./.expo-export-check",
+    "test": "node --import tsx --test $(find src plugins -name '*.test.*')",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
@@ -39,6 +40,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.10",
+    "tsx": "^4.19.2",
     "typescript": "^5.9.3"
   }
 }
