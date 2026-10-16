@@ -1504,12 +1504,16 @@ export class CallKeepBridge {
     const heldFor = this.audioUuid;
     this.clearHandoverTimer();
     this.audioUuid = uuid;
+    // On Android the call's Telecom connection routes it, unless Telecom
+    // refused the call and there is none. A session handed over with the
+    // same media follows the new call's connection.
+    const telecomCall = this.refused.has(uuid) ? undefined : uuid;
     this.withAudioRoutes('warn', (controller) => {
       if (heldFor !== null && heldFor !== uuid && this.audioMedia !== media) {
         logger.debug(`Session of ${heldFor} was started for ${String(this.audioMedia)}; restarting it for ${uuid} (${media})`);
         controller.stop();
       }
-      controller.start(media);
+      controller.start(media, telecomCall);
       this.audioMedia = media;
     });
   }

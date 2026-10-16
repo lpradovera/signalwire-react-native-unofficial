@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### Android call audio is routed by Telecom
+
+Needs a native rebuild for the routes Telecom offers (the package's Android
+library reads them); routing through Telecom works without it.
+
+- A call the CallKit bridge tracks on Android is routed by Telecom, which
+  holds it in callkeep's self-managed ConnectionService: `setRoute` and
+  `setSpeakerOn` ask Telecom (callkeep's `setAudioRoute`), and `route`
+  follows Telecom's `didChangeAudioRoute` (the system output switcher,
+  Bluetooth connecting or dropping, a wired headset). incall-manager drove
+  the route through AudioManager instead, so Telecom and incall-manager
+  disagreed (Telecom kept EARPIECE while incall-manager forced the speaker),
+  and nothing listened to Telecom's changes.
+- incall-manager's session isn't started for such a call (its `start()`
+  routes, whatever its `auto` flag); the package uses its screen-on and
+  proximity calls instead. Telecom sets the audio mode and audio focus.
+- Speaker off returns to the call's earlier route: the receiver, a wired
+  headset or Bluetooth. A route Telecom doesn't offer goes back with a
+  warning, and so does one Telecom doesn't move the call to within 2.5 s.
+- A video call that Telecom starts on the receiver goes to the speaker, as
+  incall-manager's start did.
+- `AudioRouteController.start(media, call?)`: the CallKit bridge passes the
+  call's uuid (internal). Without it, and for a call Telecom refused,
+  incall-manager routes as before.
+- New native module `SignalWireCallAudio` in the package's Android library:
+  reads a callkeep call's `CallAudioState` (route, the routes Telecom offers,
+  the Bluetooth device's name).
+
+
 ### Calling back from Recents and Siri
 
 - `CallKitSetupOptions.includesCallsInRecents` (iOS, default `true`, which is

@@ -12,9 +12,17 @@ import {
   parseAudioDeviceStatus,
   sessionAudioDevices$
 } from './nativeAudioRoutes';
+import {
+  hasTelecomRouting,
+  readTelecomAudio,
+  requestTelecomRoute,
+  startTelecomCallScreen,
+  telecomAudioReports$
+} from './telecomAudioRoutes';
 
 import type { Observable, Subscription } from 'rxjs';
 import type { AudioDeviceName, AudioDeviceStatus } from './nativeAudioRoutes';
+import type { TelecomAudioStatus } from './telecomAudioRoutes';
 
 /**
  * Where a call's audio plays: one route per incall-manager device. A wired or
@@ -36,6 +44,13 @@ const DEFAULT_ROUTE: RouteState = { route: 'earpiece', chosen: false };
  * (its own start sends one) before applying a held choice anyway.
  */
 const FIRST_REPORT_TIMEOUT_MS = 1000;
+
+/**
+ * How long a route request to Telecom waits for Telecom to report the route
+ * before the controller takes what Telecom has (Bluetooth SCO can take a
+ * second or two to connect).
+ */
+const TELECOM_ANSWER_TIMEOUT_MS = 2500;
 
 /**
  * incall-manager's starting route for the media when nothing else is
@@ -122,6 +137,26 @@ interface Session {
   pending: number;
   /** The latest report that arrived while a write was pending. */
   deferred: AudioDeviceStatus | null;
+  /**
+   * Android: the callkeep call whose Telecom connection routes the audio, or
+   * `null` (incall-manager routes it). See telecomAudioRoutes.
+   */
+  telecom: string | null;
+  /** Whether `available` is known: false only for Telecom without the package's reader. */
+  availableKnown: boolean;
+  /** Telecom: ends the screen duties (kept on, proximity). */
+  screen: (() => void) | null;
+  /** Telecom: the route request awaiting Telecom's report of it. */
+  request: TelecomRequest | null;
+}
+
+/** A route asked of Telecom, done when Telecom reports that route or its timer runs out. */
+interface TelecomRequest {
+  readonly write: number;
+  readonly device: AudioDeviceName;
+  readonly before: Snapshot;
+  readonly onRefused: (() => void) | undefined;
+  readonly timer: ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -144,9 +179,19 @@ interface Session {
  *   or car), and `route` is what was asked for, starting from the media's
  *   default (`'speaker'` for video), which iOS doesn't report overriding.
  *
- * Android uses incall-manager's routes, and `route` follows its device
- * reports; a choice it can't make (Bluetooth or a headset with no such
- * device) goes back, as on iOS.
+ * On Android, a call the CallKit bridge holds in callkeep's self-managed
+ * ConnectionService is routed by Telecom: each route (and speaker on/off) is
+ * asked of Telecom (`Connection.setAudioRoute`, through callkeep), `route`
+ * follows Telecom's reports (the system's output switcher, a headset or car
+ * connecting or dropping), and a route Telecom doesn't offer the call, or
+ * doesn't move it to, goes back. incall-manager's session isn't started for
+ * such a call: it would route the call through AudioManager behind Telecom.
+ * Its screen duties (kept on, blanked at the ear on the receiver) still run.
+ * See telecomAudioRoutes.
+ *
+ * Any other Android call uses incall-manager's routes, and `route` follows
+ * its device reports; a choice it can't make (Bluetooth or a headset with no
+ * such device) goes back, as on iOS.
  *
  * Where incall-manager reports (iOS routes, Android), a route choice made
  * after `start()` but before the session's first status is held until it
@@ -240,23 +285,37 @@ export class AudioRouteController {
    * Begins the native audio session. incall-manager's own start puts a video
    * call on the speaker when nothing else is connected and a voice call on
    * the receiver, or a connected headset or car; nothing is forced over that.
+   *
+   * @param call - Internal, from the CallKit bridge: the callkeep uuid of the
+   *   call this session is for. On Android that call's Telecom connection then
+   *   routes the audio instead of incall-manager (see the class notes), and a
+   *   later start for another call while the session runs follows that call.
+   *   Without it (an app that starts the session itself) incall-manager routes.
    */
-  start(media: 'audio' | 'video'): void {
+  start(media: 'audio' | 'video', call?: string): void {
     // Idempotent: an answered inbound call starts audio on the native answer
     // and again when it reaches `connected`. Restarting would re-run
     // InCallManager and force the route back to its default, discarding a
     // speaker toggle the user had already made.
     if (this.session) {
-      return;
-    }
-    try {
-      InCallManager.start({ media });
-      logger.debug(`Audio session started (${media})`);
-    } catch (error) {
-      logger.warn('Failed to start the audio session:', error);
+      if (call && this.session.telecom && this.session.telecom.toLowerCase() !== call.toLowerCase()) {
+        this.followTelecomCall(this.session, call);
+      }
       return;
     }
     const android = Platform.OS === 'android';
+    const telecom = android && call && hasTelecomRouting() ? call : null;
+    if (telecom) {
+      logger.debug(`Audio session for ${telecom} (${media}) is routed by Telecom`);
+    } else {
+      try {
+        InCallManager.start({ media });
+        logger.debug(`Audio session started (${media})`);
+      } catch (error) {
+        logger.warn('Failed to start the audio session:', error);
+        return;
+      }
+    }
     const iosRoutes = Platform.OS === 'ios' && hasIosAudioRoutes();
     const session: Session = {
       media,
@@ -267,7 +326,11 @@ export class AudioRouteController {
       readyTimer: null,
       available: [],
       pending: 0,
-      deferred: null
+      deferred: null,
+      telecom,
+      availableKnown: true,
+      screen: null,
+      request: null
     };
     this.session = session;
     this.chosen = false;
@@ -275,7 +338,11 @@ export class AudioRouteController {
     if (!this.early) {
       this._route$.next(mediaDefault(media));
     }
-    if (iosRoutes) {
+    if (telecom) {
+      session.screen = startTelecomCallScreen(this._route$);
+      session.readyTimer = setTimeout(() => this.report(session, null), FIRST_REPORT_TIMEOUT_MS);
+      this.followTelecomCall(session, telecom);
+    } else if (iosRoutes) {
       // Its first value is a status read after incall-manager's start (or
       // null if that read failed), so it describes this call's session.
       session.devices = sessionAudioDevices$().subscribe((status) => this.report(session, status));
@@ -287,6 +354,47 @@ export class AudioRouteController {
     } else {
       this.begin(session, null);
     }
+  }
+
+  /**
+   * Follows the Telecom call `uuid`: its reports, and its state read now (a
+   * state Telecom set before this subscribed is never reported again). A
+   * second call taking the session over (a call waiting behind it answered)
+   * is followed in its place.
+   */
+  private followTelecomCall(session: Session, uuid: string): void {
+    session.devices?.unsubscribe();
+    this.cancelTelecomRequest(session);
+    session.telecom = uuid;
+    session.devices = telecomAudioReports$(uuid).subscribe((status) => this.telecomReport(session, status));
+    readTelecomAudio(uuid).then(
+      (status) => {
+        if (status?.selected && session.telecom === uuid) {
+          this.telecomReport(session, status);
+        }
+      },
+      (error: unknown) => logger.warn('Failed to read the call audio state:', error)
+    );
+  }
+
+  /** A Telecom status for the session: ends the request it answers, or is taken like any report. */
+  private telecomReport(session: Session, telecom: TelecomAudioStatus): void {
+    if (this.session !== session) {
+      return;
+    }
+    // Without the reader only the route is known: what Telecom offers stays as it was.
+    const status: AudioDeviceStatus = telecom.availableKnown
+      ? telecom
+      : { ...telecom, available: session.available };
+    session.availableKnown = telecom.availableKnown;
+    const request = session.request;
+    if (request && session.ready && status.selected === request.device) {
+      this.endTelecomRequest(session, request);
+      this.confirm(request.write);
+      this.settle(session, status);
+      return;
+    }
+    this.report(session, status);
   }
 
   /** A status for the session (`null`: none came, or its read failed). */
@@ -317,6 +425,11 @@ export class AudioRouteController {
     if (!held) {
       if (status) {
         this.mirror(session, status);
+      }
+      // incall-manager's own start puts a video call on the speaker when
+      // nothing else is connected; Telecom may keep it on the receiver.
+      if (session.telecom && session.media === 'video' && (status?.selected ?? 'EARPIECE') === 'EARPIECE') {
+        this.select('speaker', false);
       }
       return;
     }
@@ -357,8 +470,13 @@ export class AudioRouteController {
     if (session?.readyTimer) {
       clearTimeout(session.readyTimer);
     }
+    if (session) {
+      this.cancelTelecomRequest(session);
+      session.screen?.();
+      session.screen = null;
+    }
     try {
-      if (session) {
+      if (session && !session.telecom) {
         InCallManager.stop();
       }
     } catch (error) {
@@ -414,7 +532,7 @@ export class AudioRouteController {
   /** Off the speaker, back to {@link beforeSpeaker} (or `base`'s) if that device is still there. */
   private speakerOff(base?: Snapshot): void {
     const session = this.session;
-    const known = session !== null && session.reports && session.ready;
+    const known = session !== null && session.reports && session.ready && session.availableKnown;
     const present = (device: AudioDeviceName): boolean => !known || session.available.includes(device);
     const back = base ? base.beforeSpeaker : this.beforeSpeaker;
     const target = present(DEVICE_FOR_ROUTE[back.route]) ? back : DEFAULT_ROUTE;
@@ -487,6 +605,10 @@ export class AudioRouteController {
     before: Snapshot,
     onRefused: (() => void) | undefined
   ): void {
+    if (session.telecom) {
+      this.askTelecom(session, session.telecom, route, before, onRefused);
+      return;
+    }
     const android = Platform.OS === 'android';
     if (chosen && (session.iosRoutes || (android && (route === 'bluetooth' || route === 'headset')))) {
       this.choose(session, route, before, onRefused);
@@ -564,6 +686,86 @@ export class AudioRouteController {
         this.settle(session, null);
       }
     );
+  }
+
+  /**
+   * Asks Telecom for a route (speaker on and off included). A route Telecom
+   * doesn't offer the call goes back at once; otherwise the request waits for
+   * Telecom to report that route, holding back reports of any other (the
+   * route before the switch, re-sent), and if none comes in time the
+   * controller takes the route Telecom has, going back if it never moved.
+   */
+  private askTelecom(
+    session: Session,
+    uuid: string,
+    route: AudioRoute,
+    before: Snapshot,
+    onRefused: (() => void) | undefined
+  ): void {
+    const device = DEVICE_FOR_ROUTE[route];
+    this.cancelTelecomRequest(session);
+    this.writes += 1;
+    const write = this.writes;
+    if (session.availableKnown && session.available.length > 0 && !session.available.includes(device)) {
+      logger.warn(
+        `Failed to apply audio route "${route}": Telecom offers this call ${session.available.join(', ')}`
+      );
+      this.refuse(session, write, before, onRefused);
+      return;
+    }
+    this.unconfirmed = before;
+    session.pending += 1;
+    const timer = setTimeout(() => this.telecomTimedOut(session, request), TELECOM_ANSWER_TIMEOUT_MS);
+    const request: TelecomRequest = { write, device, before, onRefused, timer };
+    session.request = request;
+    requestTelecomRoute(uuid, device);
+  }
+
+  /** Telecom hasn't reported the requested route: take what it has. */
+  private telecomTimedOut(session: Session, request: TelecomRequest): void {
+    if (session.request !== request || this.session !== session) {
+      return;
+    }
+    const finish = (status: AudioDeviceStatus | null): void => {
+      if (session.request !== request || this.session !== session) {
+        return;
+      }
+      this.endTelecomRequest(session, request);
+      session.pending -= 1;
+      const latest = status ?? session.deferred;
+      session.deferred = null;
+      if (latest?.selected === request.device) {
+        this.confirm(request.write);
+      } else {
+        logger.warn(`Telecom did not move the call to ${request.device}`);
+        this.refuse(session, request.write, request.before, request.onRefused);
+      }
+      if (latest && session.pending === 0) {
+        this.mirror(session, latest);
+      }
+    };
+    const uuid = session.telecom;
+    if (!uuid) {
+      finish(null);
+      return;
+    }
+    readTelecomAudio(uuid).then(finish, () => finish(null));
+  }
+
+  /** Ends a request: its timer. Its hold on reports (`pending`) is the caller's to release. */
+  private endTelecomRequest(session: Session, request: TelecomRequest): void {
+    clearTimeout(request.timer);
+    if (session.request === request) {
+      session.request = null;
+    }
+  }
+
+  /** A newer request (or the end of the call) replaces the one in flight. */
+  private cancelTelecomRequest(session: Session): void {
+    if (session.request) {
+      this.endTelecomRequest(session, session.request);
+      session.pending -= 1;
+    }
   }
 
   /** The latest choice was taken: nothing in flight to go back from. */

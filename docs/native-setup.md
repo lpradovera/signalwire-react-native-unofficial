@@ -132,7 +132,8 @@ What the plugin applies (`src/plugin/withAndroidCallKit.ts`). For bare projects:
 ```
 
 The package's own Android library (the incoming-call notification, with
-`USE_FULL_SCREEN_INTENT`) is autolinked; its manifest merges into the app's.
+`USE_FULL_SCREEN_INTENT`, and the reader of a call's Telecom audio routes) is
+autolinked; its manifest merges into the app's.
 
 ## Android: waking on a data message
 
