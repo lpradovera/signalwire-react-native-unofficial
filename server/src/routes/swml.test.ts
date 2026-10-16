@@ -54,7 +54,7 @@ const post = (path: string, body: unknown): Promise<Response> =>
 
 before(async () => {
   await new Promise<void>((resolve) => {
-    server = app.listen(0, () => resolve());
+    server = app.listen(0, '127.0.0.1', () => resolve());
   });
   const address = server.address();
   base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
@@ -141,7 +141,7 @@ describe('POST /swml/park', () => {
       })
     });
     const routedServer = await new Promise<Server>((resolve) => {
-      const srv = routed.listen(0, () => resolve(srv));
+      const srv = routed.listen(0, '127.0.0.1', () => resolve(srv));
     });
     const addr = routedServer.address();
     const routedBase = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
@@ -327,7 +327,7 @@ describe('POST /swml/bridge/status', () => {
       })
     });
     const srv = await new Promise<Server>((resolve) => {
-      const s2 = withEnder.listen(0, () => resolve(s2));
+      const s2 = withEnder.listen(0, '127.0.0.1', () => resolve(s2));
     });
     const addr = srv.address();
     const base2 = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
@@ -359,7 +359,7 @@ describe('POST /swml/bridge/status', () => {
       })
     });
     const srv = await new Promise<Server>((resolve) => {
-      const s2 = withEnder.listen(0, () => resolve(s2));
+      const s2 = withEnder.listen(0, '127.0.0.1', () => resolve(s2));
     });
     const addr = srv.address();
     const base2 = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
@@ -384,7 +384,7 @@ describe('POST /swml/bridge/status', () => {
       swmlRoutes: createSwmlRoutes({ tokens, service, publicUrl: 'https://example.test' })
     });
     const srv = await new Promise<Server>((resolve) => {
-      const s2 = withUrl.listen(0, () => resolve(s2));
+      const s2 = withUrl.listen(0, '127.0.0.1', () => resolve(s2));
     });
     const addr = srv.address();
     const base2 = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;

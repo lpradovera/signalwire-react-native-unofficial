@@ -63,7 +63,7 @@ async function listen(app: ReturnType<typeof buildApp>['app']): Promise<{
   base: string;
 }> {
   const server = await new Promise<Server>((resolve) => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   const address = server.address();
   return {
