@@ -421,6 +421,9 @@ export class CallKeepBridge {
    * it times out.
    */
   private async adoptPendingNativeCall(pending: PendingCall): Promise<void> {
+    // Forgotten whether or not it is adopted here: the native cache outlives
+    // this JS context, and the next setup() in the process would adopt it again.
+    await forgetPendingVoipCall(pending.uuid);
     if (this.registry.entryForUuid(pending.uuid)) {
       return;
     }
@@ -442,7 +445,6 @@ export class CallKeepBridge {
       data: Object.keys(data).length > 0 ? data : undefined
     });
     this.ensureTicking();
-    await forgetPendingVoipCall(uuid);
   }
 
   /** Replays the events callkeep buffered while JavaScript was starting. */
@@ -512,6 +514,7 @@ export class CallKeepBridge {
           data: Object.keys(data).length > 0 ? data : undefined
         });
         this.ensureTicking();
+        void forgetPendingVoipCall(callUUID);
     }
   }
 
