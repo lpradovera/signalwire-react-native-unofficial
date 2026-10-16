@@ -9,7 +9,12 @@ import {
   reportDevice,
   uninstallIncallIosRoutes
 } from '../../jest/mocks/incallIosRoutes';
+import InCallManager from 'react-native-incall-manager';
+
+import { resetAudioDevicesForTesting } from './nativeAudioRoutes';
 import { useAudioDevices } from './useAudioDevices';
+
+const wrapper = InCallManager as unknown as { addListener: jest.Mock };
 
 function Probe({ id }: { id: string }): React.JSX.Element {
   const { selected, selectedName, available } = useAudioDevices();
@@ -17,6 +22,7 @@ function Probe({ id }: { id: string }): React.JSX.Element {
 }
 
 afterEach(() => {
+  resetAudioDevicesForTesting();
   uninstallIncallIosRoutes();
   jest.clearAllMocks();
 });
@@ -32,9 +38,9 @@ describe('useAudioDevices', () => {
     expect(getByTestId('devices').props.children).toBe('EARPIECE Receiver EARPIECE,SPEAKER_PHONE');
   });
 
-  it('keeps a change that arrives before its first read resolves', async () => {
-    // The car drops after the read was taken but before it resolved: the older
-    // read must not win, as nothing would correct it later.
+  it('takes its first read over a report that reached it before the read came back', async () => {
+    // incall-manager answers the read on the queue it reports from, so the
+    // report was sent before the read.
     let resolve: (status: unknown) => void = () => undefined;
     installIncallIosRoutes();
     incallIosRoutes.getAudioDeviceStatus.mockImplementation(() => new Promise((done) => (resolve = done)) as never);
@@ -43,7 +49,15 @@ describe('useAudioDevices', () => {
     await act(async () => reportDevice('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]', 'Receiver'));
     await act(async () => resolve(deviceStatus('BLUETOOTH', undefined, 'KENWOOD')));
 
-    expect(getByTestId('devices').props.children).toBe('EARPIECE Receiver EARPIECE,SPEAKER_PHONE');
+    expect(getByTestId('devices').props.children).toBe('BLUETOOTH KENWOOD EARPIECE,SPEAKER_PHONE,BLUETOOTH');
+  });
+
+  it('connects once per mount: one native subscription and one read', async () => {
+    installIncallIosRoutes(deviceStatus('EARPIECE'));
+    await render(<Probe id="devices" />);
+    await act(async () => undefined);
+    expect(wrapper.addListener).toHaveBeenCalledTimes(1);
+    expect(incallIosRoutes.getAudioDeviceStatus).toHaveBeenCalledTimes(1);
   });
 
   it('gives every mounted hook the same status', async () => {
@@ -55,6 +69,9 @@ describe('useAudioDevices', () => {
       </>
     );
     await act(async () => reportDevice('BLUETOOTH', undefined, 'KENWOOD'));
+    // One native subscription and one read serve both.
+    expect(wrapper.addListener).toHaveBeenCalledTimes(1);
+    expect(incallIosRoutes.getAudioDeviceStatus).toHaveBeenCalledTimes(1);
     expect(getByTestId('a').props.children).toBe(getByTestId('b').props.children);
     expect(getByTestId('a').props.children).toBe('BLUETOOTH KENWOOD EARPIECE,SPEAKER_PHONE,BLUETOOTH');
   });

@@ -349,7 +349,8 @@ export default function App() {
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` | `@signalwire/react-native` |
 | `useObservable(obs$, initial)` | The latest value of any SDK observable | `@signalwire/react-native` |
 | `useAudioRoute()` | `route`, `setRoute`, `setSpeakerOn` | `@signalwire/react-native/audio` |
-| `useAudioDevices()` | `available`, `selected`, `selectedName` (e.g. the car's name). iOS, with incall-manager iOS routes. | `@signalwire/react-native/audio` |
+| `useAudioDevices()` | `available`, `selected`, `selectedName` (e.g. the car's name). iOS, with incall-manager iOS routes. Live while a call's session runs; outside a call, the last status read. | `@signalwire/react-native/audio` |
+| `getAudioDeviceStatus()` (function) | The same status, read now, for code outside React. Resolves `null` without iOS routes (the hook gives an empty status instead). | `@signalwire/react-native/audio` |
 
 `useObservable` is built on `useSyncExternalStore`, so it is tear-free under
 concurrent rendering, and it seeds from the SDK's synchronous getters rather
@@ -366,10 +367,18 @@ connected headset or car. A toggle written as
 `setRoute(route === 'speaker' ? 'earpiece' : 'speaker')` should use
 `setSpeakerOn(route !== 'speaker')`. A wired headset reads as `'earpiece'`.
 
+A route chosen before the call's audio session starts (a speaker tap while an
+outbound CallKit call still rings) shows at once and is applied when the
+session starts. A video call starts on the speaker only when nothing else is
+connected: incall-manager's own start decides, and this package doesn't force
+the speaker over a headset or car. A route that can't be chosen (no such
+device) goes back to where it was, on Android too.
+
 #### Audio routes on iOS
 
-`react-native-incall-manager` owns the iOS audio session; this package never
-writes it. Released incall-manager (through 4.3.0) has iOS speaker on/off only,
+This package never writes the iOS audio session itself: incall-manager does,
+and so do callkeep (its category and mode on every CallKit activation) and
+WebRTC. Released incall-manager (through 4.3.0) has iOS speaker on/off only,
 and what you get depends on which you have:
 
 | | incall-manager 4.3.0 | incall-manager with iOS routes |
@@ -378,7 +387,7 @@ and what you get depends on which you have:
 | `setRoute('earpiece')` | Speaker off; a connected headset or car keeps the call | The receiver |
 | `setRoute('bluetooth')` | Ignored, with one warning | A connected Bluetooth headset or car |
 | `route` | What was asked for | What iOS reports: the starting device, a headset or car connecting or dropping, a choice in the system route menu or CallKit |
-| `useAudioDevices()` | Empty | The devices, by name |
+| `useAudioDevices()` | Empty | The devices, by name, kept current during a call |
 
 iOS routes come from a change to incall-manager that is proposed upstream
 (chooseAudioRoute, getAudioDeviceStatus and onAudioDeviceChanged on iOS, with
