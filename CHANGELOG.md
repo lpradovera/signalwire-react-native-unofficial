@@ -47,8 +47,10 @@
   left.
 - With CallKit, a route chosen before the call's session starts (a tap while
   an outbound call rings) is shown at once and applied when it starts;
-  nothing native is written outside a session. Without CallKit, speaker
-  on/off still works outside a session, as before.
+  nothing native is written outside a session. Turning the speaker off
+  again before the session starts is held too, so a video call then starts
+  off the speaker. Without CallKit, speaker on/off still works outside a
+  session, as before.
 - A late answer or report from an ended call no longer reaches the next one,
   and the status the next call starts from is read after its session
   starts, not taken from the previous call.
