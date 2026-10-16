@@ -338,8 +338,9 @@ export class CallKeepBridge {
    * (`call.mediaDirections`, the SDK's own offer, after preferences,
    * `?channel=`, the dial options and a disabled camera are all applied): a
    * voice call starts on the receiver (or a connected headset or car), a video
-   * call on the loudspeaker. A call without `mediaDirections` falls back to
-   * the app's `supportsVideo`.
+   * call on the loudspeaker. A call without `mediaDirections` is a voice
+   * call: `supportsVideo` says the native UI may show video, not that a call
+   * has it.
    */
   trackCall(call: Call, handle: string, displayName: string): string {
     const claimed = this.pendingBridgeUuid;
@@ -582,7 +583,8 @@ export class CallKeepBridge {
    * answer, 'recvonly' after it), so a video caller's call would start on the
    * loudspeaker. An outbound call (the bridge call placed for a push
    * included) is video when it sends or receives video; one without
-   * `mediaDirections`, or a destroyed one, uses the app's `supportsVideo`. A
+   * `mediaDirections`, or a destroyed one, is voice. `supportsVideo` never
+   * makes a call video: it only lets the native UI show one as video. A
    * pushed entry whose call hasn't arrived yet is shown as voice, as iOS shows
    * every VoIP push: its call is answered audio-only, or is the app's own
    * bridge call, whose type is shown once it binds.
@@ -603,7 +605,7 @@ export class CallKeepBridge {
       video = undefined;
     }
     if (video === undefined) {
-      return this.supportsVideo ? 'video' : 'audio';
+      return 'audio';
     }
     return video === 'inactive' ? 'audio' : 'video';
   }
