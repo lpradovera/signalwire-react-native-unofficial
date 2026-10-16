@@ -375,6 +375,7 @@ runtime:
   (12+), once the app is on screen; set up from a headless task, it waits for
   the app to come forward.
 - **`POST_NOTIFICATIONS`** (Android 13+) for anything you want to show.
+  `getFcmToken()` and `watchPushToken()` ask for it before reading the token.
 
 The plugin also declares callkeep's `VoiceConnectionService` with
 `android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"`.
