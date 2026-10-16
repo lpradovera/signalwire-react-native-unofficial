@@ -3,10 +3,13 @@ import { withEntitlementsPlist, withInfoPlist } from '@expo/config-plugins';
 import type { ConfigPlugin } from '@expo/config-plugins';
 
 export interface IosOptions {
-  microphonePermission: string;
-  cameraPermission: string;
+  microphonePermission?: string;
+  cameraPermission?: string;
   enableVoipPush: boolean;
 }
+
+const DEFAULT_MIC = 'This app uses the microphone for calls.';
+const DEFAULT_CAMERA = 'This app uses the camera for video calls.';
 
 /**
  * Adds the usage strings, background modes and push entitlement a calling app
@@ -38,8 +41,13 @@ const withInfoPlistEntries: ConfigPlugin<IosOptions> = (config, options) =>
   withInfoPlist(config, (plistConfig) => {
     const plist = plistConfig.modResults;
 
-    plist.NSMicrophoneUsageDescription = options.microphonePermission;
-    plist.NSCameraUsageDescription = options.cameraPermission;
+    // Option, else what the app (ios.infoPlist) or an earlier plugin set,
+    // else a default: Expo's own convention (an empty string counts as unset). Assigning unconditionally
+    // replaced the app's purpose strings with the generic ones.
+    plist.NSMicrophoneUsageDescription =
+      options.microphonePermission || plist.NSMicrophoneUsageDescription || DEFAULT_MIC;
+    plist.NSCameraUsageDescription =
+      options.cameraPermission || plist.NSCameraUsageDescription || DEFAULT_CAMERA;
 
     const modes = new Set<string>((plist.UIBackgroundModes as string[] | undefined) ?? []);
     modes.add('audio');

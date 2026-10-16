@@ -5,18 +5,18 @@ import { withVoipPush } from './withVoipPush';
 import type { ConfigPlugin } from '@expo/config-plugins';
 
 export interface SignalWirePluginOptions {
-  /** iOS `NSMicrophoneUsageDescription`. */
+  /**
+   * iOS `NSMicrophoneUsageDescription`. Without it, a string the app already
+   * sets (`ios.infoPlist`, or another plugin) is kept, else a generic default.
+   */
   microphonePermission?: string;
-  /** iOS `NSCameraUsageDescription`. */
+  /** iOS `NSCameraUsageDescription`, kept or defaulted the same way. */
   cameraPermission?: string;
   /** Add ConnectionService / CallKit permissions. Default `true`. */
   enableCallKit?: boolean;
   /** Add the iOS `voip` background mode. Default `true`. */
   enableVoipPush?: boolean;
 }
-
-const DEFAULT_MIC = 'This app uses the microphone for calls.';
-const DEFAULT_CAMERA = 'This app uses the camera for video calls.';
 
 /**
  * Expo config plugin for `@signalwire/react-native`.
@@ -36,8 +36,8 @@ const DEFAULT_CAMERA = 'This app uses the camera for video calls.';
  */
 const withSignalWire: ConfigPlugin<SignalWirePluginOptions | undefined> = (config, options) => {
   const {
-    microphonePermission = DEFAULT_MIC,
-    cameraPermission = DEFAULT_CAMERA,
+    microphonePermission,
+    cameraPermission,
     enableCallKit = true,
     enableVoipPush = true
   } = options ?? {};

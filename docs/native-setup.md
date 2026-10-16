@@ -59,7 +59,10 @@ patching that file. Bare projects should do the same: copy
 
 ## iOS: Info.plist
 
-Applied by the plugin. For bare projects:
+Applied by the plugin. The usage strings come from the plugin's
+`microphonePermission` / `cameraPermission` options, else from what the app
+already sets (`ios.infoPlist`, or another plugin), else a generic default.
+For bare projects:
 
 | Key | Value |
 | --- | --- |
