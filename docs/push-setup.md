@@ -780,4 +780,5 @@ handler. `callSidFrom` and `calledAddressFrom` accept several plausible field
 names and the handler logs the whole body — point a real call at it, read the
 log, then delete the guesses. The generated `ring:15.0:us` ringback is likewise
 unverified; set `PARK_RINGBACK_URL` to your own recording (`<public>/swml/ringback`
-serves one) if it is wrong.
+serves one) and `PARK_RINGBACK_SECONDS` to its length (`6` for that one) if it
+is wrong.

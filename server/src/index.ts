@@ -81,20 +81,31 @@ if (!signingKey) {
   process.exit(1);
 }
 
-const app = createApp({
-  store,
-  service,
-  apiToken: process.env.API_TOKEN,
-  tokenRoutes,
-  swmlRoutes: createSwmlRoutes({
+let swmlRoutes;
+try {
+  swmlRoutes = createSwmlRoutes({
     tokens: bridgeTokens,
     service,
     publicUrl,
     signingKey,
     routes: parseParkRoutes(process.env.PARK_ROUTES),
     ringback: process.env.PARK_RINGBACK_URL,
+    ringbackSeconds: process.env.PARK_RINGBACK_SECONDS
+      ? Number(process.env.PARK_RINGBACK_SECONDS)
+      : undefined,
     callEnder: createCallEnderFromEnv()
-  })
+  });
+} catch (error) {
+  log(`${(error as Error).message} Exiting.`);
+  process.exit(1);
+}
+
+const app = createApp({
+  store,
+  service,
+  apiToken: process.env.API_TOKEN,
+  tokenRoutes,
+  swmlRoutes
 });
 
 app.listen(PORT, () => log('Listening', { port: PORT, storePath: STORE_PATH }));
