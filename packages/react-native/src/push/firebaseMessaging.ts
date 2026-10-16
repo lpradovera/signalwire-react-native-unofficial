@@ -68,7 +68,19 @@ function hasModularApi(candidate: unknown): candidate is FirebaseMessaging {
  */
 export function loadFirebaseMessaging(): FirebaseMessaging | undefined {
   const modules = NativeModules as Record<string, unknown> | undefined;
-  const missing = NATIVE_MODULES.filter((name) => modules?.[name] == null);
+  let missing: string[];
+  try {
+    missing = NATIVE_MODULES.filter((name) => modules?.[name] == null);
+  } catch (error) {
+    // Reading RNFBMessagingModule runs its getConstants(), which throws
+    // "Default FirebaseApp is not initialized" on a build that links Firebase
+    // without a google-services.json. Uncaught, that ended the entry file
+    // before registerRootComponent and the app died at launch.
+    logger.warn(
+      `Firebase messaging is linked but not configured; Android push is off: ${String(error)}`
+    );
+    return undefined;
+  }
   if (missing.length > 0) {
     logger.debug(
       `Firebase messaging is not linked (${missing.join(', ')} missing); Android push is off. ` +
