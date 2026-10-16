@@ -59,3 +59,6 @@ GoogleService-Info.plist
 # Dev environment logs from scripts/dev.sh
 .dev/
 packages/react-native/android/build/
+
+# Repository-local scratch space (scripts/dev-scripts.test.mjs's sandbox)
+.tmp/
