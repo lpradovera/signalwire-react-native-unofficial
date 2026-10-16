@@ -10,6 +10,18 @@ import { createSwmlRoutes } from './swml.js';
 import type { Server } from 'node:http';
 import type { Device, PushPayload, PushSender } from '../core/types.js';
 
+/**
+ * A SWML reply, loosely typed: the tests walk verbs by position and assert on
+ * their shape, which is exactly what a precise type would get in the way of.
+ */
+interface Swml {
+  version: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sections: { main: any[] };
+}
+
+const swmlOf = async (response: Response): Promise<Swml> => (await response.json()) as Swml;
+
 const sent: Array<{ device: Device; payload: PushPayload }> = [];
 
 const sender: PushSender = {
@@ -42,7 +54,7 @@ const post = (path: string, body: unknown): Promise<Response> =>
 
 before(async () => {
   await new Promise<void>((resolve) => {
-    server = app.listen(0, resolve);
+    server = app.listen(0, () => resolve());
   });
   const address = server.address();
   base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
@@ -62,7 +74,7 @@ describe('POST /swml/park', () => {
     const response = await post('/swml/park', {
       params: { call: { call_id: 'a-leg-sid', to: '/private/rn-example' } }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     const verbs = swml.sections.main.map((v: Record<string, unknown>) => Object.keys(v)[0]);
     assert.deepEqual(verbs, ['answer', 'play', 'hangup']);
@@ -165,7 +177,7 @@ describe('POST /swml/park', () => {
 
   it('hangs up politely when the request lacks a call SID', async () => {
     const response = await post('/swml/park', { params: { call: { to: '/private/rn-example' } } });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
   });
 });
@@ -176,7 +188,7 @@ describe('POST /swml/bridge', () => {
     const response = await post('/swml/bridge', {
       params: { vars: { bridgeToken: token }, call: { to: '/private/rn-example' } }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(swml.sections.main[0], { connect: { to: 'call:parked-sid' } });
   });
@@ -190,7 +202,7 @@ describe('POST /swml/bridge', () => {
     const replay = await post('/swml/bridge', {
       params: { vars: { bridgeToken: token }, call: { to: '/private/rn-example' } }
     });
-    const swml = await replay.json();
+    const swml = await swmlOf(replay);
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
   });
 
@@ -206,7 +218,7 @@ describe('POST /swml/bridge', () => {
         call: { to: '/public/rn-example-bridge', from: '/private/someone-else' }
       }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
   });
 
@@ -222,7 +234,7 @@ describe('POST /swml/bridge', () => {
         call: { from: 'sip:rn-android@proj.call.signalwire.com;context=private' }
       }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(swml.sections.main[0].connect.to, 'call:parked-sid-sip');
   });
@@ -235,7 +247,7 @@ describe('POST /swml/bridge', () => {
         call: { from: 'sip:someone-else@proj.call.signalwire.com;context=private' }
       }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
   });
@@ -249,7 +261,7 @@ describe('POST /swml/bridge', () => {
     const response = await post('/swml/bridge', {
       params: { vars: { userVariables: { bridgeToken: token } }, call: {} }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(swml.sections.main[0].connect.to, 'call:parked-sid-anon');
   });
@@ -261,7 +273,7 @@ describe('POST /swml/bridge', () => {
     const body = { params: { vars: { userVariables: { bridgeToken: token } }, call: {} } };
     await post('/swml/bridge', body);
     const replay = await post('/swml/bridge', body);
-    const swml = await replay.json();
+    const swml = await swmlOf(replay);
 
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
   });
@@ -281,7 +293,7 @@ describe('POST /swml/bridge — the shape SignalWire actually sends', () => {
         vars: { userVariables: { bridgeToken: token } }
       }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(swml.sections.main[0], { connect: { to: 'call:parked-sid' } });
   });
@@ -291,7 +303,7 @@ describe('POST /swml/bridge — the shape SignalWire actually sends', () => {
     const response = await post('/swml/bridge', {
       params: { call: { to: '/private/rn-example' }, vars: { bridgeToken: token } }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(swml.sections.main[0], { connect: { to: 'call:parked-sid-2' } });
   });
@@ -382,7 +394,7 @@ describe('POST /swml/bridge/status', () => {
         params: { call: { from: '/private/rn-example' }, vars: { userVariables: { bridgeToken: token } } }
       })
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
     srv.close();
 
     assert.match(swml.sections.main[0].connect.status_url, /\/swml\/bridge\/status\?token=/);
