@@ -248,14 +248,14 @@ hot and cold.
 ### 2a. Version ceiling — read this before installing
 
 `@react-native-firebase` **v23 and later require the New Architecture.** This
-package targets the legacy architecture, which the WebRTC stack still needs, so
-**v22.4.0 is the last usable line**:
+package now requires it too, so that ceiling no longer applies to apps on it.
+The example still pins **v22.4.0**, the line push was verified with:
 
 ```bash
 npm install @react-native-firebase/app@22 @react-native-firebase/messaging@22
 ```
 
-Install v23+ and Gradle fails with:
+Install v23+ in an app still on the old architecture and Gradle fails with:
 
 ```
 Gradle build daemon disappeared unexpectedly (it may have been killed or may have crashed)
@@ -266,7 +266,7 @@ which reads like an out-of-memory kill. The real message —
 only in `~/.gradle/daemon/*/daemon-*.out.log`.
 
 Versions below 22 predate the modular API this package calls, so the supported
-range is `>=22.0.0` and, on legacy architecture, `<23`.
+range is `>=22.0.0`.
 
 ### 2b. Firebase project
 

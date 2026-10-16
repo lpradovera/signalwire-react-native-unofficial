@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Compatibility
+
+- **New Architecture only.** The packages support React Native's New
+  Architecture (the default since React Native 0.76) and no longer the old
+  one, which React Native 0.82 removes. The example app runs on it
+  (`newArchEnabled: true`); react-native-webrtc, react-native-callkeep and
+  react-native-incall-manager run through React Native's interop layer. An
+  app with `newArchEnabled: false` should move before upgrading.
+- With the old architecture gone, `@react-native-firebase` v23+ (which
+  requires the New Architecture) is no longer ruled out; the example stays on
+  v22.4.0, the verified line.
+
 ### CallKit voice and video
 
 - An outbound call's CallKit type and audio session mode follow its own
