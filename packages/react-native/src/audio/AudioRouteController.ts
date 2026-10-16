@@ -357,10 +357,13 @@ export class AudioRouteController {
     } catch (error) {
       logger.warn('Failed to stop the audio session:', error);
     }
-    // Nothing native after stop(): incall-manager resets its own speaker
-    // setting there, and its setForceSpeakerphoneOn has no started guard, so a
-    // call now would reconfigure the torn-down session (for a video call:
-    // voice chat mode, and the proximity sensor back on in an idle app).
+    // Nothing native after stop(): incall-manager's setForceSpeakerphoneOn
+    // has no started guard, so a call now would reconfigure the torn-down
+    // session (for a video call: voice chat mode, and the proximity sensor
+    // back on in an idle app). Its speaker setting needs no reset from here:
+    // its start() resets it for the next call (4.3.0 and Android also reset
+    // it in stop(); the iOS-routes change doesn't, and nothing reads it
+    // between calls).
     this.chosen = false;
     this.beforeSpeaker = DEFAULT_ROUTE;
     if (!this.destroyed) {
