@@ -101,17 +101,26 @@ export function onVoipTokenChange(listener: (token: string) => void): () => void
  * The common shape: fire immediately if a token already exists, then again on
  * every refresh. Deduplicates, so a refresh matching the cached value does not
  * re-register.
+ *
+ * Subscribes before reading: the native module observes token changes only
+ * once a listener exists, so a token issued between a read that found none and
+ * the subscription would otherwise reach nobody until the next launch. After
+ * the returned function runs, nothing reaches the listener, including a read
+ * still in flight.
  */
 export function watchVoipToken(listener: (token: string) => void): () => void {
   let lastSeen: string | null = null;
+  let cancelled = false;
 
   const emit = (token: string): void => {
-    if (token === lastSeen) {
+    if (cancelled || token === lastSeen) {
       return;
     }
     lastSeen = token;
     listener(token);
   };
+
+  const unsubscribe = onVoipTokenChange(emit);
 
   void getVoipToken().then((token) => {
     if (token) {
@@ -119,7 +128,10 @@ export function watchVoipToken(listener: (token: string) => void): () => void {
     }
   });
 
-  return onVoipTokenChange(emit);
+  return () => {
+    cancelled = true;
+    unsubscribe();
+  };
 }
 
 /**
