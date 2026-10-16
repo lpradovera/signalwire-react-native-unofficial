@@ -34,8 +34,8 @@ delete pkg.module;
 
 pkg.exports = {
   '.': entry('index'),
-  // Re-exported so apps can `import '@signalwire/react-ui/theme.css'` without
-  // reaching into the Lit package's internals.
+  // A copy of @signalwire/web-components' public './theme.css' export, kept
+  // identical by test/entries.test.mjs.
   './theme.css': './theme.css',
   ...Object.fromEntries(
     COMPONENTS.map((c) => [`./${subpath(c.tag)}`, entry(`components/${c.name}`)])

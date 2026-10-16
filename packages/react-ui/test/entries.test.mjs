@@ -166,3 +166,11 @@ test('TypeScript finds the types of every exports entry under node10, node16 and
   }
   assert.deepEqual(unresolved, []);
 });
+
+test("theme.css is the installed @signalwire/web-components' theme.css", () => {
+  const upstream = join(wcDist, 'theme.css');
+  assert.ok(
+    readFileSync(join(root, 'theme.css')).equals(readFileSync(upstream)),
+    `theme.css differs from ${upstream}; copy that file over packages/react-ui/theme.css`
+  );
+});
