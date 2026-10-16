@@ -399,9 +399,10 @@ iOS routes come from a change to incall-manager that is proposed upstream
 incall-manager following route changes it didn't make). To use it now, apply
 [`docs/patches/react-native-incall-manager+4.3.0.patch`](docs/patches/react-native-incall-manager+4.3.0.patch)
 with [patch-package](https://github.com/ds300/patch-package): pin
-`react-native-incall-manager` to `4.3.0`, copy the file into your app's
-`patches/`, add `"postinstall": "patch-package"`, and rebuild the app (native
-code). A vendored copy of incall-manager with the same change works the same
+`react-native-incall-manager` to `4.3.0`, install patch-package
+(`npm install --save-dev patch-package`), copy the file into your app's
+`patches/`, add `"postinstall": "patch-package"` to its scripts, run
+`npm install` (which applies it), and rebuild the app (native code). A vendored copy of incall-manager with the same change works the same
 way. This package detects the iOS routes at run time, so nothing else
 changes; without them it falls back as in the first column.
 
