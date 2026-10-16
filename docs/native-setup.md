@@ -57,6 +57,35 @@ Expo generates a Swift `AppDelegate`, and Swift cannot import RNCallKeep
 patching that file. Bare projects should do the same: copy
 `packages/react-native/src/plugin/voipPushSource.ts` into the app target.
 
+## iOS: calling back from Recents and Siri
+
+Calls placed or answered through CallKit are listed in the Phone app's
+Recents (`includesCallsInRecents`, default `true` in `getCallKit().setup()`;
+pass `false` to keep them out). Tapping one, or asking Siri to call back,
+opens the app with an `INStartCallIntent` user activity. callkeep turns it
+into a start-call event only if the app delegate passes it on, so the plugin
+(with `enableCallKit`, the default) generates `SignalWireCallKitActivity.m`:
+an Objective-C file that wraps the AppDelegate's
+`application:continueUserActivity:restorationHandler:` and hands call intents
+to `[RNCallKeep application:continueUserActivity:restorationHandler:]`. The
+AppDelegate's own handling (universal links, Expo's subscribers) still runs.
+It also adds the three call intents to `NSUserActivityTypes`.
+
+The app then dials from `startCallRequested$`:
+
+```ts
+getCallKit().startCallRequested$.subscribe(({ handle, video }) => {
+  void dial(handle, { audio: true, video });
+});
+```
+
+A call-back that launches the app arrives before React mounts; it is held for
+the first subscriber for up to a minute. Under the UIScene lifecycle the scene
+delegate must pass `scene(_:continue:)` and the connection options' user
+activities to the app delegate (the example's does). Bare projects: copy
+`packages/react-native/src/plugin/callKitActivitySource.ts` into the app
+target, or call RNCallKeep from your own Objective-C AppDelegate.
+
 ## iOS: Info.plist
 
 Applied by the plugin. For bare projects:
@@ -66,6 +95,7 @@ Applied by the plugin. For bare projects:
 | `NSMicrophoneUsageDescription` | Why your app needs the microphone |
 | `NSCameraUsageDescription` | Why your app needs the camera |
 | `UIBackgroundModes` | `audio` (always), plus `voip` when using VoIP push |
+| `NSUserActivityTypes` | `INStartCallIntent`, `INStartAudioCallIntent`, `INStartVideoCallIntent` (Recents and Siri call-backs) |
 
 Enable the **Push Notifications** capability and, for VoIP push, the
 **Voice over IP** background mode in Xcode.

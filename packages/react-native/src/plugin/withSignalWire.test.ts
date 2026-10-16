@@ -87,6 +87,23 @@ describe('withSignalWire', () => {
     );
   });
 
+  it('declares the call intents Recents and Siri hand the app', () => {
+    expect(applyPlugin().ios?.infoPlist?.NSUserActivityTypes).toEqual(
+      expect.arrayContaining(['INStartCallIntent', 'INStartAudioCallIntent', 'INStartVideoCallIntent'])
+    );
+  });
+
+  it('keeps activity types the app already declared, and adds none without CallKit', () => {
+    const config = withSignalWire(
+      { ...baseConfig(), ios: { infoPlist: { NSUserActivityTypes: ['com.demo.view'] } } } as never,
+      undefined
+    ) as unknown as TestConfig;
+    expect(config.ios?.infoPlist?.NSUserActivityTypes).toEqual(
+      expect.arrayContaining(['com.demo.view', 'INStartCallIntent'])
+    );
+    expect(applyPlugin({ enableCallKit: false }).ios?.infoPlist?.NSUserActivityTypes).toBeUndefined();
+  });
+
   it('adds the Android call permissions', () => {
     expect(applyPlugin().android?.permissions ?? []).toEqual(
       expect.arrayContaining([

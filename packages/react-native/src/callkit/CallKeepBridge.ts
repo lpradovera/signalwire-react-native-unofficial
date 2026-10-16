@@ -2,11 +2,14 @@ import { Platform } from 'react-native';
 import RNCallKeep, { CONSTANTS } from 'react-native-callkeep';
 import {
   BehaviorSubject,
+  concat,
+  defer,
   distinctUntilChanged,
   EMPTY,
   filter,
   finalize,
   firstValueFrom,
+  from,
   map,
   of,
   Subject,
@@ -42,6 +45,32 @@ interface LoadedEvent {
 }
 import type { Call, SignalWire } from '@signalwire/js';
 import type { Subscription } from 'rxjs';
+import type { Observable } from 'rxjs';
+
+/** The `didReceiveStartCallAction` payload, which callkeep types loosely. */
+interface StartCallEvent {
+  handle?: string;
+  callUUID?: string;
+  name?: string;
+  video?: boolean;
+}
+
+/**
+ * A call the user asked to place from outside the app: by tapping one of its
+ * calls in the Phone app's Recents, or by asking Siri to call back. Dial
+ * `handle` (the destination the earlier call was placed to or came from).
+ */
+export interface StartCallRequest {
+  /** The destination to dial. */
+  readonly handle: string;
+  /** The name Recents or Siri showed, when callkeep reports one. */
+  readonly displayName: string | undefined;
+  /** Whether a video call was asked for. */
+  readonly video: boolean;
+}
+
+/** How long a call-back waits for a subscriber before it is dropped. */
+const START_REQUEST_TTL_MS = 60_000;
 
 const TICK_INTERVAL_MS = 2000;
 const AUDIO_SESSION_TIMEOUT_MS = 3000;
@@ -81,6 +110,11 @@ export interface CallKitSetupOptions {
   supportsVideo?: boolean;
   androidChannelId?: string;
   androidChannelName?: string;
+  /**
+   * iOS: list this app's calls in the Phone app's Recents, from where the
+   * user can call back (see `startCallRequested$`). Default `true`.
+   */
+  includesCallsInRecents?: boolean;
   /** How long a push entry waits for its SDK call. Default 20000. */
   fusionTimeoutMs?: number;
 }
@@ -159,6 +193,9 @@ export class CallKeepBridge {
   private readonly audioClaims = new Set<string>();
   /** Stops an ended owner's session if no call takes it; see {@link releaseAudioIfOwnerEnded}. */
   private handoverTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly _startCallRequested$ = new Subject<StartCallRequest>();
+  /** Call-backs that arrived before anyone subscribed (a cold start from Recents). */
+  private heldStartRequests: Array<{ request: StartCallRequest; at: number }> = [];
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     this.holdTimeoutMs = options.fusionTimeoutMs ?? DEFAULT_FUSION_TIMEOUT_MS;
@@ -223,6 +260,7 @@ export class CallKeepBridge {
         imageName: options.imageName,
         ringtoneSound: options.ringtoneSound,
         supportsVideo: this.supportsVideo,
+        includesCallsInRecents: options.includesCallsInRecents ?? true,
         maximumCallGroups: '1',
         maximumCallsPerCallGroup: '1'
       },
@@ -279,6 +317,26 @@ export class CallKeepBridge {
       this.adoptingLaunchPush = false;
     }
     logger.debug('CallKit ready');
+  }
+
+  /**
+   * Emits each call-back the user starts from Recents or Siri, for the app to
+   * dial. A call-back that arrived before anyone subscribed (the tap launched
+   * the app) is delivered to the first subscriber, once, if it is under a
+   * minute old. CallKit's report of the app's own outbound calls is not
+   * included.
+   *
+   * On iOS this needs the Expo plugin's `continueUserActivity` forwarder
+   * (`enableCallKit`, the default), or, without Expo, an AppDelegate that
+   * passes the activity to `[RNCallKeep application:continueUserActivity:restorationHandler:]`.
+   */
+  get startCallRequested$(): Observable<StartCallRequest> {
+    return defer(() => {
+      const cutoff = Date.now() - START_REQUEST_TTL_MS;
+      const held = this.heldStartRequests.filter((entry) => entry.at >= cutoff).map((entry) => entry.request);
+      this.heldStartRequests = [];
+      return concat(from(held), this._startCallRequested$);
+    });
   }
 
   /**
@@ -565,6 +623,8 @@ export class CallKeepBridge {
     }
     this.heldActions.clear();
     this.registry.destroy();
+    this._startCallRequested$.complete();
+    this.heldStartRequests = [];
     this.isSetup = false;
   }
 
@@ -672,6 +732,8 @@ export class CallKeepBridge {
         this.setAudioSessionActive(true);
       } else if (event?.name === 'RNCallKeepDidDeactivateAudioSession') {
         this.setAudioSessionActive(false);
+      } else if (event?.name === 'RNCallKeepDidReceiveStartCallAction') {
+        this.handleStartCallAction(event.data as StartCallEvent);
       }
     }
     // callkeep keeps this buffer for the life of the process and sends it
@@ -856,6 +918,35 @@ export class CallKeepBridge {
     // A provider reset ends every call and its session, with no deactivation
     // event of its own.
     this.listen('didResetProvider', () => this.handleProviderReset());
+
+    // Recents and Siri call-backs; on iOS also CallKit's echo of our own
+    // startCall, which handleStartCallAction drops.
+    this.listen<StartCallEvent>('didReceiveStartCallAction', (event) =>
+      this.handleStartCallAction(event)
+    );
+  }
+
+  private handleStartCallAction(event: StartCallEvent): void {
+    const handle = typeof event?.handle === 'string' ? event.handle : '';
+    if (handle.length === 0) {
+      return;
+    }
+    // CallKit (and Telecom) report the app's own startCall as a start action
+    // with its uuid: that call is already placed.
+    if (event.callUUID && this.registry.entryForUuid(event.callUUID)) {
+      return;
+    }
+    const request: StartCallRequest = {
+      handle,
+      displayName: typeof event.name === 'string' && event.name.length > 0 ? event.name : undefined,
+      video: event.video === true
+    };
+    logger.debug(`Call-back requested for ${handle}`);
+    if (this._startCallRequested$.observed) {
+      this._startCallRequested$.next(request);
+    } else {
+      this.heldStartRequests.push({ request, at: Date.now() });
+    }
   }
 
   /**

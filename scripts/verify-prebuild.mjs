@@ -20,6 +20,7 @@ const example = join(root, 'example');
 
 const IOS_PLIST = 'ios/SignalWireRNExample/Info.plist';
 const IOS_VOIP_SOURCE = 'ios/SignalWireRNExample/SignalWireVoipPush.m';
+const IOS_ACTIVITY_SOURCE = 'ios/SignalWireRNExample/SignalWireCallKitActivity.m';
 const IOS_PBXPROJ = 'ios/SignalWireRNExample.xcodeproj/project.pbxproj';
 const IOS_ENTITLEMENTS = 'ios/SignalWireRNExample/SignalWireRNExample.entitlements';
 const ANDROID_MANIFEST = 'android/app/src/main/AndroidManifest.xml';
@@ -41,7 +42,9 @@ const EXPECTED_PLIST_ENTRIES = [
   'NSMicrophoneUsageDescription',
   'NSCameraUsageDescription',
   '<string>audio</string>',
-  '<string>voip</string>'
+  '<string>voip</string>',
+  'NSUserActivityTypes',
+  '<string>INStartCallIntent</string>'
 ];
 
 const failures = [];
@@ -95,7 +98,14 @@ check(IOS_VOIP_SOURCE, readFileSync(join(example, IOS_VOIP_SOURCE), 'utf8'), [
   'SignalWireVoipTokenNotification'
 ]);
 check(IOS_PBXPROJ, readFileSync(join(example, IOS_PBXPROJ), 'utf8'), [
-  'SignalWireVoipPush.m in Sources'
+  'SignalWireVoipPush.m in Sources',
+  'SignalWireCallKitActivity.m in Sources'
+]);
+
+// Recents and Siri call-backs reach callkeep only through this forwarder.
+check(IOS_ACTIVITY_SOURCE, readFileSync(join(example, IOS_ACTIVITY_SOURCE), 'utf8'), [
+  'continueUserActivity:activity restorationHandler:handler',
+  'INStartCallIntent'
 ]);
 
 // Without this, iOS issues no PushKit token and the failure is silent from the
@@ -108,12 +118,14 @@ check(IOS_ENTITLEMENTS, readFileSync(join(example, IOS_ENTITLEMENTS), 'utf8'), [
 // on duplicate symbols, so the mod must be idempotent across repeat prebuilds.
 {
   const pbxproj = readFileSync(join(example, IOS_PBXPROJ), 'utf8');
-  const occurrences = pbxproj.split('SignalWireVoipPush.m in Sources').length - 1;
-  if (occurrences !== 2) {
-    failures.push(
-      `${IOS_PBXPROJ}: expected exactly 2 references to "SignalWireVoipPush.m in Sources" ` +
-        `(one PBXBuildFile, one in the Sources phase), found ${occurrences}`
-    );
+  for (const file of ['SignalWireVoipPush.m', 'SignalWireCallKitActivity.m']) {
+    const occurrences = pbxproj.split(`${file} in Sources`).length - 1;
+    if (occurrences !== 2) {
+      failures.push(
+        `${IOS_PBXPROJ}: expected exactly 2 references to "${file} in Sources" ` +
+          `(one PBXBuildFile, one in the Sources phase), found ${occurrences}`
+      );
+    }
   }
 }
 
