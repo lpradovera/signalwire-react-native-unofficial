@@ -1,10 +1,12 @@
-import { useCallback, useContext } from 'react';
+import { useCallback, useContext, useMemo } from 'react';
+import { of, switchMap } from 'rxjs';
 
 import { logger } from './logger';
 import { SignalWireContext } from './SignalWireProvider';
 import { useObservable } from './useObservable';
 
 import type { Call, MediaOptions } from '@signalwire/js';
+import type { Observable } from 'rxjs';
 
 const NO_CALLS: Call[] = [];
 
@@ -22,9 +24,20 @@ export interface UseIncomingCallsResult {
  */
 export function useIncomingCalls(): UseIncomingCallsResult {
   const context = useContext(SignalWireContext);
-  const session = context?.client?.session;
+  const client = context?.client;
   const observer = context?.observer;
-  const calls = useObservable(session?.incomingCalls$, session?.incomingCalls ?? NO_CALLS);
+  // The session exists only from the end of connect() until disconnect(), and
+  // a later connect() builds a new one. Reading client.session during render
+  // missed both: nothing re-renders this component when the session appears,
+  // so it never subscribed. isConnected$ changes at exactly those points.
+  const incomingCalls$ = useMemo<Observable<Call[]> | undefined>(
+    () =>
+      client?.isConnected$.pipe(
+        switchMap(() => client.session?.incomingCalls$ ?? of(NO_CALLS))
+      ),
+    [client]
+  );
+  const calls = useObservable(incomingCalls$, client?.session?.incomingCalls ?? NO_CALLS);
 
   const answer = useCallback(
     async (call: Call, options?: MediaOptions): Promise<void> => {
