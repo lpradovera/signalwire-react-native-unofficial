@@ -1,4 +1,5 @@
 import { withAndroidCallKit } from './withAndroidCallKit';
+import { withCallKitActivity } from './withCallKitActivity';
 import { withIosCallKit } from './withIosCallKit';
 import { withVoipPush } from './withVoipPush';
 
@@ -9,7 +10,10 @@ export interface SignalWirePluginOptions {
   microphonePermission?: string;
   /** iOS `NSCameraUsageDescription`. */
   cameraPermission?: string;
-  /** Add ConnectionService / CallKit permissions. Default `true`. */
+  /**
+   * Add ConnectionService / CallKit permissions, and on iOS the Recents / Siri
+   * call-back forwarder and its `NSUserActivityTypes`. Default `true`.
+   */
   enableCallKit?: boolean;
   /** Add the iOS `voip` background mode. Default `true`. */
   enableVoipPush?: boolean;
@@ -33,6 +37,11 @@ const DEFAULT_CAMERA = 'This app uses the camera for video calls.';
  * silently when the template changes, and Swift cannot import RNCallKeep
  * (react-native-callkeep#856). A category avoids both problems and survives
  * `expo prebuild` regenerating the AppDelegate.
+ *
+ * With `enableCallKit` it generates a second category the same way, which
+ * forwards `application:continueUserActivity:` (Recents and Siri call-backs,
+ * `INStartCallIntent`) to RNCallKeep, and declares the call intents in
+ * `NSUserActivityTypes`.
  */
 const withSignalWire: ConfigPlugin<SignalWirePluginOptions | undefined> = (config, options) => {
   const {
@@ -45,10 +54,14 @@ const withSignalWire: ConfigPlugin<SignalWirePluginOptions | undefined> = (confi
   const withIos = withIosCallKit(config, {
     microphonePermission,
     cameraPermission,
-    enableVoipPush
+    enableVoipPush,
+    enableCallKit
   });
 
-  const withPush = enableVoipPush ? withVoipPush(withIos) : withIos;
+  // Recents and Siri call-backs: the AppDelegate hands INStartCallIntent to
+  // RNCallKeep, which only a generated Objective-C file can reach.
+  const withActivity = enableCallKit ? withCallKitActivity(withIos) : withIos;
+  const withPush = enableVoipPush ? withVoipPush(withActivity) : withActivity;
 
   return withAndroidCallKit(withPush, { enableCallKit });
 };
