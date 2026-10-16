@@ -57,8 +57,13 @@ if (process.env.EXPO_PUBLIC_SW_WIRE_LOG === '1') {
 }
 
 // Set up native call UI before React mounts, so a VoIP push arriving on a cold
-// start finds a bridge ready to report it to CallKit.
-void getCallKit().setup({ appName: 'SignalWire RN Example', supportsVideo: true });
+// start finds a bridge ready to report it to CallKit. The example dials
+// audio-only unless EXPO_PUBLIC_SW_DIAL_VIDEO=1, so it offers native video
+// only then: an audio-only app has no business with the camera.
+void getCallKit().setup({
+  appName: 'SignalWire RN Example',
+  supportsVideo: process.env.EXPO_PUBLIC_SW_DIAL_VIDEO === '1'
+});
 
 // Android call pushes, registered here rather than in a component: the
 // background handler runs in a headless task when the app is killed, which is
