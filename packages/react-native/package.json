@@ -153,7 +153,7 @@
     "jest": "^29.7.0",
     "react": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-callkeep": "github:mjerris/react-native-callkeep#adc30d417481a8e02f7885d619a8f7161cf793e3",
+    "react-native-callkeep": "github:signalwire/react-native-callkeep#24b7e47ccf57eb628111cddd92b709c69f85927a",
     "react-native-get-random-values": "^1.11.0",
     "react-native-incall-manager": "^4.2.0",
     "react-native-url-polyfill": "^2.0.0",
