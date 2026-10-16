@@ -71,6 +71,9 @@
   then it renders nothing. It writes nothing to the audio session.
 - `CallControls` shows it on iOS. `showRoutePicker` defaults to
   `showAudioRoute`, so an app that hid audio routing doesn't get it.
+- `AudioRoutePickerButton` takes a background, corner radius and padding in
+  its own `style` (the padding insets the icon), so `CallControls` styles
+  the button as a pill with no wrapper view.
 - The button shows only with incall-manager's iOS routes (the upstream
   change, or `docs/patches/`), and `isAudioRoutePickerAvailable()` says so.
   Released incall-manager 4.3.0 neither reports a choice made there nor
