@@ -8,8 +8,9 @@
     "server"
   ],
   "scripts": {
+    "postinstall": "patch-package",
     "build": "npm run build -w @signalwire/react && npm run build -w @signalwire/react-ui && npm run build -w @signalwire/react-native && npm run build -w @signalwire/react-native-ui",
-    "test": "npm run test -w @signalwire/react && npm run test -w @signalwire/react-ui && npm run test -w @signalwire/react-native && npm run test -w @signalwire/react-native-ui && npm run test -w @signalwire/rn-push-server && npm run test -w @signalwire/react-native-example",
+    "test": "npm run test -w @signalwire/react && npm run test -w @signalwire/react-ui && npm run test -w @signalwire/react-native && npm run test -w @signalwire/react-native-ui && npm run test -w @signalwire/rn-push-server && npm run test -w @signalwire/react-native-example && node --test scripts/callkeep-patch.test.mjs",
     "type-check": "npm run type-check -w @signalwire/react && npm run type-check -w @signalwire/react-ui && npm run type-check -w @signalwire/react-native && npm run type-check -w @signalwire/react-native-ui && npm run type-check -w @signalwire/react-native-example && npm run type-check -w @signalwire/react-web-example && npm run type-check -w @signalwire/rn-push-server",
     "lint": "eslint packages/react/src packages/react-ui/src packages/react-native/src packages/react-native-ui/src",
     "bundle-check": "npm run bundle-check -w @signalwire/react-native-example && npm run build -w @signalwire/react-web-example",
@@ -21,6 +22,7 @@
     "@eslint/js": "^9.17.0",
     "eslint": "^9.17.0",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "patch-package": "^8.0.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.19.0"
   },
@@ -28,5 +30,6 @@
   "overrides": {
     "react": "19.1.0",
     "react-dom": "19.1.0"
-  }
+  },
+  "//patches": "patches/react-native-callkeep+4.3.16.patch: callkeep 4.3.16 exports displayIncomingCall and startCall twice on Android (overloads), which React Native's New Architecture interop refuses at the first NativeModules.RNCallKeep access, killing the app at launch. Upstream removed the 3-argument overloads in a6573f1b (unreleased; npm latest is 4.3.16). Drop the patch with the first callkeep release that has it. scripts/callkeep-patch.test.mjs checks it applied."
 }
