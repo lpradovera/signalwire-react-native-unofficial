@@ -211,7 +211,7 @@ export class CallKeepBridge {
     const existing = this.boundClients.get(client);
     if (existing) {
       existing.binders += 1;
-      return this.unbinderFor(client, existing);
+      return this.unbinderFor(existing);
     }
     const connected$ = client.isConnected$ ?? of(true);
 
@@ -234,19 +234,17 @@ export class CallKeepBridge {
     }
     const binding = { subscription, binders: 1 };
     this.boundClients.set(client, binding);
-    return this.unbinderFor(client, binding);
+    return this.unbinderFor(binding);
   }
 
   /**
    * One binder's unbind. The client stays bound until its last binder
    * unbinds: two providers, or a provider and the app's own call, can bind
    * the same client, and one of them unmounting must not stop the other's
-   * calls reaching CallKit. Calling it twice counts once.
+   * calls reaching CallKit. Calling it twice counts once. The client's
+   * boundClients entry goes with the subscription (bindClient's finalize).
    */
-  private unbinderFor(
-    client: SignalWire,
-    binding: { subscription: Subscription; binders: number }
-  ): () => void {
+  private unbinderFor(binding: { subscription: Subscription; binders: number }): () => void {
     let unbound = false;
     return () => {
       if (unbound) {
