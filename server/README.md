@@ -74,6 +74,7 @@ time, which is the sane way to debug push.
 | `SIGNALWIRE_SIGNING_KEY` | production | The space's Signing Key. Set, `/swml/park`, `/swml/bridge`, `/swml/bridge/status` and `/webhooks/signalwire` refuse requests SignalWire did not sign (the webhook then needs no `API_TOKEN`). Unset, anyone who can reach the server can ring any subscriber. Needs `PUBLIC_URL` |
 | `PARK_ROUTES` | phone numbers | Dialled destination → subscriber, e.g. `+15551234567:rn-example,+15559998888:other-user` |
 | `PARK_RINGBACK_URL` | — | Your own ringback recording, replacing the generated `ring:15.0:us` (this server's `/swml/ringback` serves one) |
+| `PARK_RINGBACK_SECONDS` | with `PARK_RINGBACK_URL` | The recording's length in seconds (`6` for `/swml/ringback`). `play` cannot loop, so the park repeats the URL to fill its 60 s; the server refuses to start without it rather than guess |
 | `APNS_TEAM_ID` | iOS | Apple Developer Team ID |
 | `APNS_KEY_ID` | iOS | Key ID of the `.p8` |
 | `APNS_P8_KEY` | iOS | Contents of the `.p8`. `\n`-escaped one-liners are accepted. |

@@ -2,7 +2,25 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
 
-import { decodeClaims, decodeHeader, signApnsToken, signGoogleAssertion } from './jwt.js';
+import { signApnsToken, signGoogleAssertion } from './jwt.js';
+
+/** Decodes a JWT's claims without verifying. */
+function decodeClaims(token: string): Record<string, unknown> {
+  const part = token.split('.')[1];
+  if (!part) {
+    throw new Error('Malformed JWT');
+  }
+  return JSON.parse(Buffer.from(part, 'base64url').toString('utf8')) as Record<string, unknown>;
+}
+
+/** Decodes a JWT's header without verifying. */
+function decodeHeader(token: string): Record<string, unknown> {
+  const part = token.split('.')[0];
+  if (!part) {
+    throw new Error('Malformed JWT');
+  }
+  return JSON.parse(Buffer.from(part, 'base64url').toString('utf8')) as Record<string, unknown>;
+}
 
 const ec = generateKeyPairSync('ec', {
   namedCurve: 'P-256',

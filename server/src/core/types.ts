@@ -34,8 +34,6 @@ export interface CallNotification {
   readonly correlationId: string;
   readonly from?: string;
   readonly fromName?: string;
-  /** Whether the native UI should offer video. Defaults to false. */
-  readonly hasVideo?: boolean;
   /**
    * Extra key/value data delivered in the push payload untouched.
    *
