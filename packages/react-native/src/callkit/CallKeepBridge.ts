@@ -31,6 +31,9 @@ import type { CallRegistryHost, PushPayload } from './types';
 
 /** The `didDisplayIncomingCall` payload, which callkeep types loosely. */
 interface DisplayEvent {
+  /** Set when CallKit refused the call: Focus, the block list, no entitlement. */
+  error?: string;
+  errorCode?: string;
   callUUID: string;
   handle: string;
   localizedCallerName: string;
@@ -249,7 +252,7 @@ export class CallKeepBridge {
   private readonly notified = new Set<string>();
   /** A notification let the app show over the lock screen; released with the last call. */
   private lockScreenHeld = false;
-  /** Calls Telecom refused to create a connection for; see handleConnectionFailed. */
+  /** Calls CallKit refused to show or Telecom refused to connect; see handleDisplayRefused and handleConnectionFailed. */
   private readonly refused = new Set<string>();
   private incomingChannelName = 'Incoming calls';
   private permissionsWait: { remove(): void } | null = null;
@@ -744,6 +747,7 @@ export class CallKeepBridge {
     this.registry.destroy();
     this._startCallRequested$.complete();
     this.heldStartRequests = [];
+    this.refused.clear();
     this.isSetup = false;
     this.setupPromise = null;
   }
@@ -955,6 +959,11 @@ export class CallKeepBridge {
   }
 
   private handleDidDisplayIncomingCall(event: DisplayEvent): void {
+    // 'CallUUIDAlreadyExists' means the call is on screen already.
+    if (event.errorCode && event.errorCode !== 'CallUUIDAlreadyExists') {
+      this.handleDisplayRefused(event.callUUID, event.errorCode);
+      return;
+    }
     const { callUUID, handle, localizedCallerName, fromPushKit, payload } = event;
     if (fromPushKit !== '1') {
       return;
@@ -997,6 +1006,23 @@ export class CallKeepBridge {
     });
     this.ensureTicking();
     this.applyHeldActions(uuid);
+  }
+
+  /**
+   * CallKit refused to show a call (a Focus mode that does not allow the
+   * caller, the block list, no entitlement). It has no such call, so an
+   * answer or decline requested from it fails, and callkeep only NSLogs
+   * that: the app's own Accept and Decline did nothing. The call's in-app
+   * actions now go straight to the SDK. A push entry that has no SDK call is
+   * ended, rather than adopted or left as a ringing push iOS chose not to ring.
+   */
+  private handleDisplayRefused(uuid: string, errorCode: string): void {
+    logger.warn(`CallKit refused to show call ${uuid} (${errorCode})`);
+    this.refused.add(uuid);
+    const entry = this.registry.entryForUuid(uuid);
+    if (entry?.state === 'pending-push' && !entry.call) {
+      this.registry.endCall(uuid);
+    }
   }
 
   private registerRemainingListeners(): void {
