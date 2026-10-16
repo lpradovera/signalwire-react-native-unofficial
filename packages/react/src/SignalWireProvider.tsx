@@ -1,5 +1,6 @@
 import { SignalWire } from '@signalwire/js';
 import React, { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { filter, merge } from 'rxjs';
 
 import { logger } from './logger';
 import { TokenSource } from './tokenSource';
@@ -34,7 +35,11 @@ export const SignalWireContext = createContext<SignalWireContextValue | null>(nu
 export interface SignalWireProviderProps {
   /**
    * Supplies authentication credentials. Memoize it — a new identity tears
-   * down the client and builds a fresh one. Pass this or `fetchToken`.
+   * down the client and builds a fresh one, and tearing down a client hangs
+   * up every call it has in progress. To rotate a token during a call, keep
+   * the same provider: return `expiry_at` from `authenticate()` and implement
+   * `refresh()`, which the SDK calls before the credential expires without
+   * touching the session. Pass this or `fetchToken`.
    */
   credentialProvider?: CredentialProvider;
   /**
@@ -50,8 +55,15 @@ export interface SignalWireProviderProps {
   /**
    * Platform layer. Omit on the web: the SDK falls through to browser globals.
    * `@signalwire/react-native` supplies one automatically.
+   *
+   * A function builds one platform per client: it is called for each client
+   * the provider builds, and that platform is disposed after the client is
+   * destroyed. A platform object is shared by every client and disposed when
+   * the provider unmounts or gets another platform; React.StrictMode's
+   * simulated unmount disposes it too, so pass a function for a platform
+   * that cannot be used after dispose().
    */
-  platform?: SignalWirePlatform;
+  platform?: SignalWirePlatform | (() => SignalWirePlatform);
   /**
    * Observes call lifecycle — used by native call UI. Its `bindClient` runs
    * for each new observer object, so memoize an observer whose `bindClient`
@@ -62,6 +74,71 @@ export interface SignalWireProviderProps {
   /** Extra SDK options, merged over the platform's. */
   options?: SignalWireOptions;
   children: React.ReactNode;
+}
+
+/** A promise that never settles: parks whatever awaits it. */
+const never = <T,>(): Promise<T> => new Promise<T>(() => undefined);
+
+/**
+ * Hands the client credentials only while it is wanted. A discarded client's
+ * startup (the constructor's resolveCredentials().then(init) chain) is still
+ * running and cannot be cancelled; parked here, it never gets as far as
+ * connecting. `this` stays the app's provider.
+ */
+function whileWanted(provider: CredentialProvider, discarded: () => boolean): CredentialProvider {
+  const gate = async <T,>(run: () => Promise<T>): Promise<T> => {
+    if (discarded()) return never<T>();
+    const value = await run();
+    return discarded() ? never<T>() : value;
+  };
+  const gated: CredentialProvider = {
+    authenticate: (context) => gate(() => provider.authenticate(context))
+  };
+  if (provider.refresh) {
+    gated.refresh = (...args) => gate(() => provider.refresh!(...args));
+  }
+  return gated;
+}
+
+/**
+ * Tears a client down, now or as soon as it can be.
+ *
+ * A client discarded while it was starting would go on to connect, register
+ * and reconnect with nobody holding it: its startup (the constructor's
+ * resolveCredentials().then(init) chain) cannot be cancelled. @signalwire/js
+ * 4.0.0-rc.2's destroy() throws there, since it dereferences the session
+ * connect() builds; rc.5's returns, but the startup still connects
+ * afterwards. So a client without a session yet is destroyed once its startup
+ * has settled: it registered (connected, with `skipRegister`), or it reported
+ * an error while not connected. Not sooner: the startup still sends requests,
+ * and the SDK throws an uncaught ReferenceError for a request made on a
+ * destroyed transport.
+ */
+function destroyClient(instance: SignalWire, skipRegister: boolean): void {
+  if (instance.session) {
+    try {
+      instance.destroy();
+    } catch (destroyError) {
+      logger.warn('Client destroy threw:', destroyError);
+    }
+    return;
+  }
+  logger.debug('Client has no session yet; destroying it once it has started');
+  const started$ = skipRegister ? instance.isConnected$ : instance.isRegistered$;
+  let done = false;
+  const retry = merge(
+    started$.pipe(filter(Boolean)),
+    instance.errors$.pipe(filter(() => !instance.isConnected))
+  ).subscribe(() => {
+    if (done || !instance.session) return;
+    done = true;
+    try {
+      instance.destroy();
+    } catch (destroyError) {
+      logger.warn('Client destroy threw:', destroyError);
+    }
+    retry.unsubscribe();
+  });
 }
 
 /**
@@ -99,6 +176,9 @@ export function SignalWireProvider({
   const sourceRef = useRef<TokenSource | null>(null);
 
   useEffect(() => {
+    let discarded = false;
+    const ownPlatform = typeof platform === 'function' ? platform() : undefined;
+    const clientPlatform = typeof platform === 'function' ? ownPlatform : platform;
     // Built with the client, inside the effect, so a StrictMode remount gets
     // a fresh source instead of one its first cleanup disposed.
     const source = fetchToken ? new TokenSource(fetchToken) : null;
@@ -113,13 +193,16 @@ export function SignalWireProvider({
       setTokenStatus(null);
     }
     const stopWatching = source
-      ? (platform?.watchForeground ?? watchDocumentVisible)(() => source.renewIfDue())
+      ? (clientPlatform?.watchForeground ?? watchDocumentVisible)(() => source.renewIfDue())
       : undefined;
 
-    const instance = new SignalWire(source?.credentialProvider ?? credentialProvider, {
-      ...platform?.options,
-      ...options
-    });
+    const clientOptions = { ...clientPlatform?.options, ...options };
+    // One of the two is set: checked above.
+    const credentials = (source?.credentialProvider ?? credentialProvider) as CredentialProvider;
+    const instance = new SignalWire(
+      whileWanted(credentials, () => discarded),
+      clientOptions
+    );
     boundForGood.current = null;
 
     setClient(instance);
@@ -143,6 +226,7 @@ export function SignalWireProvider({
     );
 
     return () => {
+      discarded = true;
       subscription.unsubscribe();
       tokenSubscription?.unsubscribe();
       stopWatching?.();
@@ -151,13 +235,9 @@ export function SignalWireProvider({
         sourceRef.current = null;
       }
       setClient(null);
-      try {
-        instance.destroy();
-      } catch (destroyError) {
-        logger.warn('Client destroy threw:', destroyError);
-      }
+      destroyClient(instance, clientOptions.skipRegister === true);
       // After destroy: the SDK's teardown may still touch platform globals.
-      platform?.dispose();
+      ownPlatform?.dispose();
     };
     // `platform`, `observer` and `options` are intentionally excluded:
     // rebuilding the client on every render of an inline object literal would
@@ -185,6 +265,15 @@ export function SignalWireProvider({
     boundForGood.current = client;
     return undefined;
   }, [client, observer]);
+
+  // A shared platform object outlives the clients. Declared after the client
+  // effect, so on unmount it is disposed after the last client is destroyed.
+  useEffect(() => {
+    if (!platform || typeof platform === 'function') {
+      return undefined;
+    }
+    return () => platform.dispose();
+  }, [platform]);
 
   const value = useMemo<SignalWireContextValue>(
     () => ({ client, error, observer, tokenStatus, renewTokenIfDue }),

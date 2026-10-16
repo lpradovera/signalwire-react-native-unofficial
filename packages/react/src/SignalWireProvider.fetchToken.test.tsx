@@ -11,6 +11,8 @@ import type { SignalWirePlatform } from './types';
 import type { CredentialProvider } from '@signalwire/js';
 
 const harness = {
+  // A started client: destroy() tears it down at once (see destroyClient).
+  session: {},
   destroy: jest.fn(),
   isConnected$: new BehaviorSubject(false),
   isRegistered$: new BehaviorSubject(false),
@@ -89,14 +91,17 @@ describe('SignalWireProvider fetchToken', () => {
     expect(fetchToken).toHaveBeenCalledTimes(2);
   });
 
-  it('reports no token status for an app that passes a credentialProvider', () => {
+  it('reports no token status for an app that passes a credentialProvider', async () => {
     const credentialProvider = { authenticate: jest.fn(async () => ({ token: 'plain' })) };
     render(
       <SignalWireProvider credentialProvider={credentialProvider}>
         <StatusProbe />
       </SignalWireProvider>
     );
-    expect(constructed[0]).toBe(credentialProvider);
+    // The client gets the app's provider behind the discard gate, so it is
+    // the app's authenticate() that answers.
+    await expect(constructed[0]?.authenticate({} as never)).resolves.toEqual({ token: 'plain' });
+    expect(credentialProvider.authenticate).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('token').textContent).toBe('none');
   });
 

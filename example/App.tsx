@@ -11,7 +11,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { IncomingCallSheet } from './src/components/IncomingCallSheet';
 import { CallScreen } from './src/screens/CallScreen';
-import { ConnectScreen } from './src/screens/ConnectScreen';
+import { ConnectScreen, DisconnectedScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { useBridgeAnswer } from './src/useBridgeAnswer';
 import { useCallBack } from './src/useCallBack';
@@ -22,8 +22,11 @@ import { useDeviceRegistration } from './src/useDeviceRegistration';
 import type { Call, CredentialProvider } from '@signalwire/js';
 
 function Shell(): React.JSX.Element {
-  const { isConnected } = useSignalWire();
+  const { isConnected, connect, disconnect } = useSignalWire();
   const [activeCall, setActiveCall] = useState<Call | null>(null);
+  // Set by the Disconnect button: the SDK does not reconnect after an explicit
+  // disconnect, so this offers Connect instead of "Connecting…" forever.
+  const [disconnected, setDisconnected] = useState(false);
   // Must match the subscriber reference the token was minted for.
   useDeviceRegistration(SUBSCRIBER_REFERENCE);
   // Answering a parked-caller push means dialling, not answering — see the hook.
@@ -39,6 +42,17 @@ function Shell(): React.JSX.Element {
     return () => subscription.unsubscribe();
   }, []);
 
+  if (disconnected) {
+    return (
+      <DisconnectedScreen
+        onConnect={() => {
+          setDisconnected(false);
+          void connect();
+        }}
+      />
+    );
+  }
+
   if (!isConnected) {
     return <ConnectScreen />;
   }
@@ -52,7 +66,13 @@ function Shell(): React.JSX.Element {
 
   return (
     <>
-      <HomeScreen onCallStarted={setActiveCall} />
+      <HomeScreen
+        onCallStarted={setActiveCall}
+        onDisconnect={() => {
+          setDisconnected(true);
+          void disconnect();
+        }}
+      />
       <IncomingCallSheet onAnswered={setActiveCall} />
     </>
   );

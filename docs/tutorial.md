@@ -153,7 +153,10 @@ export default function App() {
 
 `credentialProvider` is memoised deliberately: the provider rebuilds its client
 whenever that value changes, and an inline object literal is a new value on
-every render.
+every render. A rebuild destroys the old client, and with it hangs up any call
+in progress, so do not rotate a token by changing this value during a call:
+return `expiry_at` from `authenticate()` and implement `refresh()`, which the
+SDK calls before the credential expires while the session carries on.
 
 **Checkpoint:** the app says "Online as …". If it says "Connecting…" forever,
 your token endpoint is the first thing to check — on Android an emulator cannot
