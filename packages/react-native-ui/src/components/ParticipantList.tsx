@@ -1,5 +1,5 @@
 import { useCall, useObservable } from '@signalwire/react';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 
 import { useSignalWireTheme } from '../theme/ThemeProvider';
@@ -14,7 +14,8 @@ export interface ParticipantListProps {
 }
 
 /**
- * Participants, with live talking and mute state.
+ * The other participants, with live talking and mute state. The SDK's list
+ * includes the local user (`call.self`), who is left out here.
  *
  * Talking state comes from the SDK's `isTalking$`, not from audio analysis —
  * React Native has no `AudioContext`, so metering locally is not an option.
@@ -25,7 +26,11 @@ export function ParticipantList({
   testID
 }: ParticipantListProps): React.JSX.Element {
   const theme = useSignalWireTheme();
-  const { participants } = useCall(call);
+  const { participants: everyone, self } = useCall(call);
+  const participants = useMemo(
+    () => (self ? everyone.filter((participant) => participant.id !== self.id) : everyone),
+    [everyone, self]
+  );
 
   return (
     <FlatList
@@ -55,6 +60,9 @@ function ParticipantRow({ participant }: { participant: CallParticipant }): Reac
   return (
     <View
       testID={`sw-participant-${participant.id}`}
+      // One element, so VoiceOver reads the composed label (the talking
+      // state lives only there) rather than each Text in turn.
+      accessible
       accessibilityRole="text"
       accessibilityLabel={`${label}, ${state}`}
       style={[

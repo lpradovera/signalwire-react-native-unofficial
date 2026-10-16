@@ -39,9 +39,9 @@ function CallScreen({ call, onEnd }: { call: Call; onEnd: () => void }) {
 | Component | Purpose |
 | --- | --- |
 | `CallControls` | Mute, camera, speaker toggle, iOS audio output button and hang up |
-| `CallStatus` | Status pill, showing call errors when present |
+| `CallStatus` | Status pill, showing a fatal call error when there is one |
 | `Dialpad` | DTMF keypad; works with or without a call |
-| `ParticipantList` | Participants with live talking and mute state |
+| `ParticipantList` | The other participants, with live talking and mute state |
 | `DeviceSelector` | Microphone or camera picker |
 | `IncomingCallSheet` | In-app inbound call sheet |
 | `CallOverlayHost` | Optional root overlay the incoming sheet draws in |
@@ -104,8 +104,15 @@ a dependency (`react-native-svg`) or bundled glyphs, and text labels are legible
 to screen readers without extra `accessibilityLabel` plumbing.
 
 Every control carries an `accessibilityRole`, a label and — where it toggles —
-`accessibilityState`. If you want icons, compose your own bar out of
-`ControlButton` or the hooks directly; that path is deliberately open.
+`accessibilityState`. A toggle keeps one accessible name (`Mute`, `Camera off`,
+`Speaker`) and reports its state as selected, while its visible text says what a
+tap does (`Unmute`) or, for the speaker, which route the call is on.
+
+`ControlButton` draws text only: it has no icon or children slot. If you want
+icons, build your own button and drive it with the hooks directly (`useCall`
+for mute, camera and hang up, `useAudioRoute` from
+`@signalwire/react-native/audio` for the speaker); that path is deliberately
+open.
 
 ## What is absent, and why
 
