@@ -536,12 +536,16 @@ audio mode and takes audio focus for the call. The package still uses
 incall-manager to keep the screen on during the call and to blank it while
 the phone is at the ear on the receiver (its proximity sensor).
 
-The routes Telecom offers are read from the call's `CallAudioState` by the
-package's Android library (callkeep reports only the route), so rebuild the
-app after upgrading. Before the rebuild, the route still follows Telecom and
-every route can be asked for. Choosing between two Bluetooth devices isn't
-possible yet: callkeep asks Telecom for "Bluetooth", which uses the active
-device.
+The routes Telecom offers come with each of callkeep's reports when
+callkeep is the SignalWire fork (4.4.0-signalwire, which adds them and the
+Bluetooth device to `didChangeAudioRoute`); the state before the first
+report, and every report from stock callkeep (which reports only the route),
+is read from the call's `CallAudioState` by the package's Android library, so
+rebuild the app after upgrading. Before the rebuild, the route still follows
+Telecom and every route can be asked for. Choosing between two Bluetooth
+devices isn't offered yet: the package asks Telecom for "Bluetooth", which
+uses the active device (the fork's `setAudioRouteBluetoothDevice` can pick
+one).
 
 A call the bridge doesn't track (an app that calls
 `getAudioRouteController().start(media)` itself), or one Telecom refused, is

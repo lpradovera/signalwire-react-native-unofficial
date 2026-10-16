@@ -21,10 +21,12 @@ import com.facebook.react.bridge.WritableMap;
  * Reads a call's audio state as Telecom has it: the route, the routes Telecom
  * can switch the call to, and the Bluetooth device in use.
  *
- * react-native-callkeep sends only the route (`didChangeAudioRoute`'s
+ * Stock react-native-callkeep sends only the route (`didChangeAudioRoute`'s
  * `output`), and its getAudioRoutes() lists AudioManager's devices rather than
  * the routes Telecom offers the call, so the package reads the call's
- * CallAudioState itself. The connection is looked up through callkeep's
+ * CallAudioState itself. The SignalWire callkeep fork sends the routes and the
+ * Bluetooth device with each report; this reader still gives the state before
+ * the first report. The connection is looked up through callkeep's
  * VoiceConnectionService by reflection (see IncomingCallNotificationModule),
  * so this library still builds without callkeep.
  */
