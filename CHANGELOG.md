@@ -91,8 +91,13 @@
   and the status the next call starts from is read after its session
   starts, not taken from the previous call.
 - `AudioRouteController` checks that incall-manager's native module is
-  linked (an app installed without a rebuild gets `MissingPeerDependencyError`
-  instead of a warning on every call).
+  linked: in an app installed without a rebuild its constructor throws
+  `MissingPeerDependencyError`. The CallKit bridge still logs one warning per
+  call there, now `Audio routing unavailable: MissingPeerDependencyError ...`
+  (it was `Failed to start the audio session:` with a TypeError), and the
+  call runs without routing. `useAudioRoute()` logs that error and returns
+  `'earpiece'` with setters that do nothing, so `CallControls` (which calls
+  it even with the speaker button hidden) still renders.
 - `AudioRouteController.setRoute` no longer takes a `force` argument.
 - `stop()` makes no native call after `InCallManager.stop()`. It used to turn
   the speaker off afterwards, which after a video call switched the idle
