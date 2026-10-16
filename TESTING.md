@@ -104,8 +104,13 @@ build-time entry consumed by the config-plugin loader, not by TypeScript, so it
 legitimately ships no declarations.
 
 `verify:prebuild` expects:
-`✓ 10 Android permissions and 4 iOS Info.plist entries applied by the plugin.`
-It needs no Xcode, Android SDK, or CocoaPods — prebuild only generates sources.
+`✓ 10 Android permissions, 4 iOS Info.plist entries, the VoIP push hook (generated and compiled), and Firebase on Android only.`
+followed by a passing `node --test` run that checks it left `example/ios` and
+`example/android` alone. It needs no Xcode, Android SDK, or CocoaPods —
+prebuild only generates sources — and it prebuilds a scratch copy of
+`example/` under `.tmp/verify-prebuild/`, so your own native projects, Pods
+and signing edits are never touched. It ignores `example/.env` and checks the
+committed configuration with the placeholder app id.
 
 Coverage, if you want it:
 

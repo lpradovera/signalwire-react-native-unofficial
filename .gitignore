@@ -15,6 +15,10 @@ example/.expo-export-check/
 server/.data/
 .env
 .env.local
+# Expo also loads .env.<mode>.local (.env.development.local, ...). Non-local
+# .env.<mode> files are committable by Expo convention; here .env itself is the
+# secrets file, so keep those out of the repository too if you create them.
+.env*.local
 
 .DS_Store
 
@@ -29,13 +33,26 @@ docs/superpowers/
 # with is a send-as-your-project credential. Never committed.
 google-services.json
 GoogleService-Info.plist
+# The service account key itself, under the name Firebase downloads it with
+# (docs/push-setup.md 2b step 4).
+*-firebase-adminsdk-*.json
+
+# APNs and signing credentials: the .p8 key, a VoIP Services certificate
+# (docs/push-setup.md 1a) and its PEM export, Android keystores.
+*.p8
+*.p12
+*.pem
+*.jks
+*.keystore
+
+# Repository-local scratch space (verify:prebuild's copy of example/)
+.tmp/
 
 # Editor swap files. A vim .swp of a .env holds the .env's contents:
 # server/.env.swp was committed and published with live credentials.
 *.swp
 *.swo
 *~
-*.p8
 
 # Dev environment logs from scripts/dev.sh
 .dev/
