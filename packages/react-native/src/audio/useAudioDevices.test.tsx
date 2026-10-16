@@ -60,6 +60,15 @@ describe('useAudioDevices', () => {
     expect(incallIosRoutes.getAudioDeviceStatus).toHaveBeenCalledTimes(1);
   });
 
+  it('lets go of the native subscription when the last hook unmounts, with no grace period', async () => {
+    installIncallIosRoutes(deviceStatus('EARPIECE'));
+    const { unmount } = await render(<Probe id="devices" />);
+    await act(async () => undefined);
+    const remove = jest.spyOn(wrapper.addListener.mock.results[0]!.value as { remove(): void }, 'remove');
+    await act(async () => unmount());
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
   it('gives every mounted hook the same status', async () => {
     installIncallIosRoutes(deviceStatus('EARPIECE'));
     const { getByTestId } = await render(
