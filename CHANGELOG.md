@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### `fetchToken`: tokens that renew themselves (alpha)
+
+- New `fetchToken` prop on `SignalWireProvider` (`@signalwire/react` and
+  `@signalwire/react-native`): `() => Promise<{ token, expiresAt? }>`. The
+  client connects with it, `expiry_at` is set from `expiresAt` (Unix seconds,
+  milliseconds or ISO 8601), and `@signalwire/js`'s `refresh()` is wired to
+  it. The token is renewed a fifth of its lifetime before expiry (10–60 s),
+  on foreground and on a call push when near or past expiry; failures retry
+  with a capped backoff (1 s doubling to 30 s); a 401 or 403 stops and is
+  reported. See `docs/tokens.md`.
+- New `useSignalWire().tokenStatus` (`'fetching' | 'ready' | 'renewing' |
+  'retrying' | 'unauthorized'`, with `expiresAt` and `error`; `null` with a
+  `credentialProvider`), `TokenFetchError`, and the types `FetchToken`,
+  `FetchedToken`, `TokenState`, `TokenStatus`. The context gains optional
+  `tokenStatus` and `renewTokenIfDue`; `SignalWirePlatform` gains an optional
+  `watchForeground`, which `createReactNativePlatform()` implements with
+  `AppState`.
+- `credentialProvider` is now optional (pass it or `fetchToken`). Apps that
+  pass one are unchanged.
+- Example server: `POST /token` mints with an expiry (`TOKEN_TTL_SECONDS`,
+  default 7200) and returns `expires_at`. The example app uses `fetchToken`.
+
 ### CallKit audio belongs to its call
 
 - The audio session belongs to the call it was started for. Another call

@@ -165,13 +165,17 @@ key id in the header, and a 64-byte JOSE signature rather than DER.
 ## Subscriber tokens
 
 ```
-POST /token  ->  { token, reference }
+POST /token  ->  { token, reference, expires_at }
 ```
 
 Mints a Fabric subscriber token so the app never holds project credentials. A
 subscriber token is short-lived and scoped to one subscriber; the project ID and
 API token that mint it are neither, and anyone who unzips an IPA containing them
 could mint tokens for every subscriber in the space.
+
+Each token is minted with `expire_at` set `TOKEN_TTL_SECONDS` ahead (default
+7200, at least 60), and the response's `expires_at` (Unix seconds) says when it
+ends, so the app's `fetchToken` can renew it in time (see `docs/tokens.md`).
 
 ```bash
 SIGNALWIRE_SPACE=example.signalwire.com \

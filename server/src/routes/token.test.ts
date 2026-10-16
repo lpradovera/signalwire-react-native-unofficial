@@ -9,6 +9,9 @@ import { createDevAuthenticateCaller, createTokenRoutes } from './token.js';
 
 import type { Server } from 'node:http';
 
+const NOW_MS = Date.UTC(2026, 9, 16, 12, 0, 0);
+const NOW_S = NOW_MS / 1000;
+
 /** Records what the minter sent upstream, and replies with `reply`. */
 function stubFetch(reply: { status: number; body: unknown }): {
   fetchImpl: typeof fetch;
@@ -36,6 +39,7 @@ function buildApp(options: {
   reply?: { status: number; body: unknown };
   authenticateCaller?: Parameters<typeof createTokenRoutes>[0]['authenticateCaller'];
   configured?: boolean;
+  ttlSeconds?: number;
 }) {
   const { fetchImpl, calls } = stubFetch(options.reply ?? { status: 200, body: { token: 'sat-1' } });
 
@@ -50,7 +54,9 @@ function buildApp(options: {
             space: 'example.signalwire.com',
             projectId: 'proj',
             apiToken: 'secret-api-token',
-            fetchImpl
+            fetchImpl,
+            ttlSeconds: options.ttlSeconds,
+            now: () => NOW_MS
           }),
           authenticateCaller: options.authenticateCaller ?? createDevAuthenticateCaller('default-ref')
         });
@@ -100,7 +106,11 @@ describe('POST /token', () => {
     const response = await post(built);
 
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { token: 'sat-1', reference: 'default-ref' });
+    assert.deepEqual(await response.json(), {
+      token: 'sat-1',
+      reference: 'default-ref',
+      expires_at: NOW_S + 7200
+    });
   });
 
   it('sends basic auth and the reference to the Fabric endpoint', async () => {
@@ -109,11 +119,19 @@ describe('POST /token', () => {
 
     const [call] = built.calls;
     assert.equal(call?.url, 'https://example.signalwire.com/api/fabric/subscribers/tokens');
-    assert.deepEqual(call?.body, { reference: 'sub-42' });
+    assert.deepEqual(call?.body, { reference: 'sub-42', expire_at: NOW_S + 7200 });
     assert.equal(
       call?.authorization,
       `Basic ${Buffer.from('proj:secret-api-token').toString('base64')}`
     );
+  });
+
+  it('mints with the configured lifetime and returns when it ends', async () => {
+    const built = buildApp({ ttlSeconds: 120 });
+    const response = await post(built, { reference: 'sub-42' });
+
+    assert.equal((built.calls[0]?.body as { expire_at: number }).expire_at, NOW_S + 120);
+    assert.equal((await response.json()).expires_at, NOW_S + 120);
   });
 
   it('rejects when the caller cannot be authenticated', async () => {

@@ -26,13 +26,25 @@ function Dialer() {
 <SignalWireProvider credentialProvider={credentials}>
   <Dialer />
 </SignalWireProvider>;
+
+// Or let the provider fetch, renew and retry the token itself:
+<SignalWireProvider fetchToken={async () => ({ token, expiresAt })}>
+  <Dialer />
+</SignalWireProvider>;
 ```
+
+`fetchToken` renews the token ahead of `expiresAt` and when the page becomes
+visible again, retries failures with a backoff, and reports a 401 or 403 (an
+error with that `status`, such as `TokenFetchError`) through
+`useSignalWire().tokenStatus` and `error`. A host platform can supply
+`watchForeground` for its own foreground signal. See the repository's
+`docs/tokens.md`.
 
 ## Hooks
 
 | Hook | Returns |
 | --- | --- |
-| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `dial`, `disconnect` |
+| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `tokenStatus`, `dial`, `disconnect` |
 | `useCall(call)` | `status`, `participants`, `self`, streams, mute state, `error`, and call actions |
 | `useIncomingCalls()` | `calls`, `answer`, `reject` |
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` |
