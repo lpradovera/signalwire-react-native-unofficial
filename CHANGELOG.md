@@ -21,6 +21,12 @@
   so a build without them never runs it (a throw there is fatal outside an
   entry-file load). `registerAndroidCallPush()` and `watchFcmToken()` no
   longer throw on a build that links Firebase without a `google-services.json`.
+- Firebase messaging is resolved once, while the package's push module loads,
+  instead of on each use. A `require` from a React effect (`watchPushToken`)
+  is outside every module load, where Metro reports a throw as fatal before
+  any `catch` runs: a release build without Firebase configured died about
+  half a second after launch with `Requiring unknown module
+  "@react-native-firebase/messaging"`. Why push is off is logged once, at info.
 - `getFcmToken()` (and so `watchPushToken()`) asks for `POST_NOTIFICATIONS` on
   Android 13 and later; React Native Firebase's `requestPermission` does not
   ask on Android.
