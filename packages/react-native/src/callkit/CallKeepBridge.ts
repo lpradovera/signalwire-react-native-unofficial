@@ -336,6 +336,12 @@ export class CallKeepBridge {
    * the call straight back up rather than leaving it live with no native UI.
    */
   bindBridgeCall(uuid: string, call: Call): boolean {
+    // Bound already: trackCall's claim binds the dial's call, and the app
+    // binds it again once the dial returns. Binding again would watch it
+    // twice (two connected reports, two audio waits, two remote ends).
+    if (this.registry.entryForUuid(uuid)?.call === call) {
+      return this.registry.isLive(uuid);
+    }
     const bound = this.registry.bindCall(uuid, call);
     if (bound) {
       this.watchCallStatus(call);
@@ -697,17 +703,21 @@ export class CallKeepBridge {
    * endCall action for any of them. Each live entry is ended as a native end
    * would end it, which hangs up its SDK call; a ringing push is turned down.
    * Left in place, an entry outlived its call: the next call found the
-   * session still started for it, and ringing-push consumers still saw it.
+   * session still owned by it, and ringing-push consumers still saw it.
    */
   private handleProviderReset(): void {
     logger.debug('CallKit provider reset; ending every call');
     for (const entry of this.registry.entries) {
-      const rejectedPush = entry.state === 'pending-push' && entry.intent === 'reject';
-      if (entry.state !== 'ended' && !rejectedPush) {
+      if (this.registry.isLive(entry.uuid)) {
         this.handleEndCall(entry.uuid);
       }
     }
-    this.stopAudio();
+    if (this.audioUuid !== null) {
+      this.stopAudio(this.audioUuid);
+    }
+    // Ended calls release the session they own; the activation went with
+    // the reset either way.
+    this.setAudioSessionActive(false);
   }
 
   private setAudioSessionActive(active: boolean): void {
@@ -810,10 +820,13 @@ export class CallKeepBridge {
   /**
    * Starts the session for `uuid`, which then owns it. While another live
    * call owns it (a call waiting behind it was answered), the session is left
-   * as it is: `AudioRouteController.start` is first-wins either way.
+   * as it is: `AudioRouteController.start` is first-wins either way. A
+   * session handed over by an ended owner (see
+   * {@link releaseAudioIfOwnerEnded}) is taken as it is, with the route and
+   * mode the ended call left.
    */
   private startAudio(uuid: string, media: 'audio' | 'video'): void {
-    if (this.audioUuid !== null && this.audioUuid !== uuid) {
+    if (this.audioUuid !== null && this.audioUuid !== uuid && this.registry.isLive(this.audioUuid)) {
       logger.debug(`Audio session belongs to ${this.audioUuid}; not starting it for ${uuid}`);
       return;
     }
@@ -825,11 +838,31 @@ export class CallKeepBridge {
     }
   }
 
-  /** Releases the session the ending call owns; another call ending leaves it alone. */
+  /**
+   * Releases the session the ending call owns; another call ending leaves it
+   * alone.
+   *
+   * While another call is live, the ended owner's session is handed over
+   * rather than stopped: the next call to start audio takes it as it is, and
+   * it is stopped once no live call is left. With End & Accept, CallKit sends
+   * the ending call's endCall before the accepted call's answerCall, while it
+   * moves the session from one to the other. incall-manager's stop() there
+   * would run setActive:NO on the session CallKit is handing to the accepted
+   * call; CallKit deactivates it itself if it has to (didDeactivateAudioSession).
+   */
   private releaseAudioIfOwnerEnded(): void {
-    if (this.audioUuid !== null && !this.registry.isLive(this.audioUuid)) {
-      this.stopAudio(this.audioUuid);
+    const owner = this.audioUuid;
+    if (owner === null || this.registry.isLive(owner)) {
+      return;
     }
+    const next = this.registry.entries.find(
+      (entry) => entry.uuid !== owner && this.registry.isLive(entry.uuid)
+    );
+    if (next) {
+      logger.debug(`Call ${owner} ended while ${next.uuid} is live; leaving the session up for it`);
+      return;
+    }
+    this.stopAudio(owner);
   }
 
   private stopAudio(uuid: string): void {

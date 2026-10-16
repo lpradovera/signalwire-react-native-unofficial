@@ -193,6 +193,18 @@
   instead of joining the caller. New `CallRegistry.isLive(uuid)` tells an
   app's bridge hook whether to dial at all.
 - `CallKeepBridge.destroy()` releases the session it started.
+- With End & Accept the session is handed to the accepted call instead of
+  being stopped: CallKit sends the ended call's endCall before the accepted
+  call's answerCall, and incall-manager's `stop()` there deactivated the
+  session CallKit was handing over. Whenever the owner ends while another
+  call is live, the next call to start audio takes the session as it is
+  (route and mode included), and it is stopped once no live call is left.
+- A CallKit provider reset ends every live call as a native end would: its
+  SDK call is hung up, a ringing push is turned down, and the session is
+  released. CallKit sends no endCall action for the calls it drops.
+- `bindBridgeCall()` on a call already bound to the entry (trackCall's claim
+  binds it, and the app binds it again after the dial) does nothing, so the
+  call is watched once: one connected report, one audio start, one end.
 
 ## 0.1.0
 
