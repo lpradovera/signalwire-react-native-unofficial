@@ -39,18 +39,31 @@ export interface CallEntry {
   readonly fuseDeadline: number | null;
 }
 
+/**
+ * Why a native call ended, as the registry reports it to its host.
+ *
+ * - `'missed'`: a push rang until the fusion deadline, unanswered.
+ * - `'remote'`: the SDK call ended from the other side.
+ * - `'local'`: ended on this device (the native UI, or the app's `endCall`).
+ * - `'failed'`: the app gave up on it (`endCall(uuid, 'failed')`), or an
+ *   answered push never got its call.
+ * - `'declined'`: the user declined a push before its SDK call existed.
+ * - `'duplicate'`: a second native display of a call already shown.
+ */
+export type CallEndReason = 'missed' | 'remote' | 'local' | 'failed' | 'declined' | 'duplicate';
+
 /** Everything the registry needs from the native layer. */
 export interface CallRegistryHost {
   displayIncomingCall(uuid: string, handle: string, displayName: string): void;
   startOutgoingCall(uuid: string, handle: string, displayName: string): void;
   reportOutgoingConnected(uuid: string): void;
-  reportCallEnded(uuid: string, reason: 'missed' | 'remote' | 'local'): void;
+  reportCallEnded(uuid: string, reason: CallEndReason): void;
   generateUuid(): string;
   now(): number;
 }
 
 export interface CallRegistryOptions {
   host: CallRegistryHost;
-  /** How long a push entry may wait for its SDK call. Default 20000. */
+  /** How long a push entry may wait for its SDK call, in ms. Default 45000. */
   fusionTimeoutMs?: number;
 }

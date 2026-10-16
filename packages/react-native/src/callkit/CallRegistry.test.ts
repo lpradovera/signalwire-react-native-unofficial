@@ -204,7 +204,7 @@ describe('CallRegistry — intent buffering', () => {
     expect(() => registry.applyIntent('nope', 'answer')).not.toThrow();
   });
 
-  it('reports the call ended when a buffered reject expires unfused', () => {
+  it('reports the native call ended, as declined, when a reject is buffered', () => {
     const host = createHost();
     const registry = new CallRegistry({ host, fusionTimeoutMs: 1000 });
     const uuid = registry.reportIncomingPush({ callId: 'c1' });
@@ -213,7 +213,8 @@ describe('CallRegistry — intent buffering', () => {
     host.clock.value += 1001;
     registry.tick();
 
-    expect(host.reportCallEnded).toHaveBeenCalledWith(uuid, 'missed');
+    expect(host.reportCallEnded).toHaveBeenCalledWith(uuid, 'declined');
+    expect(host.reportCallEnded).not.toHaveBeenCalledWith(uuid, 'missed');
   });
 });
 
@@ -581,6 +582,323 @@ describe('CallRegistry — ending', () => {
     host.clock.value += 120_000;
     registry.tick();
 
+    expect(registry.entryForUuid(uuid)?.state).toBe('ended');
+  });
+});
+
+describe('CallRegistry — UUID case', () => {
+  // callkeep's iOS module reports every CallKit action with
+  // `[action.callUUID.UUIDString lowercaseString]`, while a PushKit display
+  // (or the cached launch push) carries the UUID as the push or
+  // `[[NSUUID UUID] UUIDString]` spelled it: upper-case.
+  const UPPER = 'E621E1F8-C36C-495A-93FC-0C247A3E6E5F';
+  const LOWER = UPPER.toLowerCase();
+
+  it('applies a lower-cased native answer to an entry adopted upper-case', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    registry.adoptNativeEntry({ uuid: UPPER, callId: 'c1' });
+    const asked: string[] = [];
+    registry.answerRequested$.subscribe((entry) => asked.push(entry.uuid));
+
+    registry.applyIntent(LOWER, 'answer');
+
+    expect(asked).toEqual([LOWER]);
+    expect(registry.entryForUuid(LOWER)?.intent).toBe('answer');
+    expect(registry.entryForUuid(UPPER)).toBe(registry.entryForUuid(LOWER));
+    expect(registry.isLive(LOWER)).toBe(true);
+  });
+
+  it('keeps one entry when the same call is adopted in either case', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    registry.adoptNativeEntry({ uuid: UPPER, callId: 'c1' });
+    registry.adoptNativeEntry({ uuid: LOWER, data: { bridgeToken: 't' } });
+
+    expect(registry.entries).toHaveLength(1);
+    expect(registry.entries[0]?.data).toEqual({ bridgeToken: 't' });
+  });
+
+  it('ends an upper-case entry from a lower-cased native end', () => {
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    registry.adoptNativeEntry({ uuid: UPPER, callId: 'c1' });
+    const call = createCall('c1');
+    registry.attachIncomingCall(call as never);
+
+    registry.endCall(LOWER);
+
+    expect(call.hangup).toHaveBeenCalled();
+    expect(registry.entryForUuid(UPPER)?.state).toBe('ended');
+  });
+
+  it('keys an entry the host minted upper-case the way callkeep will report it', () => {
+    const host = createHost();
+    host.generateUuid.mockReturnValue(UPPER);
+    const registry = new CallRegistry({ host });
+
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+
+    expect(uuid).toBe(LOWER);
+    expect(host.displayIncomingCall).toHaveBeenCalledWith(LOWER, 'Unknown', 'Unknown caller');
+  });
+});
+
+describe('CallRegistry — a push for a call that is already here', () => {
+  it('does not show a second call when the push follows its SDK invite', () => {
+    // Fusion topology, app in the foreground: the websocket invite wins the
+    // race and the push for the same call id arrives after it.
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    const call = createCall('c1');
+    registry.attachIncomingCall(call as never);
+    const fused = registry.uuidForCall(call as never);
+
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+
+    expect(uuid).toBe(fused);
+    expect(registry.entries).toHaveLength(1);
+    expect(host.displayIncomingCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not ring again for a push whose call has already ended', () => {
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    const call = createCall('c1');
+    registry.attachIncomingCall(call as never);
+    const fused = registry.uuidForCall(call as never)!;
+    registry.reportRemoteEnded(fused);
+
+    expect(registry.reportIncomingPush({ callId: 'c1' })).toBe(fused);
+    expect(host.displayIncomingCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends a native display that duplicates a call already fused', () => {
+    // iOS: PushKit reported the push to CallKit natively (a second CallKit
+    // call, which iOS shows as call waiting) after the SDK invite was shown.
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    const call = createCall('c1');
+    registry.attachIncomingCall(call as never);
+    const fused = registry.uuidForCall(call as never)!;
+
+    registry.adoptNativeEntry({ uuid: 'native-dup', callId: 'c1' });
+
+    expect(host.reportCallEnded).toHaveBeenCalledWith('native-dup', 'duplicate');
+    expect(registry.isLive('native-dup')).toBe(false);
+    expect(registry.entryForUuid(fused)?.call).toBe(call);
+    // The duplicate is not offered to the app to answer or draw.
+    expect(registry.entries.filter((entry) => registry.isLive(entry.uuid))).toHaveLength(1);
+  });
+});
+
+describe('CallRegistry — one answer, one call', () => {
+  it('asks once for an answer, not again for a subscriber that mounts while it is dialled', () => {
+    // A re-subscription during the dial (an effect whose deps change, a
+    // second screen with the same recipe, StrictMode's double mount) replayed
+    // the entry, and a second dial raced the first.
+    const registry = new CallRegistry({ host: createHost() });
+    const first: string[] = [];
+    registry.answerRequested$.subscribe((entry) => first.push(entry.uuid));
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.applyIntent(uuid, 'answer');
+
+    const second: string[] = [];
+    registry.answerRequested$.subscribe((entry) => second.push(entry.uuid));
+
+    expect(first).toEqual([uuid]);
+    expect(second).toEqual([]);
+  });
+
+  it('replays an answer that reached no subscriber to the first one only', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.applyIntent(uuid, 'answer');
+
+    const first: string[] = [];
+    registry.answerRequested$.subscribe((entry) => first.push(entry.uuid));
+    const second: string[] = [];
+    registry.answerRequested$.subscribe((entry) => second.push(entry.uuid));
+
+    expect(first).toEqual([uuid]);
+    expect(second).toEqual([]);
+  });
+
+  it('asks for one call when the same push is answered twice', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const asked: string[] = [];
+    registry.answerRequested$.subscribe((entry) => asked.push(entry.uuid));
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+
+    registry.applyIntent(uuid, 'answer');
+    registry.applyIntent(uuid, 'answer');
+
+    expect(asked).toEqual([uuid]);
+  });
+
+  it('refuses a second call for an entry already bound to a live one', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.applyIntent(uuid, 'answer');
+    const a = createCall('bridge-a');
+    const b = createCall('bridge-b');
+
+    expect(registry.bindCall(uuid, a as never)).toBe(true);
+    expect(registry.bindCall(uuid, b as never)).toBe(false);
+
+    expect(registry.entryForUuid(uuid)?.call).toBe(a);
+    expect(registry.uuidForCall(b as never)).toBeUndefined();
+  });
+});
+
+describe('CallRegistry — a decline with no SDK call', () => {
+  // The bridge topology: the caller is parked and no SDK call will ever fuse,
+  // so a buffered reject reached nobody and the caller heard ringback for the
+  // whole park window. The app must be told, so it can tell its server.
+  it('asks the app to turn the call down when a push with no call is declined', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ data: { bridgeToken: 'tok' } });
+    const declined: Array<Record<string, string> | undefined> = [];
+    registry.rejectRequested$.subscribe((entry) => declined.push(entry.data));
+
+    registry.applyIntent(uuid, 'reject');
+
+    expect(declined).toEqual([{ bridgeToken: 'tok' }]);
+  });
+
+  it('replays a decline made before anything subscribed, once', () => {
+    // Cold start: the user declines on the lock screen while React mounts.
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ data: { bridgeToken: 'tok' } });
+    registry.applyIntent(uuid, 'reject');
+
+    const first: string[] = [];
+    registry.rejectRequested$.subscribe((entry) => first.push(entry.uuid));
+    const second: string[] = [];
+    registry.rejectRequested$.subscribe((entry) => second.push(entry.uuid));
+
+    expect(first).toEqual([uuid]);
+    expect(second).toEqual([]);
+  });
+
+  it('asks again for nothing when the decline is repeated', () => {
+    // callkeep echoes an end the app requested back as an endCall action.
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({});
+    const declined: string[] = [];
+    registry.rejectRequested$.subscribe((entry) => declined.push(entry.uuid));
+
+    registry.applyIntent(uuid, 'reject');
+    registry.applyIntent(uuid, 'reject');
+
+    expect(declined).toEqual([uuid]);
+  });
+
+  it('asks for no decline when the call is already here to reject', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    const call = createCall('c1');
+    registry.attachIncomingCall(call as never);
+    const declined: string[] = [];
+    registry.rejectRequested$.subscribe((entry) => declined.push(entry.uuid));
+
+    registry.applyIntent(uuid, 'reject');
+
+    expect(call.reject).toHaveBeenCalled();
+    expect(declined).toEqual([]);
+  });
+
+  it('asks for a decline when the user ends an answered push before its call is placed', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const uuid = registry.reportIncomingPush({ data: { bridgeToken: 'tok' } });
+    const declined: string[] = [];
+    registry.rejectRequested$.subscribe((entry) => declined.push(entry.uuid));
+
+    registry.applyIntent(uuid, 'answer');
+    registry.applyIntent(uuid, 'reject');
+
+    expect(declined).toEqual([uuid]);
+  });
+});
+
+describe('CallRegistry — why a call ended', () => {
+  it('ends the native call at once, as declined, when a push with no call is declined', () => {
+    // Waiting for the fusion deadline left it ringing in Telecom for 45 s
+    // after the user declined it in the app, and then reported it as missed.
+    const host = createHost();
+    const registry = new CallRegistry({ host, fusionTimeoutMs: 1000 });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+
+    registry.applyIntent(uuid, 'reject');
+    expect(host.reportCallEnded).toHaveBeenCalledWith(uuid, 'declined');
+
+    host.clock.value += 1001;
+    registry.tick();
+
+    expect(host.reportCallEnded).toHaveBeenCalledTimes(1);
+    expect(registry.entryForUuid(uuid)?.state).toBe('ended');
+  });
+
+  it('reports an answered push that never got its call as failed, not missed', () => {
+    const host = createHost();
+    const registry = new CallRegistry({ host, fusionTimeoutMs: 1000 });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+
+    registry.applyIntent(uuid, 'answer');
+    host.clock.value += 120_000;
+    registry.tick();
+
+    expect(host.reportCallEnded).toHaveBeenCalledWith(uuid, 'failed');
+  });
+
+  it('reports an end the app gives as failed as failed', () => {
+    // A bridge dial that failed, or an SDK that never connected.
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+    registry.applyIntent(uuid, 'answer');
+
+    registry.endCall(uuid, 'failed');
+
+    expect(host.reportCallEnded).toHaveBeenCalledWith(uuid, 'failed');
+    expect(registry.entryForUuid(uuid)?.state).toBe('ended');
+  });
+
+  it('still reports an ordinary end as local', () => {
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+
+    registry.endCall(uuid);
+
+    expect(host.reportCallEnded).toHaveBeenCalledWith(uuid, 'local');
+  });
+});
+
+describe('CallRegistry — fusion timeout set after construction', () => {
+  it('uses a timeout set later for the pushes reported from then on', () => {
+    // getCallKit() builds the registry with no options; setup() is where an
+    // app passes fusionTimeoutMs.
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    registry.setFusionTimeoutMs(30_000);
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+
+    host.clock.value += 30_001;
+    registry.tick();
+
+    expect(registry.entryForUuid(uuid)?.state).toBe('ended');
+  });
+
+  it('defaults to 45 seconds', () => {
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+    const uuid = registry.reportIncomingPush({ callId: 'c1' });
+
+    host.clock.value += 45_000;
+    registry.tick();
+    expect(registry.entryForUuid(uuid)?.state).toBe('pending-push');
+
+    host.clock.value += 1;
+    registry.tick();
     expect(registry.entryForUuid(uuid)?.state).toBe('ended');
   });
 });

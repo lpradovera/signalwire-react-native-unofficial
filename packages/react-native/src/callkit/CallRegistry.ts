@@ -3,6 +3,7 @@ import { BehaviorSubject, Subject, concat, defer, from } from 'rxjs';
 import { logger } from '@signalwire/react';
 
 import type {
+  CallEndReason,
   CallEntry,
   CallIntent,
   CallRegistryHost,
@@ -39,6 +40,20 @@ const DEFAULT_FUSION_TIMEOUT_MS = 45_000;
  */
 const ANSWERED_TIMEOUT_MS = 60_000;
 const UNKNOWN_HANDLE = 'Unknown';
+/**
+ * The one spelling of a UUID the registry keys on.
+ *
+ * callkeep's iOS module reports every CallKit action (answer, end, hold,
+ * DTMF, mute) with the UUID lower-cased, while a PushKit display and the
+ * cached launch push carry it as the push or `[[NSUUID UUID] UUIDString]`
+ * spelled it, which is upper-case. Compared verbatim, every action for such a
+ * call missed its entry: no answer, no hang-up, and a missed call 45 s later.
+ * CallKit and Telecom parse a UUID in either case, so lower-case is safe to
+ * hand back to them.
+ */
+function normalizeUuid(uuid: string): string {
+  return uuid.toLowerCase();
+}
 const UNKNOWN_NAME = 'Unknown caller';
 
 /**
@@ -51,15 +66,38 @@ const UNKNOWN_NAME = 'Unknown caller';
  */
 export class CallRegistry {
   private readonly host: CallRegistryHost;
-  private readonly fusionTimeoutMs: number;
+  private fusionTimeoutMs: number;
   private readonly _entries$ = new BehaviorSubject<CallEntry[]>([]);
   private readonly _answered$ = new Subject<Call>();
   private readonly _answerRequested$ = new Subject<CallEntry>();
+  private readonly _rejectRequested$ = new Subject<CallEntry>();
   private readonly byUuid = new Map<string, CallEntry>();
+  /**
+   * Entries whose answer or reject request reached a subscriber. A request is
+   * delivered once: the subscriber that got it acts on it (dials, or tells
+   * the server) whether or not it stays subscribed, so replaying it to the
+   * next subscriber started a second dial for one answer.
+   */
+  private readonly deliveredAnswers = new Set<string>();
+  private readonly deliveredRejects = new Set<string>();
 
   constructor(options: CallRegistryOptions) {
     this.host = options.host;
     this.fusionTimeoutMs = options.fusionTimeoutMs ?? DEFAULT_FUSION_TIMEOUT_MS;
+  }
+
+  /**
+   * Sets how long a push entry waits for its SDK call, for the pushes reported
+   * from now on. `getCallKit()` builds its registry before the app's
+   * `setup()` runs, so this is how `CallKitSetupOptions.fusionTimeoutMs`
+   * reaches it. A value that is not a positive number is ignored.
+   */
+  setFusionTimeoutMs(ms: number): void {
+    if (!Number.isFinite(ms) || ms <= 0) {
+      logger.warn(`Ignoring fusionTimeoutMs ${String(ms)}; keeping ${this.fusionTimeoutMs}`);
+      return;
+    }
+    this.fusionTimeoutMs = ms;
   }
 
   get entries$(): Observable<CallEntry[]> {
@@ -101,13 +139,50 @@ export class CallRegistry {
     // moment too late and never saw it — so nothing dialled and the caller
     // sat on a parked leg until it timed out.
     //
-    // Only entries still awaiting a call are replayed: once one is bound the
-    // request is satisfied, so a later subscriber must not redial it.
+    // Only entries still awaiting a call, and only answers no subscriber has
+    // had, are replayed: the subscriber that got one is placing its call (the
+    // dial outlives a re-subscription), so a later one must not dial again.
     return defer(() => {
       const outstanding = this.entries.filter(
-        (entry) => entry.intent === 'answer' && entry.state !== 'ended' && !entry.call
+        (entry) =>
+          entry.intent === 'answer' &&
+          entry.state !== 'ended' &&
+          !entry.call &&
+          !this.deliveredAnswers.has(entry.uuid)
       );
+      for (const entry of outstanding) {
+        this.deliveredAnswers.add(entry.uuid);
+      }
       return concat(from(outstanding), this._answerRequested$);
+    });
+  }
+
+  /**
+   * Emits when the user declines (or ends) a push entry that has no SDK call.
+   *
+   * The twin of {@link answerRequested$}. With an SDK call on its way, the
+   * buffered reject turns that call down when it fuses. In a bridge flow
+   * nothing is coming: the caller is parked on the app's server, and only the
+   * app can tell it the user said no. Without that the caller hears ringback
+   * until the park times out.
+   *
+   * Each decline is delivered once, to the subscribers present, or replayed
+   * to the first subscriber when none was (a decline on the lock screen while
+   * React mounts).
+   */
+  get rejectRequested$(): Observable<CallEntry> {
+    return defer(() => {
+      const outstanding = this.entries.filter(
+        (entry) =>
+          entry.intent === 'reject' &&
+          entry.state === 'pending-push' &&
+          !entry.call &&
+          !this.deliveredRejects.has(entry.uuid)
+      );
+      for (const entry of outstanding) {
+        this.deliveredRejects.add(entry.uuid);
+      }
+      return concat(from(outstanding), this._rejectRequested$);
     });
   }
 
@@ -116,7 +191,7 @@ export class CallRegistry {
   }
 
   entryForUuid(uuid: string): CallEntry | undefined {
-    return this.byUuid.get(uuid);
+    return this.byUuid.get(normalizeUuid(uuid));
   }
 
   /**
@@ -129,7 +204,7 @@ export class CallRegistry {
    * or keep audio running for it.
    */
   isLive(uuid: string): boolean {
-    const entry = this.byUuid.get(uuid);
+    const entry = this.entryForUuid(uuid);
     if (!entry || entry.state === 'ended') {
       return false;
     }
@@ -149,13 +224,15 @@ export class CallRegistry {
    * Reports a VoIP push to the native call UI immediately.
    *
    * Returns the UUID identifying the call for every later native callback.
-   * A duplicate push for a call id already pending returns the original UUID.
+   * A push for a call id the registry already has (a duplicate push, or one
+   * that arrives after its SDK invite was shown) returns that entry's UUID
+   * and shows nothing new.
    */
   reportIncomingPush(payload: PushPayload): string {
     if (payload.callId) {
-      const existing = this.findPending((entry) => entry.expectedCallId === payload.callId);
+      const existing = this.entryForCallId(payload.callId);
       if (existing) {
-        logger.debug(`Duplicate push for call ${payload.callId}, reusing ${existing.uuid}`);
+        logger.debug(`Push for call ${payload.callId} already has ${existing.uuid}; not showing it again`);
         return existing.uuid;
       }
     } else {
@@ -167,7 +244,7 @@ export class CallRegistry {
       );
     }
 
-    const uuid = this.host.generateUuid();
+    const uuid = normalizeUuid(this.host.generateUuid());
     const handle = payload.from ?? UNKNOWN_HANDLE;
     const displayName = payload.fromName ?? UNKNOWN_NAME;
 
@@ -200,7 +277,8 @@ export class CallRegistry {
    * `reportIncomingPush` for the same call.
    */
   adoptNativeEntry(payload: PushPayload & { uuid: string }): void {
-    const existing = this.byUuid.get(payload.uuid);
+    const uuid = normalizeUuid(payload.uuid);
+    const existing = this.byUuid.get(uuid);
     if (existing) {
       // Later knowledge wins, but nothing already learned is discarded.
       this.write({
@@ -211,8 +289,8 @@ export class CallRegistry {
       return;
     }
 
-    this.write({
-      uuid: payload.uuid,
+    const entry: CallEntry = {
+      uuid,
       state: 'pending-push',
       expectedCallId: payload.callId ?? null,
       call: null,
@@ -221,8 +299,22 @@ export class CallRegistry {
       intent: null,
       data: payload.data,
       fuseDeadline: this.host.now() + this.fusionTimeoutMs
-    });
-    logger.debug(`Adopted native push entry ${payload.uuid}`);
+    };
+
+    // The native side showed this push as a call of its own, but the call is
+    // already here under another entry (its SDK invite won the race). Two
+    // native calls for one call: end the duplicate now, or it rings as a
+    // waiting call that never fuses and is reported missed at the deadline.
+    const original = payload.callId ? this.entryForCallId(payload.callId) : undefined;
+    if (original) {
+      logger.debug(`Native push ${uuid} duplicates ${original.uuid} for call ${payload.callId}; ending it`);
+      this.write({ ...entry, state: 'ended', fuseDeadline: null });
+      this.host.reportCallEnded(uuid, 'duplicate');
+      return;
+    }
+
+    this.write(entry);
+    logger.debug(`Adopted native push entry ${uuid}`);
   }
 
   /** Fuses an inbound SDK call with a pending push, or creates a new entry. */
@@ -237,7 +329,7 @@ export class CallRegistry {
       return;
     }
 
-    const uuid = this.host.generateUuid();
+    const uuid = normalizeUuid(this.host.generateUuid());
     const handle = call.from ?? UNKNOWN_HANDLE;
     const displayName = call.fromName ?? UNKNOWN_NAME;
 
@@ -262,7 +354,7 @@ export class CallRegistry {
       return existing;
     }
 
-    const uuid = this.host.generateUuid();
+    const uuid = normalizeUuid(this.host.generateUuid());
     this.write({
       uuid,
       state: 'fused',
@@ -288,13 +380,20 @@ export class CallRegistry {
    * the failure iOS penalises hardest.
    *
    * Returns `false` when the entry is gone (the caller hung up, or the user
-   * declined or ended it, while the call was being placed), which is the
-   * signal to hang that call straight back up.
+   * declined or ended it, while the call was being placed), or already has a
+   * different call (a second dial for the same answer), which is the signal
+   * to hang that call straight back up.
    */
   bindCall(uuid: string, call: Call): boolean {
-    const entry = this.byUuid.get(uuid);
+    const entry = this.entryForUuid(uuid);
     if (!entry || !this.isLive(uuid)) {
       logger.debug(`No live entry for ${uuid}; the bridge call has nothing to attach to`);
+      return false;
+    }
+    if (entry.call && entry.call !== call) {
+      // Rebinding would orphan the first call: joined to the caller, watched
+      // by nothing, never hung up.
+      logger.warn(`Entry ${entry.uuid} already has call ${entry.call.id}; refusing ${call.id}`);
       return false;
     }
 
@@ -315,13 +414,21 @@ export class CallRegistry {
 
   /** Applies an answer/reject, buffering it when the entry is still pending. */
   applyIntent(uuid: string, intent: CallIntent): void {
-    const entry = this.byUuid.get(uuid);
+    const entry = this.entryForUuid(uuid);
     if (!entry || entry.state === 'ended') {
       return;
     }
 
     if (entry.state === 'pending-push' || !entry.call) {
-      logger.debug(`Buffering "${intent}" for ${uuid} until the SDK call arrives`);
+      if (entry.intent === intent) {
+        // The same answer twice (an in-app answer and its CallKit echo, a
+        // double tap) must not ask for a second call, and the same decline
+        // twice (callkeep echoes an end the app asked for) must not end it
+        // twice.
+        logger.debug(`"${intent}" for ${entry.uuid} is already buffered`);
+        return;
+      }
+      logger.debug(`Buffering "${intent}" for ${entry.uuid} until the SDK call arrives`);
       // An answered entry is no longer waiting to fuse, it is waiting for the
       // app. Restart the clock, generously: the alternative is expiring a call
       // the user has already accepted.
@@ -333,8 +440,16 @@ export class CallRegistry {
       };
       this.write(buffered);
       if (intent === 'answer') {
-        this._answerRequested$.next(buffered);
+        this.request(this._answerRequested$, this.deliveredAnswers, buffered);
+        return;
       }
+      // Declined: the native call ends now, rather than ringing on (in
+      // Telecom, behind an in-app decline) until the deadline reports it
+      // missed. The entry stays pending, holding the reject for an SDK call
+      // that may still arrive, and the app is asked to turn a call with none
+      // coming down at its server.
+      this.host.reportCallEnded(entry.uuid, 'declined');
+      this.request(this._rejectRequested$, this.deliveredRejects, buffered);
       return;
     }
 
@@ -344,16 +459,22 @@ export class CallRegistry {
 
   /** Marks an outgoing call as connected in the native UI. */
   reportConnected(uuid: string): void {
-    const entry = this.byUuid.get(uuid);
+    const entry = this.entryForUuid(uuid);
     if (!entry || entry.state === 'ended') {
       return;
     }
-    this.host.reportOutgoingConnected(uuid);
+    this.host.reportOutgoingConnected(entry.uuid);
   }
 
-  /** The local side ended the call, from the native UI or in-app. */
-  endCall(uuid: string): void {
-    const entry = this.byUuid.get(uuid);
+  /**
+   * The local side ended the call, from the native UI or in-app.
+   *
+   * Pass `'failed'` when the app ends it because it could not go on (a bridge
+   * dial that failed, an SDK that never connected), so the native UI shows a
+   * failed call rather than one the other party hung up.
+   */
+  endCall(uuid: string, reason: 'local' | 'failed' = 'local'): void {
+    const entry = this.entryForUuid(uuid);
     if (!entry || entry.state === 'ended') {
       return;
     }
@@ -363,17 +484,17 @@ export class CallRegistry {
     });
 
     this.write({ ...entry, state: 'ended', intent: null, fuseDeadline: null });
-    this.host.reportCallEnded(uuid, 'local');
+    this.host.reportCallEnded(entry.uuid, reason);
   }
 
   /** The remote side ended the call; tell the native UI. */
   reportRemoteEnded(uuid: string): void {
-    const entry = this.byUuid.get(uuid);
+    const entry = this.entryForUuid(uuid);
     if (!entry || entry.state === 'ended') {
       return;
     }
     this.write({ ...entry, state: 'ended', intent: null, fuseDeadline: null });
-    this.host.reportCallEnded(uuid, 'remote');
+    this.host.reportCallEnded(entry.uuid, 'remote');
   }
 
   /**
@@ -389,13 +510,20 @@ export class CallRegistry {
         continue;
       }
       if (now > entry.fuseDeadline) {
+        this.write({ ...entry, state: 'ended', intent: null, fuseDeadline: null });
+        if (entry.intent === 'reject') {
+          // Its native call was ended as declined when the user declined it;
+          // this only stops waiting for an SDK call to turn down.
+          logger.debug(`Declined entry ${entry.uuid} saw no SDK call; done waiting.`);
+          continue;
+        }
+        const reason: CallEndReason = entry.intent === 'answer' ? 'failed' : 'missed';
         logger.warn(
-          entry.intent === 'answer'
+          reason === 'failed'
             ? `Answered entry ${entry.uuid} never got its call; giving up.`
             : `Push entry ${entry.uuid} never fused; reporting a missed call.`
         );
-        this.write({ ...entry, state: 'ended', intent: null, fuseDeadline: null });
-        this.host.reportCallEnded(entry.uuid, 'missed');
+        this.host.reportCallEnded(entry.uuid, reason);
       }
     }
   }
@@ -405,9 +533,31 @@ export class CallRegistry {
     this._entries$.complete();
     this._answered$.complete();
     this._answerRequested$.complete();
+    this._rejectRequested$.complete();
   }
 
   // ---------------------------------------------------------------- internals
+
+  /**
+   * Emits a request, marking it delivered when a subscriber is there to get
+   * it; otherwise the request getter replays it to the first one.
+   */
+  private request(subject: Subject<CallEntry>, delivered: Set<string>, entry: CallEntry): void {
+    if (subject.observed) {
+      delivered.add(entry.uuid);
+    }
+    subject.next(entry);
+  }
+
+  /** Any entry, in any state, already standing for this call id. */
+  private entryForCallId(callId: string): CallEntry | undefined {
+    for (const entry of this.byUuid.values()) {
+      if (entry.expectedCallId === callId) {
+        return entry;
+      }
+    }
+    return undefined;
+  }
 
   private findPending(predicate: (entry: CallEntry) => boolean): CallEntry | undefined {
     for (const entry of this.byUuid.values()) {
