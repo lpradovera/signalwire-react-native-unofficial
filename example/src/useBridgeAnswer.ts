@@ -69,6 +69,11 @@ export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
             bridge.registry.endCall(entry.uuid);
             return;
           }
+          // The user may have ended the call in CallKit while we waited.
+          if (!bridge.registry.isLive(entry.uuid)) {
+            console.log(`Entry ${entry.uuid} ended before the bridge dial; not dialling`);
+            return;
+          }
 
           // Claim the entry first: this dial joins a call the user has already
           // answered, so CallKit must adopt it rather than be told about a
@@ -87,7 +92,8 @@ export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
           // with no native entry behind it is a call the user cannot end.
           if (!bridge.bindBridgeCall(entry.uuid, call)) {
             console.warn(`Entry ${entry.uuid} vanished while dialling; hanging up`);
-            void call.hangup();
+            // The bridge may already have hung it up (the user ended the call).
+            void call.hangup().catch(() => undefined);
             return;
           }
 

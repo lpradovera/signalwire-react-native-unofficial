@@ -66,6 +66,7 @@ const NATIVE_EVENTS = [
   'didToggleHoldCallAction',
   'didPerformSetMutedCallAction',
   'didActivateAudioSession',
+  'didResetProvider',
   // Replays what fired before JavaScript existed. See handleLoadedEvents.
   'didLoadWithEvents'
 ] as const;
@@ -86,6 +87,12 @@ export class CallKeepBridge {
   private releaseAudioGate: (() => void) | null = null;
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
+  /**
+   * The call the audio session was started for. There is one session per
+   * app, so only this call may stop it, and it is released when this call
+   * ends, by whichever path. See {@link startAudio}.
+   */
+  private audioUuid: string | null = null;
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     const host: CallRegistryHost = {
@@ -101,6 +108,16 @@ export class CallKeepBridge {
     };
 
     this.registry = new CallRegistry({ host, fusionTimeoutMs: options.fusionTimeoutMs });
+
+    // A call can end in the native UI, from the SDK, or in the registry
+    // itself: the app's endCall (a failed bridge dial), or tick() expiring an
+    // answered push. CallKit answers none of the registry's own reports with
+    // an endCall action, so watching the entries is the one place that sees
+    // every end. Without it a session started for such a call stayed up in the
+    // idle app, and the next call's start was ignored.
+    this.registry.entries$
+      .pipe(takeUntil(this.destroyed$))
+      .subscribe(() => this.releaseAudioIfOwnerEnded());
 
     // Registered here, not in setup(): callkeep flushes the events it buffered
     // while JavaScript was starting as soon as the bundle finishes loading,
@@ -264,6 +281,12 @@ export class CallKeepBridge {
    * the call straight back up rather than leaving it live with no native UI.
    */
   bindBridgeCall(uuid: string, call: Call): boolean {
+    // Bound already: trackCall's claim binds the dial's call, and the app
+    // binds it again once the dial returns. Binding again would watch it
+    // twice (two connected reports, two audio waits, two remote ends).
+    if (this.registry.entryForUuid(uuid)?.call === call) {
+      return this.registry.isLive(uuid);
+    }
     const bound = this.registry.bindCall(uuid, call);
     if (bound) {
       this.watchCallStatus(call);
@@ -326,6 +349,15 @@ export class CallKeepBridge {
         logger.debug(`Adopted bridge call ${call.id} into existing entry ${claimed}`);
         return claimed;
       }
+      if (this.registry.entryForUuid(claimed)?.state === 'pending-push') {
+        // The user ended the answered push while this call was being placed.
+        // They have hung up: no second native call, and nothing left live.
+        logger.debug(`Entry ${claimed} was ended by the user during the bridge dial; hanging up`);
+        void call.hangup().catch((error: unknown) => {
+          logger.debug('Hangup of the abandoned bridge call failed:', error);
+        });
+        return claimed;
+      }
       // The entry died while we were dialling. Fall through and report a
       // normal outbound call, so the user is not left on a live call with no
       // native UI to end it.
@@ -345,6 +377,9 @@ export class CallKeepBridge {
     this.destroyed$.next();
     this.destroyed$.complete();
     this.stopTicking();
+    if (this.audioUuid !== null) {
+      this.stopAudio(this.audioUuid);
+    }
     for (const event of NATIVE_EVENTS) {
       RNCallKeep.removeEventListener(event);
     }
@@ -441,9 +476,10 @@ export class CallKeepBridge {
     // Applied synchronously — the registry buffers it when the SDK call has
     // not arrived yet. Only the audio start waits for the audio session.
     this.registry.applyIntent(callUUID, 'answer');
-    void this.startAudioWhenSessionReady();
+    void this.startAudioWhenSessionReady(callUUID);
   }
 
+  /** Audio, if this call owns it, is released by {@link releaseAudioIfOwnerEnded}. */
   private handleEndCall(callUUID: string): void {
     logger.debug(`Native end for ${callUUID}`);
     const entry = this.registry.entryForUuid(callUUID);
@@ -452,7 +488,6 @@ export class CallKeepBridge {
       return;
     }
     this.registry.endCall(callUUID);
-    this.stopAudio();
   }
 
   private handleDidDisplayIncomingCall(event: DisplayEvent): void {
@@ -514,16 +549,39 @@ export class CallKeepBridge {
       this.releaseAudioGate?.();
       this.releaseAudioGate = null;
     });
+
+    // A provider reset ends every call and its session.
+    RNCallKeep.addEventListener('didResetProvider', () => this.handleProviderReset());
   }
 
   /**
-   * Starts the audio route once CallKit activates the audio session.
+   * CallKit dropped every call (callservicesd restarted, say) and sends no
+   * endCall action for any of them. Each live entry is ended as a native end
+   * would end it, which hangs up its SDK call; a ringing push is turned down.
+   * Left in place, an entry outlived its call: the next call found the
+   * session still owned by it, and ringing-push consumers still saw it.
+   */
+  private handleProviderReset(): void {
+    logger.debug('CallKit provider reset; ending every call');
+    for (const entry of this.registry.entries) {
+      if (this.registry.isLive(entry.uuid)) {
+        this.handleEndCall(entry.uuid);
+      }
+    }
+    if (this.audioUuid !== null) {
+      this.stopAudio(this.audioUuid);
+    }
+  }
+
+  /**
+   * Starts the audio route once CallKit activates the audio session, for a
+   * call that is still live by then.
    *
    * Starting media before `didActivateAudioSession` yields a connected but
    * silent call on iOS. Android has no such event, so this runs immediately.
    * The timeout prevents a permanently silent call if the event never fires.
    */
-  private async startAudioWhenSessionReady(): Promise<void> {
+  private async startAudioWhenSessionReady(uuid: string): Promise<void> {
     if (Platform.OS === 'ios') {
       const gate = new Promise<void>((resolve) => {
         this.releaseAudioGate = resolve;
@@ -533,10 +591,30 @@ export class CallKeepBridge {
         new Promise<void>((resolve) => setTimeout(resolve, AUDIO_SESSION_TIMEOUT_MS))
       ]);
     }
-    this.startAudio();
+    // The call can end during the wait, including a push the user ended
+    // before its SDK call existed. Started anyway, the session would stay up
+    // with nothing left to stop it.
+    if (!this.registry.isLive(uuid)) {
+      logger.debug(`Call ${uuid} ended before its audio session was ready; not starting audio`);
+      return;
+    }
+    this.startAudio(uuid);
   }
 
-  private startAudio(): void {
+  /**
+   * Starts the session for `uuid`, which then owns it. While another live
+   * call owns it (a call waiting behind it was answered), the session is left
+   * as it is: `AudioRouteController.start` is first-wins either way. A
+   * session handed over by an ended owner (see
+   * {@link releaseAudioIfOwnerEnded}) is taken as it is, with the route and
+   * mode the ended call left.
+   */
+  private startAudio(uuid: string): void {
+    if (this.audioUuid !== null && this.audioUuid !== uuid && this.registry.isLive(this.audioUuid)) {
+      logger.debug(`Audio session belongs to ${this.audioUuid}; not starting it for ${uuid}`);
+      return;
+    }
+    this.audioUuid = uuid;
     try {
       getAudioRouteController().start(this.supportsVideo ? 'video' : 'audio');
     } catch (error) {
@@ -544,7 +622,38 @@ export class CallKeepBridge {
     }
   }
 
-  private stopAudio(): void {
+  /**
+   * Releases the session the ending call owns; another call ending leaves it
+   * alone.
+   *
+   * While another call is live, the ended owner's session is handed over
+   * rather than stopped: the next call to start audio takes it as it is, and
+   * it is stopped once no live call is left. With End & Accept, CallKit sends
+   * the ending call's endCall before the accepted call's answerCall, while it
+   * moves the session from one to the other. incall-manager's stop() there
+   * would run setActive:NO on the session CallKit is handing to the accepted
+   * call; CallKit deactivates it itself if it has to (didDeactivateAudioSession).
+   */
+  private releaseAudioIfOwnerEnded(): void {
+    const owner = this.audioUuid;
+    if (owner === null || this.registry.isLive(owner)) {
+      return;
+    }
+    const next = this.registry.entries.find(
+      (entry) => entry.uuid !== owner && this.registry.isLive(entry.uuid)
+    );
+    if (next) {
+      logger.debug(`Call ${owner} ended while ${next.uuid} is live; leaving the session up for it`);
+      return;
+    }
+    this.stopAudio(owner);
+  }
+
+  private stopAudio(uuid: string): void {
+    if (uuid !== this.audioUuid) {
+      return;
+    }
+    this.audioUuid = null;
     try {
       getAudioRouteController().stop();
     } catch (error) {
@@ -567,12 +676,12 @@ export class CallKeepBridge {
         // the session in its default category — a connected but silent call.
         // `AudioRouteController.start` is idempotent, so an inbound call that
         // already started audio on answer is unaffected.
-        void this.startAudioWhenSessionReady();
+        void this.startAudioWhenSessionReady(uuid);
         return;
       }
       if (TERMINAL_STATUSES.has(status)) {
+        // Ends the entry, which releases its audio if it owns the session.
         this.registry.reportRemoteEnded(uuid);
-        this.stopAudio();
       }
     });
   }
