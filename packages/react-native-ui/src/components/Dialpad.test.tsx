@@ -1,6 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import React from 'react';
 import { BehaviorSubject, Subject } from 'rxjs';
+
+import { logger } from '@signalwire/react';
 
 import { Dialpad } from './Dialpad';
 
@@ -60,5 +62,26 @@ describe('Dialpad', () => {
   it('labels each key for assistive technology', async () => {
     await render(<Dialpad />);
     expect(screen.getByTestId('sw-key-7').props.accessibilityLabel).toBe('Dial 7');
+  });
+
+  it('logs a digit the SDK fails to send instead of leaving the rejection unhandled', async () => {
+    // The SDK rethrows any verto.info error, e.g. while the call is still
+    // ringing or after a network blip.
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const call = createCall();
+    call.sendDigits = jest.fn(async () => {
+      throw new Error('verto.info failed');
+    });
+    const onDigit = jest.fn();
+    await render(<Dialpad call={call as never} onDigit={onDigit} />);
+
+    fireEvent.press(screen.getByTestId('sw-key-5'));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(onDigit).toHaveBeenCalledWith('5');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('5'), expect.any(Error));
+    warn.mockRestore();
   });
 });
