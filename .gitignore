@@ -39,3 +39,6 @@ GoogleService-Info.plist
 
 # Dev environment logs from scripts/dev.sh
 .dev/
+
+# Repository-local scratch space (scripts/dev-scripts.test.mjs's sandbox)
+.tmp/
