@@ -4,20 +4,27 @@
 
 ### CallKit voice and video
 
-- A call's CallKit type and audio session mode follow its own media
-  (`call.mediaDirections`, the SDK's answer once preferences, `?channel=`,
-  the dial options and a disabled camera are applied), for outbound and
-  inbound calls. A voice call starts on the receiver, or on a connected
-  headset or car, instead of the loudspeaker. This corrects the 0.1.0 known
-  gap "A voice call forces speakerphone".
+- An outbound call's CallKit type and audio session mode follow its own
+  media (`call.mediaDirections`, the SDK's answer once preferences,
+  `?channel=`, the dial options and a disabled camera are applied). A voice
+  call starts on the receiver, or on a connected headset or car, instead of
+  the loudspeaker. This corrects the 0.1.0 known gap "A voice call forces
+  speakerphone".
+- An SDK inbound call is a voice call: the registry answers every one of them
+  audio-only (an in-app answer included, since it goes through CallKit), so
+  CallKit shows it as voice and its audio starts on the receiver, whatever the
+  caller offered. Its `mediaDirections` isn't used: @signalwire/js reports
+  video for any offer whose m=video sends.
+- A pushed call answered before its SDK call exists has no media yet. iOS
+  shows every VoIP push as a voice call, and so does a push reported from
+  JavaScript. Its audio session starts when its call (or the bridge call
+  placed for it) connects, with that call's media; on iOS a video bridge call
+  also turns the CallKit entry into a video call (callkeep's `updateDisplay`).
 - A call is reported to CallKit as video only when the provider was set up
   with `supportsVideo: true`.
 - `CallKeepBridge.trackCall(call, handle, displayName)` keeps its signature;
   it reads the media from the call, falling back to `supportsVideo` for a call
   without `mediaDirections`.
-- New `AudioRouteController.updateMedia(media)`. A push answered before its
-  SDK call exists starts in the app's mode; when its call arrives voice only,
-  audio moves off the speaker unless the user already picked a route.
 
 ### Audio routes
 

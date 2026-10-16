@@ -103,8 +103,13 @@ export class CallKeepBridge {
   private readonly deferredReplay = new Map<string, Array<'answer' | 'end'>>();
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
-  /** The call whose audio session is running, so a call bound to it later can set its media. */
-  private audioUuid: string | null = null;
+  /**
+   * SDK inbound calls. The registry answers every one of them audio-only
+   * (`answer({ audio: true, video: false })`, an in-app answer included,
+   * since that is routed through CallKit), so they are voice calls whatever
+   * their offer carried. See {@link mediaFor}.
+   */
+  private readonly inboundCalls = new WeakSet<Call>();
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     const host: CallRegistryHost = {
@@ -233,9 +238,10 @@ export class CallKeepBridge {
       .subscribe((calls) => {
         for (const call of calls) {
           if (!this.registry.uuidForCall(call)) {
+            // Marked first: attaching shows the call in CallKit, which reads its media.
+            this.inboundCalls.add(call);
             this.registry.attachIncomingCall(call);
             this.watchCallStatus(call);
-            this.adoptCallMedia(call);
           }
         }
       });
@@ -291,7 +297,7 @@ export class CallKeepBridge {
     const bound = this.registry.bindCall(uuid, call);
     if (bound) {
       this.watchCallStatus(call);
-      this.adoptCallMedia(call);
+      this.showBoundCallType(uuid);
     }
     return bound;
   }
@@ -346,7 +352,7 @@ export class CallKeepBridge {
    * Registers an outbound call with the native UI. Returns its UUID.
    *
    * Whether it is a video call comes from the call itself
-   * (`call.mediaDirections`, the SDK's own answer, after preferences,
+   * (`call.mediaDirections`, the SDK's own offer, after preferences,
    * `?channel=`, the dial options and a disabled camera are all applied): a
    * voice call starts on the receiver (or a connected headset or car), a video
    * call on the loudspeaker. A call without `mediaDirections` falls back to
@@ -671,17 +677,41 @@ export class CallKeepBridge {
       logger.debug(`Call ${uuid} ended before its audio session was ready; not starting audio`);
       return;
     }
-    this.startAudio(uuid, this.mediaFor(entry.call));
+    // A push answered before its SDK call exists: its media is unknown until
+    // that call (or the bridge call placed for it) arrives, and the session
+    // mode can't be changed once incall-manager has started. It starts when
+    // that call connects, with that call's media.
+    if (!entry.call) {
+      logger.debug(`Call ${uuid} has no SDK call yet; its audio starts when that call connects`);
+      return;
+    }
+    this.startAudio(this.mediaFor(entry.call));
   }
 
   /**
-   * A call's media, from the SDK: video when it sends or receives video. A
-   * pushed entry whose SDK call hasn't arrived yet, or a call without
-   * `mediaDirections`, uses the app's `supportsVideo`.
+   * A call's media. An SDK inbound call is voice: the registry answers it
+   * audio-only. Its `mediaDirections` can't be used, because @signalwire/js
+   * reports video for any offer whose m=video sends ('sendrecv' before the
+   * answer, 'recvonly' after it), so a video caller's call would start on the
+   * loudspeaker. An outbound call (the bridge call placed for a push
+   * included) is video when it sends or receives video; one without
+   * `mediaDirections`, or a destroyed one, uses the app's `supportsVideo`. A
+   * pushed entry whose call hasn't arrived yet is shown as voice, as iOS shows
+   * every VoIP push: its call is answered audio-only, or is the app's own
+   * bridge call, whose type is shown once it binds.
    */
   private mediaFor(call: Call | null | undefined): 'audio' | 'video' {
-    // Optional-chained: a Call from an older SDK, or a test double, may not have it.
-    const video: string | undefined = call?.mediaDirections?.video;
+    if (!call || this.inboundCalls.has(call)) {
+      return 'audio';
+    }
+    let video: string | undefined;
+    try {
+      // Optional-chained: a Call from an older SDK, or a test double, may not have it.
+      video = call.mediaDirections?.video;
+    } catch {
+      // The getter throws once the call is destroyed ('Main peer connection not found').
+      video = undefined;
+    }
     if (video === undefined) {
       return this.supportsVideo ? 'video' : 'audio';
     }
@@ -694,24 +724,23 @@ export class CallKeepBridge {
   }
 
   /**
-   * A call bound to the entry whose audio already runs (a push answered before
-   * its SDK call existed, or the bridge call placed for it) brings the media
-   * that entry started without.
+   * A pushed entry was shown as voice. When the call placed for it is a video
+   * call, CallKit is told (`CXCallUpdate.hasVideo`, through callkeep's
+   * `updateDisplay`, which also re-sends the name and handle). Android's
+   * ConnectionService takes no type update from callkeep.
    */
-  private adoptCallMedia(call: Call): void {
-    const uuid = this.registry.uuidForCall(call);
-    if (uuid === undefined || uuid !== this.audioUuid) {
+  private showBoundCallType(uuid: string): void {
+    const entry = this.registry.entryForUuid(uuid);
+    if (Platform.OS !== 'ios' || !entry || !this.reportsVideo(uuid)) {
       return;
     }
-    try {
-      getAudioRouteController().updateMedia(this.mediaFor(call));
-    } catch (error) {
-      logger.warn('Audio routing unavailable:', error);
+    if (typeof RNCallKeep.updateDisplay !== 'function') {
+      return;
     }
+    RNCallKeep.updateDisplay(uuid, entry.displayName, entry.handle, { ios: { hasVideo: true } });
   }
 
-  private startAudio(uuid: string, media: 'audio' | 'video'): void {
-    this.audioUuid ??= uuid;
+  private startAudio(media: 'audio' | 'video'): void {
     try {
       getAudioRouteController().start(media);
     } catch (error) {
@@ -720,7 +749,6 @@ export class CallKeepBridge {
   }
 
   private stopAudio(): void {
-    this.audioUuid = null;
     // incall-manager's stop() deactivates the session itself, and the
     // activation that stands now belonged to the call that is ending: the next
     // call waits for its own (or the fallback).

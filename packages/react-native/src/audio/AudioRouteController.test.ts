@@ -108,30 +108,6 @@ describe('AudioRouteController', () => {
     expect(() => controller.start('audio')).not.toThrow();
   });
 
-  it("updateMedia moves a session started for video to voice's default route", () => {
-    controller.start('video');
-    flag.mockClear();
-
-    controller.updateMedia('audio');
-
-    expect(flag).toHaveBeenCalledWith(false);
-    expect(controller.route).toBe('earpiece');
-    expect(InCallManager.start).toHaveBeenCalledTimes(1);
-  });
-
-  it('updateMedia keeps a route the user picked, and does nothing before start', () => {
-    controller.updateMedia('video');
-    expect(flag).not.toHaveBeenCalled();
-
-    controller.start('video');
-    controller.setRoute('speaker');
-    flag.mockClear();
-    controller.updateMedia('audio');
-
-    expect(flag).not.toHaveBeenCalled();
-    expect(controller.route).toBe('speaker');
-  });
-
   describe('the speaker toggle', () => {
     it('off returns to the default route, not a receiver choice', () => {
       controller.start('audio');
