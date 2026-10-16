@@ -19,3 +19,6 @@ jest.mock('@react-native-community/netinfo', () => ({
   const { NativeModules } = require('react-native');
   NativeModules.InCallManager ??= { start: jest.fn() };
 }
+// react-native-webrtc's native module, as a linked build has it. The package
+// checks for it before loading react-native-webrtc (platform/reactNativeWebRTC).
+require('react-native').NativeModules.WebRTCModule ??= {};
