@@ -35,7 +35,10 @@ function Shell(): React.JSX.Element {
   }
 
   if (activeCall) {
-    return <CallScreen call={activeCall} onEnded={() => setActiveCall(null)} />;
+    // Keyed by the call: End & Accept replaces the active call while this
+    // screen is up, and the next call gets a fresh screen (and fresh hook
+    // state) rather than the ended call's.
+    return <CallScreen key={activeCall.id} call={activeCall} onEnded={() => setActiveCall(null)} />;
   }
 
   return (
