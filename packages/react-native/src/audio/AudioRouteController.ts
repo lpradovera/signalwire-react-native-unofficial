@@ -85,8 +85,6 @@ export class AudioRouteController {
   private beforeSpeaker: RouteState = DEFAULT_ROUTE;
   private started = false;
   private destroyed = false;
-  /** The media the running session was started for. */
-  private media: 'audio' | 'video' = 'audio';
   /** The device subscription while a call runs (iOS routes only). */
   private devices: Subscription | null = null;
   /** The device iOS last reported, and what is connected. */
@@ -130,7 +128,6 @@ export class AudioRouteController {
     } catch (error) {
       logger.warn('Failed to start the audio session:', error);
     }
-    this.media = media;
     this.chosen = false;
     this.beforeSpeaker = DEFAULT_ROUTE;
     this.select(media === 'video' ? 'speaker' : 'earpiece', false);
@@ -160,7 +157,6 @@ export class AudioRouteController {
     this.started = false;
     this.chosen = false;
     this.beforeSpeaker = DEFAULT_ROUTE;
-    this.media = 'audio';
     if (!this.destroyed) {
       this._route$.next('earpiece');
     }
@@ -198,24 +194,6 @@ export class AudioRouteController {
       const gone = back.route === 'bluetooth' && this.devices !== null && !this.available.includes('BLUETOOTH');
       const { route, chosen } = gone ? DEFAULT_ROUTE : back;
       this.select(route, chosen);
-    }
-  }
-
-  /**
-   * Tells a running session its call's media, when it was started before that
-   * was known: a pushed call answered before its SDK call existed starts in
-   * the app's mode, and its call (or the call placed to join it) can turn out
-   * to be voice only. Moves to that media's default route (video on the
-   * speaker, voice off it), unless the user already picked a route.
-   */
-  updateMedia(media: 'audio' | 'video'): void {
-    if (!this.started || media === this.media) {
-      return;
-    }
-    this.media = media;
-    if (!this.chosen) {
-      this.beforeSpeaker = DEFAULT_ROUTE;
-      this.select(media === 'video' ? 'speaker' : 'earpiece', false);
     }
   }
 

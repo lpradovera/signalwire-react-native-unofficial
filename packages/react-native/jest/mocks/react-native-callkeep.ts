@@ -12,6 +12,7 @@ const RNCallKeep = {
   startCall: jest.fn(),
   reportConnectedOutgoingCallWithUUID: jest.fn(),
   reportEndCallWithUUID: jest.fn(),
+  updateDisplay: jest.fn(),
   endCall: jest.fn(),
   clearInitialEvents: jest.fn(),
   /** Like callkeep 4.3.16: returns an EventListener whose remove() drops this handler only. */

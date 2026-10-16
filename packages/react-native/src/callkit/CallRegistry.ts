@@ -458,8 +458,9 @@ export class CallRegistry {
         // "Error creating inbound answer" after the user has already accepted
         // on the native UI. The call gives us no way to inspect the offered
         // m-lines before answering; matching the offer automatically belongs
-        // in the SDK. Video answer stays available to in-app UI via
-        // useIncomingCalls().answer(call, { video: true }).
+        // in the SDK. With CallKit on, an in-app answer is routed through
+        // the native UI too, so every inbound call is answered here, as voice;
+        // CallKeepBridge shows and starts it as a voice call to match.
         call.answer({ audio: true, video: false });
       } else {
         call.reject();
