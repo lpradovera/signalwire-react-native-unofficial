@@ -1,27 +1,31 @@
 import React from 'react';
 import { Platform, UIManager, requireNativeComponent } from 'react-native';
 
+import { dropProcessGlobal, processGlobal } from '../platform/processGlobal';
+
 import type { ColorValue, HostComponent, ViewProps } from 'react-native';
 
 export interface AudioRoutePickerButtonProps extends ViewProps {
   /** The icon's colour. Default: the system tint. */
   tintColor?: ColorValue;
-  /** The icon's colour while audio plays through something other than the phone. */
+  /**
+   * The icon's colour while AirPlay is active (AVKit's definition). A call
+   * routed to a headset or car is not AirPlay, so it doesn't change then.
+   */
   activeTintColor?: ColorValue;
 }
 
 const NAME = 'SWAudioRoutePicker';
 
 /**
- * Kept on `globalThis`, not in module scope: the audio entry ships as both
+ * Kept process-wide, not in module scope: the audio entry ships as both
  * `dist/audio.mjs` and `dist/audio.js`, and an app can load both (its own
  * `import`, a dependency's `require`). React Native throws when a view is
  * registered twice under one name, so one process gets one registration (see
- * the CallKit bridge's note on duplicated bundles).
+ * the CallKit bridge's note on duplicated bundles). `null` (not linked) is
+ * kept too.
  */
 const PICKER_GLOBAL = '__signalwireRNAudioRoutePicker';
-
-type PickerHolder = { [PICKER_GLOBAL]?: HostComponent<AudioRoutePickerButtonProps> | null };
 
 /**
  * Whether {@link AudioRoutePickerButton} draws anything: iOS, with this
@@ -35,12 +39,9 @@ function getNativeView(): HostComponent<AudioRoutePickerButtonProps> | null {
   if (Platform.OS !== 'ios') {
     return null;
   }
-  const holder = globalThis as PickerHolder;
-  if (holder[PICKER_GLOBAL] === undefined) {
-    const linked = UIManager.hasViewManagerConfig?.(NAME) ?? Boolean(UIManager.getViewManagerConfig?.(NAME));
-    holder[PICKER_GLOBAL] = linked ? requireNativeComponent<AudioRoutePickerButtonProps>(NAME) : null;
-  }
-  return holder[PICKER_GLOBAL];
+  return processGlobal(PICKER_GLOBAL, () =>
+    UIManager.hasViewManagerConfig(NAME) ? requireNativeComponent<AudioRoutePickerButtonProps>(NAME) : null
+  );
 }
 
 /**
@@ -50,7 +51,8 @@ function getNativeView(): HostComponent<AudioRoutePickerButtonProps> | null {
  *
  * Renders nothing on Android, or on iOS when the app was built before this
  * version of the package (native code needs a rebuild). Size it with `style`;
- * the default is 44 × 44, the minimum touch target.
+ * the default is 44 × 44, the minimum touch target. VoiceOver reads it as a
+ * button with `accessibilityLabel` (default "Audio output").
  */
 export function AudioRoutePickerButton({
   style,
@@ -66,5 +68,5 @@ export function AudioRoutePickerButton({
 
 /** Test seam: look the native view up again. */
 export function resetAudioRoutePickerForTesting(): void {
-  delete (globalThis as PickerHolder)[PICKER_GLOBAL];
+  dropProcessGlobal(PICKER_GLOBAL);
 }

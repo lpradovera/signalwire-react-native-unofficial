@@ -2,10 +2,14 @@ import RNCallKeep from 'react-native-callkeep';
 import InCallManager from 'react-native-incall-manager';
 import { BehaviorSubject, Observable, Subject } from 'rxjs';
 
-import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
+import { getAudioRouteController, resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
 import { CallKeepBridge } from './CallKeepBridge';
 
-jest.mock('react-native', () => ({ Platform: { OS: 'android' } }));
+// The audio controller checks that incall-manager's native module is linked.
+jest.mock('react-native', () => ({
+  Platform: { OS: 'android' },
+  NativeModules: { InCallManager: { start: jest.fn() } }
+}));
 
 const callkeep = RNCallKeep as unknown as typeof RNCallKeep & {
   __emit: (event: string, payload: unknown) => void;
@@ -360,6 +364,24 @@ describe('CallKeepBridge', () => {
     expect(subscriptions).toBe(1);
   });
 
+  it('holds a speaker tap made while an outbound call rings until its session starts', async () => {
+    // A tap applied outside the session was undone at connect, or, for a
+    // call cancelled while ringing, left incall-manager reconfigured in the
+    // idle app.
+    resetAudioRouteControllerForTesting();
+    await bridge.setup({ appName: 'Demo' });
+    const call = createCall('out-ring');
+    bridge.trackCall(call as never, '/public/room', 'Support');
+
+    getAudioRouteController().setSpeakerOn(true);
+    expect(InCallManager.setForceSpeakerphoneOn).not.toHaveBeenCalled();
+
+    call.status$.next('connected');
+    await Promise.resolve();
+    expect(InCallManager.start).toHaveBeenCalled();
+    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(true);
+  });
+
   it('starts the audio session when an outbound call connects', async () => {
     // Outbound calls never reach the native answer handler, which was the only
     // caller of startAudio — so InCallManager never ran for a call the user
@@ -395,7 +417,8 @@ describe('CallKeepBridge', () => {
 
     expect(RNCallKeep.startCall).toHaveBeenCalledWith(uuid, '/public/agent', 'Agent', 'generic', false);
     expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
-    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(false);
+    // incall-manager's own start sets the route for the media; nothing is forced.
+    expect(getAudioRouteController().route).toBe('earpiece');
   });
 
   it('starts a video call in video mode, on the loudspeaker', async () => {
@@ -409,7 +432,8 @@ describe('CallKeepBridge', () => {
 
     expect(RNCallKeep.startCall).toHaveBeenCalledWith(uuid, '/public/room', 'Room', 'generic', true);
     expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
-    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(true);
+    // incall-manager's own start sets the route for the media; nothing is forced.
+    expect(getAudioRouteController().route).toBe('speaker');
   });
 
   it('counts video in either direction, receive-only included, as a video call', async () => {
@@ -540,7 +564,8 @@ describe('CallKeepBridge', () => {
 
     expect(InCallManager.start).toHaveBeenCalledTimes(1);
     expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
-    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(false);
+    // incall-manager's own start sets the route for the media; nothing is forced.
+    expect(getAudioRouteController().route).toBe('earpiece');
   });
 
   it('starts a pushed call whose bridge call is video in video mode', async () => {
@@ -584,7 +609,8 @@ describe('CallKeepBridge', () => {
 
     incoming$.next([{ ...createCall('in-voice-2'), mediaDirections: VOICE }]);
 
-    expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(true);
+    // incall-manager's own start sets the route for the media; nothing is forced.
+    expect(getAudioRouteController().route).toBe('speaker');
   });
 
   it('routes an in-app answer through CallKit so iOS activates audio', async () => {

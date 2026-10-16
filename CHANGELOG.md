@@ -45,8 +45,31 @@
   instead of an unhandled rejection on every choice, and `'earpiece'` turns
   the speaker off.
 - `useAudioDevices()` and `getAudioDeviceStatus()`: the devices available and
-  the one iOS is playing through, by name. iOS with iOS routes only.
-- A refused route (no such device) leaves `route` where it was.
+  the one iOS is playing through, by name. iOS with iOS routes only. They
+  follow headsets and cars while a call's session runs; outside a call they
+  hold the last status read. One native subscription serves every hook and
+  the controller, in every bundle copy of the package.
+- A refused route (no such device) leaves `route` where it was. On Android,
+  where incall-manager answers a Bluetooth choice it can't make instead of
+  refusing it, the answer's device list decides, and speaker-off falls back
+  to the speaker off when the device it would return to is gone.
+- A video call is no longer forced onto the loudspeaker at start: incall-
+  manager's own start uses the speaker only when nothing else is connected,
+  so a video call started with AirPods or in a car stays there.
+- Speaker-off returns a call to a headset or car the speaker had replaced at
+  incall-manager's default instead of forcing "speaker off", which in a
+  video call meant voice chat mode on the headset and the receiver once it
+  left.
+- With CallKit, a route chosen before the call's session starts (a tap while
+  an outbound call rings) is shown at once and applied when it starts;
+  nothing native is written outside a session. Without CallKit, speaker
+  on/off still works outside a session, as before.
+- A late answer or report from an ended call no longer reaches the next one,
+  and the status the next call starts from is read after its session
+  starts, not taken from the previous call.
+- `AudioRouteController` checks that incall-manager's native module is
+  linked (an app installed without a rebuild gets `MissingPeerDependencyError`
+  instead of a warning on every call).
 - `AudioRouteController.setRoute` no longer takes a `force` argument.
 - `stop()` makes no native call after `InCallManager.stop()`. It used to turn
   the speaker off afterwards, which after a video call switched the idle
@@ -63,6 +86,11 @@
   then it renders nothing. It writes nothing to the audio session.
 - `CallControls` shows it on iOS. `showRoutePicker` defaults to
   `showAudioRoute`, so an app that hid audio routing doesn't get it.
+- VoiceOver reads the button as one element, a button with its
+  `accessibilityLabel` (default "Audio output"); before, it read AVKit's
+  inner "AirPlay" button and the label went unused. `activeTintColor` is
+  AVKit's AirPlay-active colour, which a headset or car doesn't trigger, so
+  `CallControls` no longer passes one.
 
 ### CallKit outbound call names
 
