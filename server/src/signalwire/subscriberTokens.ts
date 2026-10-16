@@ -15,10 +15,19 @@ export interface SubscriberTokenMinterOptions {
   apiToken: string;
   /** Injectable for tests. Defaults to global `fetch`. */
   fetchImpl?: typeof fetch;
+  /** How long each token lives, in seconds. Default 7200 (two hours). */
+  ttlSeconds?: number;
+  /** Injectable for tests. Defaults to `Date.now`. */
+  now?: () => number;
 }
+
+/** SignalWire's own default lifetime for a subscriber token. */
+export const DEFAULT_TOKEN_TTL_SECONDS = 7200;
 
 export interface SubscriberToken {
   token: string;
+  /** When the token stops working, in Unix seconds: the `expire_at` it was minted with. */
+  expiresAt: number;
   /** Whatever SignalWire echoed back, for debugging. Shape is not relied on. */
   raw: unknown;
 }
@@ -52,12 +61,16 @@ export class SubscriberTokenMinter {
   private readonly endpoint: string;
   private readonly authorization: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly ttlSeconds: number;
+  private readonly now: () => number;
 
   constructor(private readonly options: SubscriberTokenMinterOptions) {
     const host = options.space.replace(/^https?:\/\//, '').replace(/\/+$/, '');
     this.endpoint = `https://${host}/api/fabric/subscribers/tokens`;
     this.authorization = `Basic ${Buffer.from(`${options.projectId}:${options.apiToken}`).toString('base64')}`;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.ttlSeconds = options.ttlSeconds ?? DEFAULT_TOKEN_TTL_SECONDS;
+    this.now = options.now ?? Date.now;
   }
 
   /**
@@ -66,13 +79,16 @@ export class SubscriberTokenMinter {
    * is why the route derives it from an authenticated caller.
    */
   async mint(reference: string): Promise<SubscriberToken> {
+    // Chosen here, not left to SignalWire's default, so the app is told when
+    // the token ends and can renew it before then (fetchToken's expiresAt).
+    const expiresAt = Math.floor(this.now() / 1000) + this.ttlSeconds;
     const response = await this.fetchImpl(this.endpoint, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         authorization: this.authorization
       },
-      body: JSON.stringify({ reference })
+      body: JSON.stringify({ reference, expire_at: expiresAt })
     });
 
     const text = await response.text();
@@ -98,7 +114,7 @@ export class SubscriberTokenMinter {
       );
     }
 
-    return { token, raw: body };
+    return { token, expiresAt, raw: body };
   }
 }
 
@@ -106,7 +122,7 @@ export class SubscriberTokenMinter {
 export function createMinterFromEnv(
   env: NodeJS.ProcessEnv = process.env
 ): { minter: SubscriberTokenMinter } | { missing: string } {
-  const { SIGNALWIRE_SPACE, SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN } = env;
+  const { SIGNALWIRE_SPACE, SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN, TOKEN_TTL_SECONDS } = env;
 
   if (!SIGNALWIRE_SPACE || !SIGNALWIRE_PROJECT_ID || !SIGNALWIRE_API_TOKEN) {
     return {
@@ -119,7 +135,14 @@ export function createMinterFromEnv(
     minter: new SubscriberTokenMinter({
       space: SIGNALWIRE_SPACE,
       projectId: SIGNALWIRE_PROJECT_ID,
-      apiToken: SIGNALWIRE_API_TOKEN
+      apiToken: SIGNALWIRE_API_TOKEN,
+      ttlSeconds: parseTtl(TOKEN_TTL_SECONDS)
     })
   };
+}
+
+/** `TOKEN_TTL_SECONDS`: a whole number of seconds, at least 60; anything else is the default. */
+export function parseTtl(value: string | undefined): number {
+  const seconds = Number(value);
+  return Number.isInteger(seconds) && seconds >= 60 ? seconds : DEFAULT_TOKEN_TTL_SECONDS;
 }

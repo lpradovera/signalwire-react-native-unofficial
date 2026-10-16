@@ -4,6 +4,7 @@ import { SignalWireContext } from './SignalWireProvider';
 import { useObservable } from './useObservable';
 
 import type { SignalWireContextValue } from './SignalWireProvider';
+import type { TokenStatus } from './tokenSource';
 import type { Call, DialOptions, Directory, SignalWire, User } from '@signalwire/js';
 
 export interface UseSignalWireResult {
@@ -13,6 +14,12 @@ export interface UseSignalWireResult {
   readonly user: User | undefined;
   readonly directory: Directory | undefined;
   readonly error: Error | null;
+  /**
+   * The `fetchToken` source's state: `'fetching'`, `'ready'`, `'renewing'`,
+   * `'retrying'` (with the `error`) or `'unauthorized'`. `null` when the
+   * provider was given a `credentialProvider`.
+   */
+  readonly tokenStatus: TokenStatus | null;
   dial(destination: string, options?: DialOptions): Promise<Call>;
   disconnect(): Promise<void>;
 }
@@ -30,7 +37,7 @@ function useSignalWireContext(): SignalWireContextValue {
 
 /** Client-level state and actions. */
 export function useSignalWire(): UseSignalWireResult {
-  const { client, error, observer } = useSignalWireContext();
+  const { client, error, observer, tokenStatus = null } = useSignalWireContext();
 
   const isConnected = useObservable(client?.isConnected$, client?.isConnected ?? false);
   const isRegistered = useObservable(client?.isRegistered$, client?.isRegistered ?? false);
@@ -58,5 +65,5 @@ export function useSignalWire(): UseSignalWireResult {
     return client.disconnect();
   }, [client]);
 
-  return { client, isConnected, isRegistered, user, directory, error, dial, disconnect };
+  return { client, isConnected, isRegistered, user, directory, error, tokenStatus, dial, disconnect };
 }

@@ -2,18 +2,29 @@ import { SignalWireProvider as CoreProvider } from '@signalwire/react';
 import React, { useMemo } from 'react';
 
 import { createCallKitObserver } from '../callkit/observer';
+import { PushWakeRenewal } from './PushWakeRenewal';
 import { createReactNativePlatform } from '../platform/createReactNativePlatform';
 
 import type { ReactNativePlatformOptions } from '../platform/createReactNativePlatform';
-import type { CallObserver, SignalWirePlatform } from '@signalwire/react';
+import type { CallObserver, FetchToken, SignalWirePlatform } from '@signalwire/react';
 import type { CredentialProvider, SignalWireOptions } from '@signalwire/js';
 
 export interface SignalWireProviderProps {
   /**
    * Supplies authentication credentials. Memoize it — a new identity tears
-   * down the client and builds a fresh one.
+   * down the client and builds a fresh one. Pass this or `fetchToken`.
    */
-  credentialProvider: CredentialProvider;
+  credentialProvider?: CredentialProvider;
+  /**
+   * Fetches a token from your server: `async () => ({ token, expiresAt })`.
+   * The client connects with it, renews it shortly before `expiresAt`, when
+   * the app returns to the foreground and when a call push arrives with the
+   * token near or past its expiry, retries failures with a backoff, and
+   * reports a 401 or 403 through `useSignalWire().tokenStatus` and `error`.
+   * Memoize it: a new identity rebuilds the client. Pass this or
+   * `credentialProvider`.
+   */
+  fetchToken?: FetchToken;
   /** React Native platform options (NetInfo and AppState shims). */
   platform?: ReactNativePlatformOptions;
   /** Extra SDK options, merged over the platform defaults. */
@@ -36,6 +47,7 @@ export interface SignalWireProviderProps {
  */
 export function SignalWireProvider({
   credentialProvider,
+  fetchToken,
   platform,
   options,
   callKit = false,
@@ -53,10 +65,12 @@ export function SignalWireProvider({
   return (
     <CoreProvider
       credentialProvider={credentialProvider}
+      fetchToken={fetchToken}
       platform={rnPlatform}
       observer={observer}
       options={options}
     >
+      {fetchToken && callKit ? <PushWakeRenewal /> : null}
       {children}
     </CoreProvider>
   );

@@ -56,6 +56,12 @@ if (process.env.EXPO_PUBLIC_SW_WIRE_LOG === '1') {
   });
 }
 
+// Info, not the SDK's default warn: token renewals and call recovery are
+// logged at info, and a tester of a release build needs to see them.
+if (process.env.EXPO_PUBLIC_SW_WIRE_LOG !== '1') {
+  setLogLevel('info');
+}
+
 // Set up native call UI before React mounts, so a VoIP push arriving on a cold
 // start finds a bridge ready to report it to CallKit.
 void getCallKit().setup({ appName: 'SignalWire RN Example', supportsVideo: true });
