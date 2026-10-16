@@ -1,14 +1,19 @@
 # `@signalwire/react-native`
 
-> **Unofficial.** This is a community project, not a SignalWire product, and is
-> not affiliated with or endorsed by SignalWire.
+> **Alpha.** On its way to becoming SignalWire's supported React Native SDK;
+> APIs may change between alpha releases.
 
 React Native support for [`@signalwire/js`](https://www.npmjs.com/package/@signalwire/js) v4:
 platform adapters, React hooks over the SDK's RxJS observables, and native call
 UI via CallKit and ConnectionService.
 
+Published under npm's `alpha` tag: install `@alpha` (a plain install still
+gets the older 1.x SDK on `latest`). To install from the repository instead,
+see the
+[repository README](https://github.com/lpradovera/signalwire-react-native-unofficial#install).
+
 ```bash
-npm install @signalwire/react-native @signalwire/js rxjs \
+npm install @signalwire/react-native@alpha @signalwire/js rxjs \
   react-native-webrtc @react-native-async-storage/async-storage \
   react-native-get-random-values react-native-url-polyfill
 ```

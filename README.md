@@ -1,7 +1,7 @@
 # `@signalwire/react-native`
 
-> **Unofficial.** This is a community project, not a SignalWire product, and is
-> not affiliated with or endorsed by SignalWire.
+> **Alpha.** On its way to becoming SignalWire's supported React Native SDK;
+> APIs may change between alpha releases.
 
 React Native support for [`@signalwire/js`](https://www.npmjs.com/package/@signalwire/js) v4.
 Supplies the platform adapters the browser-oriented SDK needs on mobile, an
@@ -190,13 +190,53 @@ Three consequences worth reading off the diagram:
 
 ## Install
 
+The packages are published as an alpha, under npm's `alpha` tag. Ask for it
+by tag (or by exact version): a plain `npm install @signalwire/react-native`
+still gets the `latest` tag, SignalWire's older 1.x SDK (signalwire-node),
+until 2.0.0 is released.
+
 ```bash
-npm install @signalwire/react-native @signalwire/js rxjs \
+npm install @signalwire/react-native@alpha @signalwire/js rxjs \
   react-native-webrtc \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
   react-native-url-polyfill
+# for the call-screen components: also @signalwire/react-native-ui@alpha
 ```
+
+`@signalwire/react` comes with `@signalwire/react-native` as a dependency.
+The four `@signalwire/*` packages of this repository are released together at
+one version, and each depends on the others at that version.
+
+**From the repository instead** (an unreleased commit, or a fork): build the
+packages and install the tarballs.
+
+```bash
+git clone https://github.com/lpradovera/signalwire-react-native-unofficial.git
+cd signalwire-react-native-unofficial
+npm install
+npm run build
+TARBALLS="$PWD/../signalwire-tarballs"   # anywhere; an absolute path
+mkdir -p "$TARBALLS"
+npm pack -w @signalwire/react -w @signalwire/react-native --pack-destination "$TARBALLS"
+# For the call-screen components, add -w @signalwire/react-native-ui above,
+# and its tarball to the install below.
+```
+
+Then, in your app (any directory; `TARBALLS` as above), install every
+tarball that was packed, plus the peers above. The names carry the version,
+so use a glob rather than writing it out:
+
+```bash
+npm install "$TARBALLS"/signalwire-react-[0-9]*.tgz \
+  "$TARBALLS"/signalwire-react-native-[0-9]*.tgz
+# with react-native-ui: also "$TARBALLS"/signalwire-react-native-ui-[0-9]*.tgz
+```
+
+Pack from one checkout at a time: a tarball left from an older version
+matches the glob too. npm records a `file:` dependency for each tarball.
+Copying the tarballs (or the unpacked packages) into the app, under
+`vendor/` say, keeps the install reproducible on another machine and in CI.
 
 Optional, each unlocking one feature:
 
