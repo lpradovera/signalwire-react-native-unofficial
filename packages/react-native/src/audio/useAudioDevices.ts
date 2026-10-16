@@ -1,5 +1,6 @@
-import { useObservable } from '@signalwire/react';
-import { NO_AUDIO_DEVICES, audioDevices$ } from './nativeAudioRoutes';
+import { useSyncExternalStore } from 'react';
+
+import { currentAudioDevices, subscribeAudioDevices } from './nativeAudioRoutes';
 
 import type { AudioDeviceStatus } from './nativeAudioRoutes';
 
@@ -19,5 +20,5 @@ import type { AudioDeviceStatus } from './nativeAudioRoutes';
  * `available: []`, `selected: null`.
  */
 export function useAudioDevices(): AudioDeviceStatus {
-  return useObservable(audioDevices$, NO_AUDIO_DEVICES);
+  return useSyncExternalStore(subscribeAudioDevices, currentAudioDevices);
 }

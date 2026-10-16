@@ -5,11 +5,27 @@ import { BehaviorSubject, Observable, Subject } from 'rxjs';
 import { getAudioRouteController, resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
 import { CallKeepBridge } from './CallKeepBridge';
 
-// The audio controller checks that incall-manager's native module is linked.
-jest.mock('react-native', () => ({
-  Platform: { OS: 'android' },
-  NativeModules: { InCallManager: { start: jest.fn() } }
-}));
+// The audio controller checks that incall-manager's native module is linked,
+// and follows its Android device reports through DeviceEventEmitter.
+jest.mock('react-native', () => {
+  const listeners = new Map<string, Set<(payload: unknown) => void>>();
+  return {
+    Platform: { OS: 'android' },
+    NativeModules: { InCallManager: { start: jest.fn() } },
+    DeviceEventEmitter: {
+      addListener: (event: string, listener: (payload: unknown) => void) => {
+        const set = listeners.get(event) ?? new Set();
+        set.add(listener);
+        listeners.set(event, set);
+        return { remove: () => set.delete(listener) };
+      },
+      emit: (event: string, payload: unknown) => listeners.get(event)?.forEach((listener) => listener(payload))
+    }
+  };
+});
+const { DeviceEventEmitter } = jest.requireMock<{
+  DeviceEventEmitter: { emit(event: string, payload: unknown): void };
+}>('react-native');
 
 const callkeep = RNCallKeep as unknown as typeof RNCallKeep & {
   __emit: (event: string, payload: unknown) => void;
@@ -409,6 +425,11 @@ describe('CallKeepBridge', () => {
     call.status$.next('connected');
     await Promise.resolve();
     expect(InCallManager.start).toHaveBeenCalled();
+    // Applied once incall-manager's start has reported the call's device.
+    DeviceEventEmitter.emit('onAudioDeviceChanged', {
+      availableAudioDeviceList: '["EARPIECE","SPEAKER_PHONE"]',
+      selectedAudioDevice: 'EARPIECE'
+    });
     expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(true);
   });
 

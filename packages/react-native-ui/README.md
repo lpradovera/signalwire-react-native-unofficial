@@ -12,15 +12,17 @@ npm install @signalwire/react-native-ui@alpha @signalwire/react-native@alpha
 ```
 
 ```tsx
+import type { Call } from '@signalwire/js';
 import { SignalWireVideoView } from '@signalwire/react-native';
-import { CallControls, CallStatus, IncomingCallSheet } from '@signalwire/react-native-ui';
+import { CallControls, CallStatus } from '@signalwire/react-native-ui';
+import { StyleSheet, View } from 'react-native';
 
-function CallScreen({ call }) {
+function CallScreen({ call, onEnd }: { call: Call; onEnd: () => void }) {
   return (
     <View style={{ flex: 1 }}>
       <SignalWireVideoView call={call} kind="remote" style={StyleSheet.absoluteFill} />
       <CallStatus call={call} />
-      <CallControls call={call} onHangup={goBack} />
+      <CallControls call={call} onHangup={onEnd} />
     </View>
   );
 }
@@ -87,8 +89,10 @@ Every control carries an `accessibilityRole`, a label and â€” where it toggles â
   (`AudioRoutePickerButton` from `@signalwire/react-native/audio`, iOS's own
   menu of the phone, the speaker and each headset or car); `showRoutePicker`
   (default: `showAudioRoute`) hides it. It needs react-native-incall-manager
-  with iOS audio routes (the upstream change, or the patch in
-  `@signalwire/react-native`'s `docs/patches/`); on released incall-manager
+  with iOS audio routes (the upstream change, or the patch in the
+  repository's [`docs/patches/`](https://github.com/lpradovera/signalwire-react-native-unofficial/tree/main/docs/patches),
+  which isn't in the npm package; how to apply it is in the repository
+  README's "Audio routes on iOS"); on released incall-manager
   4.3.0 it isn't shown and the controls offer speaker on/off. It is native
   code: it appears only once the app has been rebuilt (`pod install`, or
   `expo prebuild`) with this version of `@signalwire/react-native`.

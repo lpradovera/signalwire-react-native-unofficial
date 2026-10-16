@@ -28,6 +28,39 @@ describe('AudioRoutePickerButton', () => {
     });
   });
 
+  it('is a button to VoiceOver: the interop container is the element, and it takes its traits from accessibilityRole', async () => {
+    // Under the New Architecture the picker sits in React Native's interop
+    // container, which becomes the accessibility element and reads its traits
+    // from the role prop, not from the native view's override.
+    jest.spyOn(UIManager, 'hasViewManagerConfig').mockImplementation((name) => name === 'SWAudioRoutePicker');
+    const { toJSON } = await render(<AudioRoutePickerButton />);
+    expect(toJSON()).toMatchObject({ props: { accessibilityRole: 'button' } });
+    const { toJSON: own } = await render(<AudioRoutePickerButton accessibilityRole="none" />);
+    expect(own()).toMatchObject({ props: { accessibilityRole: 'none' } });
+  });
+
+  it('maps aria-* and id the way View does, since it renders the native host directly', async () => {
+    jest.spyOn(UIManager, 'hasViewManagerConfig').mockImplementation((name) => name === 'SWAudioRoutePicker');
+    const { toJSON } = await render(
+      <AudioRoutePickerButton
+        aria-label="Sortie audio"
+        aria-hidden
+        aria-disabled
+        id="route"
+        accessibilityLabel="ignored: aria-label wins, as on View"
+      />
+    );
+    const tree = toJSON() as { props: Record<string, unknown> };
+    expect(tree.props).toMatchObject({
+      accessibilityLabel: 'Sortie audio',
+      accessibilityElementsHidden: true,
+      importantForAccessibility: 'no-hide-descendants',
+      accessibilityState: { disabled: true },
+      nativeID: 'route'
+    });
+    expect(Object.keys(tree.props).filter((key) => key.startsWith('aria-') || key === 'id')).toEqual([]);
+  });
+
   it('draws nothing with released incall-manager, where nothing follows the picker’s choice', async () => {
     // incall-manager 4.3.0 neither reports a route the picker chose nor keeps
     // it: its next category-change re-apply can put the call back.
