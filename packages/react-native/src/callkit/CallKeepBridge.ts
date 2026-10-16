@@ -329,7 +329,14 @@ export class CallKeepBridge {
       now: () => Date.now()
     };
 
-    this.registry = new CallRegistry({ host, fusionTimeoutMs: options.fusionTimeoutMs });
+    this.registry = new CallRegistry({
+      host,
+      fusionTimeoutMs: options.fusionTimeoutMs,
+      // One call at a time on Android: a second incoming call was held
+      // RINGING by Telecom with nothing on screen. iOS keeps CallKit's
+      // waiting-call screen (End & Accept).
+      refuseIncomingWhileBusy: Platform.OS === 'android'
+    });
 
     // A call can end in the native UI, from the SDK, or in the registry
     // itself: the app's endCall (a failed bridge dial), or tick() expiring an
@@ -519,7 +526,11 @@ export class CallKeepBridge {
           if (!this.registry.uuidForCall(call)) {
             // Marked first: attaching shows the call in CallKit, which reads its media.
             this.inboundCalls.add(call);
-            this.registry.attachIncomingCall(call);
+            if (!this.registry.attachIncomingCall(call)) {
+              // Refused as busy: never shown, nothing to watch.
+              this.inboundCalls.delete(call);
+              continue;
+            }
             this.watchCallStatus(call);
           }
         }
@@ -1711,7 +1722,8 @@ export class CallKeepBridge {
    * sides that read them. iOS: 1 failed, 2 remoteEnded, 3 unanswered,
    * 4 answeredElsewhere, 5 declinedElsewhere, and callkeep's MISSED is 2,
    * remoteEnded. Android: 1 ERROR, 2 REMOTE, 3 BUSY, 4 ANSWERED_ELSEWHERE,
-   * 6 MISSED. So a missed call is UNANSWERED on iOS and MISSED on Android.
+   * 6 MISSED. So a missed call is UNANSWERED on iOS and MISSED on Android,
+   * and a busy one UNANSWERED (BUSY on Android).
    * A local end keeps REMOTE_ENDED: neither table has a local reason, and
    * the native UI has usually ended the call already.
    */
@@ -1724,6 +1736,10 @@ export class CallKeepBridge {
         return reasons.FAILED;
       case 'duplicate':
         return reasons.ANSWERED_ELSEWHERE;
+      case 'busy':
+        // UNANSWERED: iOS shows it as a call nobody answered; on Android the
+        // same value (3) is DisconnectCause BUSY.
+        return reasons.UNANSWERED;
       default:
         return reasons.REMOTE_ENDED;
     }
