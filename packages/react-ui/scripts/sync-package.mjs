@@ -42,6 +42,14 @@ pkg.exports = {
   )
 };
 
+// TypeScript's node10 ("node") resolution ignores `exports`, so without this a
+// subpath import there finds no types (TS2307) although they ship.
+pkg.typesVersions = {
+  '*': Object.fromEntries(
+    COMPONENTS.map((c) => [subpath(c.tag), [`./dist/components/${c.name}.d.mts`]])
+  )
+};
+
 // NOT false. Every component module calls customElements.define at import
 // time; marking the package side-effect-free lets bundlers drop that
 // registration and the element silently never upgrades.

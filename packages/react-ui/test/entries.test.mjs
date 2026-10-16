@@ -142,3 +142,27 @@ test("every built JavaScript entry, the barrel included, starts with 'use client
     assert.match(source, /^(\/\/[^\n]*\n|\s)*['"]use client['"]/, `dist/${file} has no leading 'use client'`);
   }
 });
+
+test('TypeScript finds the types of every exports entry under node10, node16 and bundler resolution', async () => {
+  const { default: ts } = await import('typescript');
+  const consumer = join(root, 'test', 'consumer.ts');
+  const modes = {
+    node10: { moduleResolution: ts.ModuleResolutionKind.Node10, module: ts.ModuleKind.CommonJS },
+    node16: { moduleResolution: ts.ModuleResolutionKind.Node16, module: ts.ModuleKind.Node16 },
+    bundler: { moduleResolution: ts.ModuleResolutionKind.Bundler, module: ts.ModuleKind.ESNext }
+  };
+  const specs = Object.keys(pkg.exports)
+    .filter((key) => !key.endsWith('.css'))
+    .map((key) => (key === '.' ? '@signalwire/react-ui' : `@signalwire/react-ui/${key.slice(2)}`));
+  const unresolved = [];
+  for (const [mode, options] of Object.entries(modes)) {
+    for (const spec of specs) {
+      // node16 resolves as an ES module importer would; a CommonJS importer
+      // cannot load this ESM-only package. The other modes take no importer kind.
+      const kind = mode === 'node16' ? ts.ModuleKind.ESNext : undefined;
+      const resolved = ts.resolveModuleName(spec, consumer, options, ts.sys, undefined, undefined, kind);
+      if (!resolved.resolvedModule?.resolvedFileName.endsWith('.d.mts')) unresolved.push(`${mode}: ${spec}`);
+    }
+  }
+  assert.deepEqual(unresolved, []);
+});

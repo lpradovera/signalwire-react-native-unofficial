@@ -113,5 +113,51 @@
       "default": "./dist/components/CallWidget.mjs"
     }
   },
-  "sideEffects": true
+  "sideEffects": true,
+  "typesVersions": {
+    "*": {
+      "call-media": [
+        "./dist/components/CallMedia.d.mts"
+      ],
+      "self-media": [
+        "./dist/components/SelfMedia.d.mts"
+      ],
+      "local-camera": [
+        "./dist/components/LocalCamera.d.mts"
+      ],
+      "call-status": [
+        "./dist/components/CallStatus.d.mts"
+      ],
+      "call-provider": [
+        "./dist/components/CallProvider.d.mts"
+      ],
+      "call-dialpad": [
+        "./dist/components/CallDialpad.d.mts"
+      ],
+      "audio-level": [
+        "./dist/components/AudioLevel.d.mts"
+      ],
+      "click-to-call": [
+        "./dist/components/ClickToCall.d.mts"
+      ],
+      "call-controls": [
+        "./dist/components/CallControls.d.mts"
+      ],
+      "participants": [
+        "./dist/components/Participants.d.mts"
+      ],
+      "participant-controls": [
+        "./dist/components/ParticipantControls.d.mts"
+      ],
+      "directory": [
+        "./dist/components/Directory.d.mts"
+      ],
+      "device-selector": [
+        "./dist/components/DeviceSelector.d.mts"
+      ],
+      "call-widget": [
+        "./dist/components/CallWidget.d.mts"
+      ]
+    }
+  }
 }
