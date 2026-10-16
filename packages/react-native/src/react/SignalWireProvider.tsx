@@ -1,11 +1,11 @@
 import { SignalWireProvider as CoreProvider } from '@signalwire/react';
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 
 import { createCallKitObserver } from '../callkit/observer';
 import { createReactNativePlatform } from '../platform/createReactNativePlatform';
 
 import type { ReactNativePlatformOptions } from '../platform/createReactNativePlatform';
-import type { CallObserver, SignalWirePlatform } from '@signalwire/react';
+import type { CallObserver } from '@signalwire/react';
 import type { CredentialProvider, SignalWireOptions } from '@signalwire/js';
 
 export interface SignalWireProviderProps {
@@ -41,9 +41,14 @@ export function SignalWireProvider({
   callKit = false,
   children
 }: SignalWireProviderProps): React.JSX.Element {
-  // Built once: a new platform identity would tear down and rebuild the client.
+  // One platform per client, built by the core provider when it builds the
+  // client and disposed after that client is destroyed: dispose() removes the
+  // NetInfo and AppState shims for good, so a platform shared by the next
+  // client (a new credentialProvider, or React.StrictMode's remount) would
+  // leave that client deaf to network and foreground changes. The factory's
+  // identity is stable and `platform` is read once, as before.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const rnPlatform = useMemo<SignalWirePlatform>(() => createReactNativePlatform(platform), []);
+  const platformFactory = useCallback(() => createReactNativePlatform(platform), []);
 
   const observer = useMemo<CallObserver | undefined>(
     () => (callKit ? createCallKitObserver() : undefined),
@@ -53,7 +58,7 @@ export function SignalWireProvider({
   return (
     <CoreProvider
       credentialProvider={credentialProvider}
-      platform={rnPlatform}
+      platform={platformFactory}
       observer={observer}
       options={options}
     >

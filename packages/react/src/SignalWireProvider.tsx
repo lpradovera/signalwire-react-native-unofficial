@@ -24,8 +24,15 @@ export interface SignalWireProviderProps {
   /**
    * Platform layer. Omit on the web: the SDK falls through to browser globals.
    * `@signalwire/react-native` supplies one automatically.
+   *
+   * A function builds one platform per client: it is called for each client
+   * the provider builds, and that platform is disposed after the client is
+   * destroyed. A platform object is shared by every client and disposed when
+   * the provider unmounts or gets another platform; React.StrictMode's
+   * simulated unmount disposes it too, so pass a function for a platform
+   * that cannot be used after dispose().
    */
-  platform?: SignalWirePlatform;
+  platform?: SignalWirePlatform | (() => SignalWirePlatform);
   /** Observes call lifecycle — used by native call UI. */
   observer?: CallObserver;
   /** Extra SDK options, merged over the platform's. */
@@ -112,7 +119,9 @@ export function SignalWireProvider({
 
   useEffect(() => {
     let discarded = false;
-    const clientOptions = { ...platform?.options, ...options };
+    const ownPlatform = typeof platform === 'function' ? platform() : undefined;
+    const clientPlatform = typeof platform === 'function' ? ownPlatform : platform;
+    const clientOptions = { ...clientPlatform?.options, ...options };
     const instance = new SignalWire(
       whileWanted(credentialProvider, () => discarded),
       clientOptions
@@ -134,13 +143,22 @@ export function SignalWireProvider({
       setClient(null);
       destroyClient(instance, clientOptions.skipRegister === true);
       // After destroy: the SDK's teardown may still touch platform globals.
-      platform?.dispose();
+      ownPlatform?.dispose();
     };
     // `platform`, `observer` and `options` are intentionally excluded:
     // rebuilding the client on every render of an inline object literal would
     // be catastrophic. Change `credentialProvider` to force a rebuild.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [credentialProvider]);
+
+  // A shared platform object outlives the clients. Declared after the client
+  // effect, so on unmount it is disposed after the last client is destroyed.
+  useEffect(() => {
+    if (!platform || typeof platform === 'function') {
+      return undefined;
+    }
+    return () => platform.dispose();
+  }, [platform]);
 
   const value = useMemo<SignalWireContextValue>(
     () => ({ client, error, observer }),
