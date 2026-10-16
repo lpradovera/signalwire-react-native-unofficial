@@ -15,6 +15,7 @@ import { ConnectScreen, DisconnectedScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { useBridgeAnswer } from './src/useBridgeAnswer';
 import { useCallBack } from './src/useCallBack';
+import { useBridgeDecline } from './src/useBridgeDecline';
 import { SUBSCRIBER_REFERENCE } from './src/subscriber';
 import { fetchServerToken } from './src/serverToken';
 import { useDeviceRegistration } from './src/useDeviceRegistration';
@@ -33,6 +34,8 @@ function Shell(): React.JSX.Element {
   useBridgeAnswer(setActiveCall);
   // A tap in Recents, or "Hey Siri, call back": dial it.
   useCallBack(setActiveCall);
+  // Declining one means telling the server, which holds the caller.
+  useBridgeDecline();
 
   // A CallKit Accept answers the call — audio and all — without touching
   // React. Subscribe to the registry so a native answer also brings up the
