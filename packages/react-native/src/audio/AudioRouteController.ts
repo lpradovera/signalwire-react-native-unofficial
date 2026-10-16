@@ -46,19 +46,28 @@ const DEVICE_FOR_ROUTE: Record<AudioRoute, AudioDeviceName> = {
   bluetooth: 'BLUETOOTH'
 };
 
-/** One warning per process, not per bundle copy (see AUDIO_GLOBAL). */
+/** Each warning once per process, not per bundle copy (see AUDIO_GLOBAL). */
 const WARNED_GLOBAL = '__signalwireRNAudioRoutesWarned';
 
-function warnNoIosRoutes(): void {
-  const warned = processGlobal(WARNED_GLOBAL, () => ({ done: false }));
-  if (warned.done) {
+const WARNINGS = {
+  noIosRoutes:
+    'Audio route "bluetooth" needs react-native-incall-manager with iOS audio routes; ' +
+    'the installed one offers only speaker on/off on iOS. See "Audio routes on iOS" in the README.',
+  noSessionAndroid:
+    'Audio routes on Android need the call\'s audio session: incall-manager refuses every route before its ' +
+    'start(). The CallKit bridge starts it for its calls; otherwise call getAudioRouteController().start().',
+  noSessionRoute:
+    'Audio routes other than speaker on/off need the call\'s audio session (getAudioRouteController().start(), ' +
+    'which the CallKit bridge calls for its calls); this one is ignored.'
+} as const;
+
+function warnOnce(key: keyof typeof WARNINGS): void {
+  const warned = processGlobal(WARNED_GLOBAL, () => new Set<string>());
+  if (warned.has(key)) {
     return;
   }
-  warned.done = true;
-  logger.warn(
-    'Audio route "bluetooth" needs react-native-incall-manager with iOS audio routes; ' +
-      'the installed one offers only speaker on/off on iOS. See "Audio routes on iOS" in the README.'
-  );
+  warned.add(key);
+  logger.warn(WARNINGS[key]);
 }
 
 /** The route state a refused choice goes back to. */
@@ -113,9 +122,18 @@ interface Session {
  * Android uses incall-manager's routes; a choice it can't make (Bluetooth
  * or a headset with no such device) goes back, as on iOS.
  *
- * A choice made before the call's session starts (a speaker tap while an
- * outbound call rings, with CallKit driving the session) is shown at once and
- * applied when it starts. Nothing native is written outside a session.
+ * A choice made while a call that will start a session has not yet (a
+ * speaker tap while an outbound CallKit call rings) is shown at once and
+ * applied when it starts; if that call ends first, it is forgotten.
+ *
+ * With no session and none expected (an app without CallKit that hasn't
+ * called {@link start}, or a call the CallKit bridge doesn't track), only the
+ * speaker setting can be written, and only on iOS (incall-manager's
+ * `setForceSpeakerphoneOn` works there without a session): speaker on and off
+ * (`'earpiece'` is speaker off) are written and shown; `'headset'` and
+ * `'bluetooth'` are ignored with a warning. On Android a never-started
+ * incall-manager refuses every route, so nothing is written or shown, with a
+ * warning. Call {@link start} and {@link stop} around a call for full routing.
  */
 export class AudioRouteController {
   private readonly _route$ = new BehaviorSubject<AudioRoute>('earpiece');
@@ -130,8 +148,8 @@ export class AudioRouteController {
    * video call off the speaker).
    */
   private early: RouteState | null = null;
-  /** Calls start and stop the session (CallKit is set up); see {@link holdChoicesUntilStart}. */
-  private holdsUntilStart = false;
+  /** A call that will start a session is live; see {@link expectSession}. */
+  private expecting = false;
   private destroyed = false;
 
   constructor() {
@@ -154,13 +172,25 @@ export class AudioRouteController {
   }
 
   /**
-   * @internal Called by the CallKit bridge's `setup()`: from then on each
-   * call's session is started and stopped for it, so a route chosen before a
-   * session runs waits for it instead of reaching incall-manager outside a
-   * call.
+   * @internal Called by the CallKit bridge whenever whether it tracks a live
+   * call changes: such a call's session is started by the bridge, so while
+   * one is live and no session runs, a route choice waits for it instead of
+   * reaching incall-manager outside a call. When the last one ends with no
+   * session (an outbound call nobody answered, a push that never got its
+   * call), a held choice is forgotten and the route goes back to the
+   * earpiece, as `stop()` does.
    */
-  holdChoicesUntilStart(): void {
-    this.holdsUntilStart = true;
+  expectSession(expected: boolean): void {
+    this.expecting = expected;
+    if (expected || this.session || !this.early) {
+      return;
+    }
+    this.early = null;
+    this.chosen = false;
+    this.beforeSpeaker = DEFAULT_ROUTE;
+    if (!this.destroyed) {
+      this._route$.next('earpiece');
+    }
   }
 
   /**
@@ -281,7 +311,16 @@ export class AudioRouteController {
   private select(route: AudioRoute, chosen: boolean, onRefused?: () => void): void {
     const session = this.session;
     if (route === 'bluetooth' && Platform.OS === 'ios' && !(session?.iosRoutes ?? hasIosAudioRoutes())) {
-      warnNoIosRoutes();
+      warnOnce('noIosRoutes');
+      return;
+    }
+    const writesNow = !session && !this.expecting;
+    if (writesNow && Platform.OS === 'android') {
+      warnOnce('noSessionAndroid');
+      return;
+    }
+    if (writesNow && (route === 'headset' || route === 'bluetooth')) {
+      warnOnce('noSessionRoute');
       return;
     }
     const before: Snapshot = { route: this._route$.value, chosen: this.chosen, beforeSpeaker: this.beforeSpeaker };
@@ -294,7 +333,7 @@ export class AudioRouteController {
       this.applyRoute(session, route, chosen, before, onRefused);
       return;
     }
-    if (this.holdsUntilStart) {
+    if (this.expecting) {
       // No session yet: shown now, applied when the call's session starts.
       // Kept whether or not it is a choice: speaker-off (the default
       // route, not chosen) is still the user's last action, and start()
@@ -302,10 +341,8 @@ export class AudioRouteController {
       this.early = { route, chosen };
       return;
     }
-    // An app that starts no session (no CallKit): speaker on/off, as incall-manager allows outside one.
-    if (route !== 'bluetooth') {
-      this.writeSpeaker(route, route === 'speaker');
-    }
+    // No session and none coming (iOS): speaker on/off, which incall-manager allows outside one.
+    this.writeSpeaker(route, route === 'speaker');
   }
 
   /**
