@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { TOKEN_URL } from './endpoints';
+import { requestServerToken } from './serverToken';
 import { SUBSCRIBER_REFERENCE } from './subscriber';
 
 /**
@@ -12,19 +13,21 @@ import { SUBSCRIBER_REFERENCE } from './subscriber';
  * token screen, which is still the quickest path when you have a token to hand.
  *
  * Real deployments send their own session credential here; the server maps it
- * to a subscriber. See `server/src/routes/token.ts`.
+ * to a subscriber, and says which one in `reference`. See
+ * `server/src/routes/token.ts`.
  */
 export type ServerTokenState =
   | { status: 'disabled' }
   | { status: 'loading' }
-  | { status: 'ready'; token: string }
+  | { status: 'ready'; token: string; reference: string }
   | { status: 'failed'; error: string };
 
-
-export function useServerToken(): ServerTokenState {
+export function useServerToken(): ServerTokenState & { retry: () => void } {
   const [state, setState] = useState<ServerTokenState>(
     TOKEN_URL ? { status: 'loading' } : { status: 'disabled' }
   );
+  // Bumped by retry(); the request runs once per value.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!TOKEN_URL) {
@@ -32,43 +35,31 @@ export function useServerToken(): ServerTokenState {
     }
 
     let cancelled = false;
+    setState({ status: 'loading' });
 
-    void (async () => {
-      try {
-        const response = await fetch(TOKEN_URL, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          // Named explicitly, so the token and the device registration
-          // agree on who this device is.
-          body: JSON.stringify({ reference: SUBSCRIBER_REFERENCE })
-        });
-
-        const body = (await response.json()) as { token?: string; error?: string };
-
-        if (cancelled) {
-          return;
+    // The reference is asked for explicitly, so the token and the device
+    // registration agree on who this device is.
+    requestServerToken(TOKEN_URL, SUBSCRIBER_REFERENCE).then(
+      ({ token, reference }) => {
+        if (!cancelled) {
+          setState({ status: 'ready', token, reference });
         }
-        if (!response.ok || !body.token) {
-          setState({
-            status: 'failed',
-            error: body.error ?? `Token server returned ${response.status}`
-          });
-          return;
-        }
-        setState({ status: 'ready', token: body.token });
-      } catch (error) {
+      },
+      (error: Error) => {
         if (!cancelled) {
           // Most often the device cannot reach the host: use the machine's LAN
           // address rather than localhost, and check both are on one network.
-          setState({ status: 'failed', error: (error as Error).message });
+          setState({ status: 'failed', error: error.message });
         }
       }
-    })();
+    );
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [attempt]);
 
-  return state;
+  const retry = useCallback(() => setAttempt((value) => value + 1), []);
+
+  return { ...state, retry };
 }
