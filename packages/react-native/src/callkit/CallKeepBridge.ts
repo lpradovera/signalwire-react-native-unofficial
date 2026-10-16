@@ -18,7 +18,7 @@ import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
 import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
 import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
-import { CallRegistry } from './CallRegistry';
+import { CallRegistry, INBOUND_ANSWER } from './CallRegistry';
 
 import type { CallRegistryHost, PushPayload } from './types';
 
@@ -42,6 +42,8 @@ import type { Subscription } from 'rxjs';
 const TICK_INTERVAL_MS = 2000;
 const AUDIO_SESSION_TIMEOUT_MS = 3000;
 const HANDLE_TYPE = 'generic';
+/** A handle callkeep's updateDisplay can re-send as a phone number unchanged in meaning. */
+const PHONE_NUMBER = /^\+?[0-9]+$/;
 
 /** Runtime permissions callkeep's ConnectionService needs on Android. */
 const ANDROID_CALL_PERMISSIONS = ['android.permission.READ_PHONE_NUMBERS'];
@@ -109,9 +111,9 @@ export class CallKeepBridge {
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
   /**
-   * SDK inbound calls. The registry answers every one of them audio-only
-   * (`answer({ audio: true, video: false })`, an in-app answer included,
-   * since that is routed through CallKit), so they are voice calls whatever
+   * SDK inbound calls. The registry answers every one of them with
+   * INBOUND_ANSWER (audio-only today; an in-app answer included, since that
+   * is routed through CallKit), so their media is that answer's, whatever
    * their offer carried. See {@link mediaFor}.
    */
   private readonly inboundCalls = new WeakSet<Call>();
@@ -791,8 +793,8 @@ export class CallKeepBridge {
   }
 
   /**
-   * A call's media. An SDK inbound call is voice: the registry answers it
-   * audio-only. Its `mediaDirections` can't be used, because @signalwire/js
+   * A call's media. An SDK inbound call has the media the registry answers
+   * it with (INBOUND_ANSWER: voice). Its `mediaDirections` can't be used, because @signalwire/js
    * reports video for any offer whose m=video sends ('sendrecv' before the
    * answer, 'recvonly' after it), so a video caller's call would start on the
    * loudspeaker. An outbound call (the bridge call placed for a push
@@ -803,8 +805,11 @@ export class CallKeepBridge {
    * bridge call, whose type is shown once it binds.
    */
   private mediaFor(call: Call | null | undefined): 'audio' | 'video' {
-    if (!call || this.inboundCalls.has(call)) {
+    if (!call) {
       return 'audio';
+    }
+    if (this.inboundCalls.has(call)) {
+      return INBOUND_ANSWER.video ? 'video' : 'audio';
     }
     let video: string | undefined;
     try {
@@ -830,10 +835,21 @@ export class CallKeepBridge {
    * call, CallKit is told (`CXCallUpdate.hasVideo`, through callkeep's
    * `updateDisplay`, which also re-sends the name and handle). Android's
    * ConnectionService takes no type update from callkeep.
+   *
+   * Only for a caller whose handle is a phone number: callkeep's
+   * updateDisplay takes no handle type and always rebuilds the remote handle
+   * as CXHandleTypePhoneNumber, while the entry was reported generic, so a
+   * `sip:` or Fabric address would turn into a "phone number" in CallKit and
+   * Recents (and on a call-back). Such a call stays shown as voice; its audio
+   * still starts with the bridge call's media.
    */
   private showBoundCallType(uuid: string): void {
     const entry = this.registry.entryForUuid(uuid);
     if (Platform.OS !== 'ios' || !entry || !this.reportsVideo(uuid)) {
+      return;
+    }
+    if (!PHONE_NUMBER.test(entry.handle)) {
+      logger.debug(`Not marking ${uuid} as video: updateDisplay would make "${entry.handle}" a phone number`);
       return;
     }
     if (typeof RNCallKeep.updateDisplay !== 'function') {
