@@ -23,14 +23,28 @@ const prefixFor = (scope: StorageScope): string => `${NAMESPACE}:${scope}:`;
 const keyFor = (key: string, scope: StorageScope): string => `${prefixFor(scope)}${key}`;
 
 /**
- * Guards the once-per-process session purge. React Native has no session
- * scope, so an app cold start is the equivalent of opening a new browser tab.
+ * The session scope: in memory, for the life of the process.
+ *
+ * React Native has no session scope; an app cold start is the equivalent of
+ * opening a new browser tab. A process-lifetime map gives the SDK exactly
+ * that, and keeps what it stores there off the disk: its bearer secrets (the
+ * cached SAT, the session-resume `authorization_state`) are session-scoped,
+ * and in AsyncStorage they sat in plaintext in the app sandbox, and in Android
+ * Auto Backup, until the next launch purged them. Shared by every adapter in
+ * the process, as `sessionStorage` is by every script in a tab.
+ */
+const sessionValues = new Map<string, string>();
+
+/**
+ * Guards the once-per-process purge of session keys an earlier version of
+ * this adapter wrote to AsyncStorage.
  */
 let sessionPurge: Promise<void> | null = null;
 
-/** Test seam — clears the once-per-process purge guard. */
+/** Test seam — clears the session scope and the once-per-process purge guard. */
 export function resetSessionPurgeForTesting(): void {
   sessionPurge = null;
+  sessionValues.clear();
 }
 
 async function purgeScope(backing: AsyncStorageLike, scope: StorageScope): Promise<void> {
@@ -42,7 +56,7 @@ async function purgeScope(backing: AsyncStorageLike, scope: StorageScope): Promi
   }
 }
 
-/** SDK `Storage` backed by AsyncStorage, with an emulated session scope. */
+/** SDK `Storage` backed by AsyncStorage, with an in-memory session scope. */
 export class ReactNativeStorage implements Storage {
   constructor(private readonly backing: AsyncStorageLike) {
     sessionPurge ??= purgeScope(backing, 'session').catch((error: unknown) => {
@@ -56,6 +70,14 @@ export class ReactNativeStorage implements Storage {
 
   async setItem(key: string, value: string | null, scope: StorageScope = 'session'): Promise<void> {
     await this.ready();
+    if (scope === 'session') {
+      if (value === null) {
+        sessionValues.delete(key);
+      } else {
+        sessionValues.set(key, value);
+      }
+      return;
+    }
     try {
       if (value === null) {
         await this.backing.removeItem(keyFor(key, scope));
@@ -69,6 +91,9 @@ export class ReactNativeStorage implements Storage {
 
   async getItem(key: string, scope: StorageScope = 'session'): Promise<string | null> {
     await this.ready();
+    if (scope === 'session') {
+      return sessionValues.get(key) ?? null;
+    }
     try {
       return await this.backing.getItem(keyFor(key, scope));
     } catch (error) {
@@ -79,6 +104,10 @@ export class ReactNativeStorage implements Storage {
 
   async removeItem(key: string, scope: StorageScope = 'session'): Promise<void> {
     await this.ready();
+    if (scope === 'session') {
+      sessionValues.delete(key);
+      return;
+    }
     try {
       await this.backing.removeItem(keyFor(key, scope));
     } catch (error) {
@@ -88,6 +117,10 @@ export class ReactNativeStorage implements Storage {
 
   async clear(scope: StorageScope = 'session'): Promise<void> {
     await this.ready();
+    if (scope === 'session') {
+      sessionValues.clear();
+      return;
+    }
     try {
       await purgeScope(this.backing, scope);
     } catch (error) {
