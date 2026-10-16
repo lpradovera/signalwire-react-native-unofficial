@@ -687,7 +687,7 @@ Do **not** debug this end to end. Test each link in isolation, in this order:
 5. **Fusion.** Confirm the SDK connects and `CallRegistry` moves the entry from
    `pending-push` to `fused`. Enable debug logging:
    `setLogLevel('debug')` from `@signalwire/js`; look for
-   `[SignalWireRN] Fused call … into …`.
+   `[SignalWire React] Fused call … into …`.
 6. **The unfused case.** Send a push with a `call_id` that never arrives. The
    native call must end itself as missed within 20 seconds. A stuck entry in the
    iOS call log means the tick timer is not running.

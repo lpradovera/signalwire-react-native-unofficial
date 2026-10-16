@@ -46,14 +46,20 @@ async function renderProvider(props: Record<string, unknown> = {}): Promise<void
 }
 
 describe('React Native SignalWireProvider', () => {
+  /** The platform factory the wrapper hands the core provider. */
+  const factory = (): (() => unknown) => core.mock.calls[0]?.[0].platform;
+
   it('supplies the platform so callers never have to', async () => {
     await renderProvider();
+    // The core builds one per client, so the wrapper hands it a factory.
+    expect(createPlatform).not.toHaveBeenCalled();
+    expect(factory()()).toBe(platform);
     expect(createPlatform).toHaveBeenCalledTimes(1);
-    expect(core.mock.calls[0]?.[0]).toMatchObject({ platform });
   });
 
   it('forwards platform options through', async () => {
     await renderProvider({ platform: { netInfo: false } });
+    factory()();
     expect(createPlatform).toHaveBeenCalledWith({ netInfo: false });
   });
 
@@ -108,7 +114,7 @@ describe('React Native SignalWireProvider', () => {
     expect(core.mock.calls[0]?.[0]).toMatchObject({ credentialProvider, options });
   });
 
-  it('builds the platform once across re-renders', async () => {
+  it('keeps the platform factory across re-renders', async () => {
     const view = await render(
       <SignalWireProvider credentialProvider={credentialProvider as never}>
         <Text>child</Text>
@@ -119,8 +125,8 @@ describe('React Native SignalWireProvider', () => {
         <Text>child</Text>
       </SignalWireProvider>
     );
-    // A fresh platform identity would tear down and rebuild the client.
-    expect(createPlatform).toHaveBeenCalledTimes(1);
+    // A fresh factory identity would tear down and rebuild the client.
+    expect(core.mock.calls[1]?.[0].platform).toBe(core.mock.calls[0]?.[0].platform);
   });
 
   it('passes fetchToken through in place of a credentialProvider', async () => {

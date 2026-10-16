@@ -45,6 +45,18 @@ export function ConnectScreen({
   );
 }
 
+/** After the Disconnect button: the client stays disconnected until asked. */
+export function DisconnectedScreen({ onConnect }: { onConnect: () => void }): React.JSX.Element {
+  return (
+    <View style={styles.root}>
+      <Text style={styles.subtitle}>Disconnected.</Text>
+      <Pressable style={styles.button} onPress={onConnect}>
+        <Text style={styles.buttonLabel}>Connect</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function ConnectingState(): React.JSX.Element {
   const { error, tokenStatus } = useSignalWire();
 

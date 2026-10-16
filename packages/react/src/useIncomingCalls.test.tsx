@@ -6,7 +6,13 @@ import { SignalWireContext } from './SignalWireProvider';
 import { useIncomingCalls } from './useIncomingCalls';
 
 const incomingCalls$ = new BehaviorSubject<unknown[]>([]);
-const client = { session: { incomingCalls$, incomingCalls: [] } };
+// The hook follows the session through isConnected$; here it is connected
+// from the start. The real SDK's late session is covered in
+// SignalWireProvider.realsdk.test.tsx.
+const client = {
+  isConnected$: new BehaviorSubject(true),
+  session: { incomingCalls$, incomingCalls: [] }
+};
 
 let result: ReturnType<typeof useIncomingCalls> | undefined;
 

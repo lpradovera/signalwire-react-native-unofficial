@@ -385,7 +385,9 @@ function Dialer() {
 }
 
 export default function App() {
-  // Memoize: a new identity tears down the client and rebuilds it.
+  // Memoize: a new identity tears down the client and rebuilds it, which
+  // hangs up any call in progress. To rotate a token mid-call, return
+  // `expiry_at` from authenticate() and implement refresh() instead.
   const credentials = useMemo<CredentialProvider>(
     () => ({ authenticate: async () => ({ token: 'YOUR_SUBSCRIBER_TOKEN' }) }),
     []
@@ -417,7 +419,7 @@ const fetchToken = async () => {
 
 | Hook | Returns | Entry point |
 | --- | --- | --- |
-| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `tokenStatus`, `dial`, `disconnect` | `@signalwire/react-native` |
+| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `tokenStatus`, `dial`, `connect`, `disconnect` | `@signalwire/react-native` |
 | `useCall(call)` | `status`, `participants`, `self`, `localStream`, `remoteStream`, `isAudioMuted`, `isVideoMuted`, `error`, `hangup`, `toggleHold`, `setAudioMuted`, `setVideoMuted`, `sendDigits` | `@signalwire/react-native` |
 | `useIncomingCalls()` | `calls`, `answer`, `reject` | `@signalwire/react-native` |
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` | `@signalwire/react-native` |

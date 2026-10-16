@@ -44,7 +44,7 @@ error with that `status`, such as `TokenFetchError`) through
 
 | Hook | Returns |
 | --- | --- |
-| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `tokenStatus`, `dial`, `disconnect` |
+| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `tokenStatus`, `dial`, `connect`, `disconnect` |
 | `useCall(call)` | `status`, `participants`, `self`, streams, mute state, `error`, and call actions |
 | `useIncomingCalls()` | `calls`, `answer`, `reject` |
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` |
@@ -68,6 +68,9 @@ interface SignalWirePlatform {
 interface CallObserver {
   bindClient?(client: SignalWire): void | (() => void); // returns an unbind
   onOutgoingCall?(call: Call, destination: string): void;
+  // Return true to take over an in-app answer/reject (useIncomingCalls).
+  onIncomingAnswer?(call: Call): boolean;
+  onIncomingReject?(call: Call): boolean;
 }
 ```
 
@@ -80,6 +83,19 @@ that client. `bindClient` runs again for each new observer object, so memoize
 such an observer. One whose `bindClient` returns nothing can't be unbound: it is
 bound once per client, as in 0.1.0, and an observer passed for the same client
 after it is not bound.
+
+A host whose native UI rings an inbound call must implement `onIncomingAnswer`
+and `onIncomingReject`: `useIncomingCalls().answer` and `.reject` ask it first,
+and it answers or rejects through the native UI. Answering the SDK directly
+while CallKit still rings leaves a connected call with no audio and a stuck
+native screen.
+
+`platform` may also be a function returning a `SignalWirePlatform`. The
+provider then calls it for every client it builds and disposes that platform
+after the client is destroyed, which is what a platform that cannot be used
+after `dispose()` needs (React Native's removes its NetInfo and AppState shims).
+A platform object is shared by every client and disposed when the provider
+unmounts; React.StrictMode's simulated unmount disposes it too.
 
 This boundary is enforced by lint: an import of `react-native`, `react-native-*`
 or `@react-native-*` inside this package fails the build.

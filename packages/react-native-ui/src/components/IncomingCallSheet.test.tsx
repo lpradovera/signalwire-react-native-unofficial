@@ -27,7 +27,10 @@ async function renderSheet(props: Record<string, unknown> = {}): Promise<void> {
     <SignalWireContext.Provider
       value={
         {
-          client: { session: { incomingCalls$, incomingCalls: [] } },
+          client: {
+            isConnected$: new BehaviorSubject(true),
+            session: { incomingCalls$, incomingCalls: [] }
+          },
           error: null,
           observer: undefined
         } as never
