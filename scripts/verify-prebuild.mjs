@@ -25,17 +25,32 @@ const IOS_PBXPROJ = 'ios/SignalWireRNExample.xcodeproj/project.pbxproj';
 const IOS_ENTITLEMENTS = 'ios/SignalWireRNExample/SignalWireRNExample.entitlements';
 const ANDROID_MANIFEST = 'android/app/src/main/AndroidManifest.xml';
 
+// Matched as whole `uses-permission` elements: a bare substring let
+// FOREGROUND_SERVICE pass on FOREGROUND_SERVICE_MICROPHONE alone, and
+// BIND_TELECOM_CONNECTION_SERVICE on the service's android:permission guard.
 const EXPECTED_ANDROID_PERMISSIONS = [
   'android.permission.RECORD_AUDIO',
   'android.permission.CAMERA',
   'android.permission.MODIFY_AUDIO_SETTINGS',
   'android.permission.FOREGROUND_SERVICE',
   'android.permission.FOREGROUND_SERVICE_MICROPHONE',
+  'android.permission.FOREGROUND_SERVICE_PHONE_CALL',
   'android.permission.POST_NOTIFICATIONS',
   'android.permission.WAKE_LOCK',
-  'android.permission.BIND_TELECOM_CONNECTION_SERVICE',
+  'android.permission.BLUETOOTH_CONNECT',
   'android.permission.MANAGE_OWN_CALLS',
-  'android.permission.READ_PHONE_STATE'
+  'android.permission.READ_PHONE_STATE',
+  'android.permission.READ_PHONE_NUMBERS'
+].map((name) => `<uses-permission android:name="${name}"/>`);
+
+// callkeep's ConnectionService: guarded for Telecom, bindable from its
+// process, and with only foreground-service types whose permissions are
+// declared above (Android 14+ refuses the whole service otherwise).
+const EXPECTED_CONNECTION_SERVICE = [
+  'android:name="io.wazo.callkeep.VoiceConnectionService"',
+  'android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"',
+  'android:foregroundServiceType="phoneCall|microphone"',
+  'android:exported="true"'
 ];
 
 const EXPECTED_PLIST_ENTRIES = [
@@ -79,11 +94,15 @@ function check(label, contents, needles) {
 console.log('Verifying the Expo config plugin against a real prebuild:');
 
 prebuild('android');
-check(
-  ANDROID_MANIFEST,
-  readFileSync(join(example, ANDROID_MANIFEST), 'utf8'),
-  EXPECTED_ANDROID_PERMISSIONS
-);
+{
+  const manifest = readFileSync(join(example, ANDROID_MANIFEST), 'utf8');
+  check(ANDROID_MANIFEST, manifest, EXPECTED_ANDROID_PERMISSIONS);
+  const service = manifest.match(/<service[^>]*VoiceConnectionService[^>]*>/)?.[0] ?? '';
+  check(`${ANDROID_MANIFEST} VoiceConnectionService`, service, EXPECTED_CONNECTION_SERVICE);
+  if (/uses-permission[^>]*BIND_TELECOM_CONNECTION_SERVICE/.test(manifest)) {
+    failures.push(`${ANDROID_MANIFEST}: asks for BIND_TELECOM_CONNECTION_SERVICE, which only Telecom can hold`);
+  }
+}
 
 prebuild('ios');
 check(IOS_PLIST, readFileSync(join(example, IOS_PLIST), 'utf8'), EXPECTED_PLIST_ENTRIES);

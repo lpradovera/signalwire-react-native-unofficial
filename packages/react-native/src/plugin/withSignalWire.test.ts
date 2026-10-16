@@ -194,6 +194,63 @@ describe('withSignalWire', () => {
     expect(service?.$['android:exported']).toBe('true');
   });
 
+  it("declares a foreground-service permission for every type the ConnectionService declares", () => {
+    // callkeep starts the service with startForeground(id, notification), so
+    // every manifest type applies. Android 14+ refuses the whole service when
+    // one type lacks its FOREGROUND_SERVICE_<TYPE> permission (or, for
+    // camera, a CAMERA grant an audio call may never have): the 'camera' type
+    // this used to declare without FOREGROUND_SERVICE_CAMERA did exactly that.
+    const result = withSignalWire({ name: 'demo', slug: 'demo' } as never, {
+      enableCallKit: true
+    }) as unknown as {
+      android?: { permissions?: string[] };
+      __manifest?: { application?: Array<{ service?: Array<{ $: Record<string, string> }> }> };
+    };
+    const service = result.__manifest?.application?.[0]?.service?.find(
+      (entry) => entry.$['android:name'] === 'io.wazo.callkeep.VoiceConnectionService'
+    );
+    const types = (service?.$['android:foregroundServiceType'] ?? '').split('|');
+
+    expect(types).toEqual(['phoneCall', 'microphone']);
+    for (const type of types) {
+      const permission = `android.permission.FOREGROUND_SERVICE_${type
+        .replace(/([a-z])([A-Z])/g, '$1_$2')
+        .toUpperCase()}`;
+      expect(result.android?.permissions).toContain(permission);
+    }
+  });
+
+  it('corrects the service type of a ConnectionService an earlier prebuild declared', () => {
+    const config = {
+      name: 'demo',
+      slug: 'demo',
+      __manifest: {
+        application: [
+          {
+            service: [
+              {
+                $: {
+                  'android:name': 'io.wazo.callkeep.VoiceConnectionService',
+                  'android:foregroundServiceType': 'camera|microphone'
+                }
+              }
+            ]
+          }
+        ]
+      }
+    };
+    const result = withSignalWire(config as never, { enableCallKit: true }) as unknown as {
+      __manifest: { application: Array<{ service: Array<{ $: Record<string, string> }> }> };
+    };
+    const services = result.__manifest.application[0]!.service;
+    expect(services).toHaveLength(1);
+    expect(services[0]!.$['android:foregroundServiceType']).toBe('phoneCall|microphone');
+  });
+
+  it('declares BLUETOOTH_CONNECT, without which Android 12+ hides every Bluetooth headset', () => {
+    expect(applyPlugin().android?.permissions).toContain('android.permission.BLUETOOTH_CONNECT');
+  });
+
   it('omits the ConnectionService when CallKit is off', () => {
     const result = withSignalWire({ name: 'demo', slug: 'demo' } as never, {
       enableCallKit: false

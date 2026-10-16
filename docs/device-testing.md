@@ -75,8 +75,10 @@ Expect: the native call UI appears; Answer connects; audio flows.
 
 **4. Inbound while backgrounded but alive.**
 Background the app, keep it running, then call the subscriber.
-Expect: the native UI appears; answering from the lock screen connects and
-brings the app forward.
+Expect: on Android the incoming-call notification rings with Answer and
+Decline (heads-up when unlocked; over the lock screen, the app opens on top of
+it); answering connects. On iOS the CallKit screen appears and answering from
+the lock screen connects.
 
 ## Push path
 
