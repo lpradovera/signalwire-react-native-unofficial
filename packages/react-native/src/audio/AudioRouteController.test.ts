@@ -508,6 +508,56 @@ describe('AudioRouteController', () => {
       expect(controller.route).toBe('earpiece');
     });
 
+    it('goes back to the reported route when a choice held for the session is refused', async () => {
+      // The user picks Bluetooth while the call rings; when it connects there
+      // is no Bluetooth device. The refusal used to "go back" to the held
+      // route itself, which route$ already showed.
+      choose.mockResolvedValueOnce(deviceStatus('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]'));
+      controller.expectSession(true);
+      controller.setRoute('bluetooth');
+      controller.start('audio');
+      reportDevice('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]');
+      await flush();
+
+      expect(choose).toHaveBeenCalledWith('BLUETOOTH');
+      expect(controller.route).toBe('earpiece');
+    });
+
+    it('goes back to the confirmed route when two choices in flight are both refused', async () => {
+      const answers: ((status: unknown) => void)[] = [];
+      choose.mockImplementation(() => new Promise((done) => answers.push(done)));
+      controller.start('audio');
+      reportDevice('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]');
+
+      controller.setRoute('bluetooth');
+      controller.setRoute('headset');
+      answers[0]!(deviceStatus('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]'));
+      await flush();
+      answers[1]!(deviceStatus('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]'));
+      await flush();
+
+      expect(controller.route).toBe('earpiece');
+    });
+
+    it('a refusal of a choice a later write replaced does not undo that write', async () => {
+      // Video call on the speaker: Headset, Earpiece (a write), Headset again.
+      const answers: ((status: unknown) => void)[] = [];
+      choose.mockImplementation(() => new Promise((done) => answers.push(done)));
+      controller.start('video');
+      reportDevice('SPEAKER_PHONE', '["EARPIECE","SPEAKER_PHONE"]');
+
+      controller.setRoute('headset');
+      controller.setRoute('earpiece');
+      controller.setRoute('headset');
+      answers[0]!(deviceStatus('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]'));
+      await flush();
+      answers[1]!(deviceStatus('EARPIECE', '["EARPIECE","SPEAKER_PHONE"]'));
+      await flush();
+
+      expect(flag.mock.calls).toEqual([[false]]);
+      expect(controller.route).toBe('earpiece');
+    });
+
     it('chooses Bluetooth through incall-manager', async () => {
       choose.mockResolvedValueOnce(deviceStatus('BLUETOOTH'));
       controller.start('audio');
