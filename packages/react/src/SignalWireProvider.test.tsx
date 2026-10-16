@@ -121,6 +121,59 @@ describe('SignalWireProvider with a platform', () => {
   });
 });
 
+describe('SignalWireProvider platform lifetime', () => {
+  function platformLog() {
+    const log: string[] = [];
+    let built = 0;
+    const factory = jest.fn((): SignalWirePlatform => {
+      const id = ++built;
+      log.push(`build ${id}`);
+      return { options: { skipDeviceMonitoring: true }, dispose: () => log.push(`dispose ${id}`) };
+    });
+    harness.destroy.mockImplementation(() => log.push('destroy'));
+    return { log, factory };
+  }
+
+  function App({ provider, platform }: { provider: unknown; platform: unknown }) {
+    return (
+      <SignalWireProvider credentialProvider={provider as never} platform={platform as never}>
+        <Probe />
+      </SignalWireProvider>
+    );
+  }
+
+  it('builds a platform from a factory for each client and disposes it after that client', () => {
+    const { log, factory } = platformLog();
+    const view = render(<App provider={{ ...credentialProvider }} platform={factory} />);
+    view.rerender(<App provider={{ ...credentialProvider }} platform={factory} />);
+    expect(log).toEqual(['build 1', 'destroy', 'dispose 1', 'build 2']);
+    view.unmount();
+    expect(log.slice(4)).toEqual(['destroy', 'dispose 2']);
+  });
+
+  it('StrictMode: the client that stays mounted gets a live platform', () => {
+    const { log, factory } = platformLog();
+    const view = render(
+      <React.StrictMode>
+        <App provider={credentialProvider} platform={factory} />
+      </React.StrictMode>
+    );
+    expect(log).toEqual(['build 1', 'destroy', 'dispose 1', 'build 2']);
+    view.unmount();
+  });
+
+  it('keeps a platform object across a new credentialProvider, and disposes it on unmount', () => {
+    const log: string[] = [];
+    harness.destroy.mockImplementation(() => log.push('destroy'));
+    const platform = { options: {}, dispose: () => log.push('dispose') };
+    const view = render(<App provider={{ ...credentialProvider }} platform={platform} />);
+    view.rerender(<App provider={{ ...credentialProvider }} platform={platform} />);
+    expect(log).toEqual(['destroy']);
+    view.unmount();
+    expect(log).toEqual(['destroy', 'destroy', 'dispose']);
+  });
+});
+
 describe('SignalWireProvider observer wiring', () => {
   it('binds the client to the observer on construction', () => {
     const observer: CallObserver = { bindClient: jest.fn(), onOutgoingCall: jest.fn() };

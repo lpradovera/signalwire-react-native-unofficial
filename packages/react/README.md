@@ -62,6 +62,13 @@ interface CallObserver {
 `@signalwire/react-native` uses the first for its WebRTC/storage/AppState layer
 and the second to attach CallKit. Browser apps need neither.
 
+`platform` may also be a function returning a `SignalWirePlatform`. The
+provider then calls it for every client it builds and disposes that platform
+after the client is destroyed, which is what a platform that cannot be used
+after `dispose()` needs (React Native's removes its NetInfo and AppState shims).
+A platform object is shared by every client and disposed when the provider
+unmounts; React.StrictMode's simulated unmount disposes it too.
+
 This boundary is enforced by lint: an import of `react-native`, `react-native-*`
 or `@react-native-*` inside this package fails the build.
 
