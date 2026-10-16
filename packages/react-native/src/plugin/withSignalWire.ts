@@ -1,3 +1,6 @@
+import { WarningAggregator } from 'expo/config-plugins';
+
+import { isCallKeepInstalled } from './callKeep';
 import { withAndroidCallKit } from './withAndroidCallKit';
 import { withCallKitActivity } from './withCallKitActivity';
 import { withIosCallKit } from './withIosCallKit';
@@ -15,8 +18,43 @@ export interface SignalWirePluginOptions {
    * call-back forwarder and its `NSUserActivityTypes`. Default `true`.
    */
   enableCallKit?: boolean;
-  /** Add the iOS `voip` background mode. Default `true`. */
+  /**
+   * Generate the iOS PushKit hook and add the `voip` background mode and push
+   * entitlement. Default: on when `enableCallKit` is on and
+   * `react-native-callkeep` is installed, since the hook reports every push
+   * to CallKit through it. `true` without callkeep fails prebuild.
+   */
   enableVoipPush?: boolean;
+}
+
+const OPTION_TYPES: Record<keyof SignalWirePluginOptions, 'string' | 'boolean'> = {
+  microphonePermission: 'string',
+  cameraPermission: 'string',
+  enableCallKit: 'boolean',
+  enableVoipPush: 'boolean'
+};
+
+/** Rejects misspelt or mistyped options, which would otherwise fall back to a default silently. */
+function validateOptions(options: unknown): SignalWirePluginOptions {
+  if (options === undefined || options === null) {
+    return {};
+  }
+  if (typeof options !== 'object' || Array.isArray(options)) {
+    throw new Error('@signalwire/react-native: plugin options must be an object.');
+  }
+  for (const [key, value] of Object.entries(options)) {
+    const expected = OPTION_TYPES[key as keyof SignalWirePluginOptions];
+    if (!expected) {
+      throw new Error(
+        `@signalwire/react-native: unknown plugin option "${key}". ` +
+          `Known options: ${Object.keys(OPTION_TYPES).join(', ')}.`
+      );
+    }
+    if (value !== undefined && typeof value !== expected) {
+      throw new Error(`@signalwire/react-native: plugin option "${key}" must be a ${expected}.`);
+    }
+  }
+  return options as SignalWirePluginOptions;
 }
 
 const DEFAULT_MIC = 'This app uses the microphone for calls.';
@@ -48,8 +86,13 @@ const withSignalWire: ConfigPlugin<SignalWirePluginOptions | undefined> = (confi
     microphonePermission = DEFAULT_MIC,
     cameraPermission = DEFAULT_CAMERA,
     enableCallKit = true,
-    enableVoipPush = true
-  } = options ?? {};
+    enableVoipPush: requestedVoipPush
+  } = validateOptions(options);
+
+  const projectRoot = (config as { _internal?: { projectRoot?: unknown } })._internal?.projectRoot;
+  // Prebuild always sets it; without it there is nothing to check against.
+  const callKeep = typeof projectRoot === 'string' ? isCallKeepInstalled(projectRoot) : true;
+  const enableVoipPush = resolveVoipPush(callKeep, enableCallKit, requestedVoipPush);
 
   const withIos = withIosCallKit(config, {
     microphonePermission,
@@ -59,11 +102,53 @@ const withSignalWire: ConfigPlugin<SignalWirePluginOptions | undefined> = (confi
   });
 
   // Recents and Siri call-backs: the AppDelegate hands INStartCallIntent to
-  // RNCallKeep, which only a generated Objective-C file can reach.
-  const withActivity = enableCallKit ? withCallKitActivity(withIos) : withIos;
+  // RNCallKeep, which only a generated Objective-C file can reach. That file
+  // imports RNCallKeep.h too, so without callkeep it is not generated either.
+  const withActivity = enableCallKit && callKeep ? withCallKitActivity(withIos) : withIos;
   const withPush = enableVoipPush ? withVoipPush(withActivity) : withActivity;
 
   return withAndroidCallKit(withPush, { enableCallKit });
 };
+
+/**
+ * Decides whether the iOS PushKit hook is generated.
+ *
+ * The hook imports `RNCallKeep.h` and reports every push through callkeep, so
+ * it cannot build without callkeep, an optional peer. Generating it anyway
+ * broke the iOS build of every app that added the plugin without callkeep,
+ * and `enableCallKit: false` left CallKit reporting on for iOS.
+ */
+function resolveVoipPush(
+  callKeep: boolean,
+  enableCallKit: boolean,
+  requested: boolean | undefined
+): boolean {
+  if (requested === false) {
+    return false;
+  }
+
+  if (requested === true) {
+    if (!callKeep) {
+      throw new Error(
+        '@signalwire/react-native: enableVoipPush needs react-native-callkeep, which the generated ' +
+          'PushKit hook reports calls through. Install it, or set enableVoipPush: false.'
+      );
+    }
+    return true;
+  }
+
+  if (!enableCallKit) {
+    return false;
+  }
+  if (!callKeep) {
+    WarningAggregator.addWarningIOS(
+      '@signalwire/react-native',
+      'react-native-callkeep is not installed, so the VoIP push hook was not generated and the app ' +
+        'will not ring for pushed calls. Install it to enable VoIP push, or set enableVoipPush: false.'
+    );
+    return false;
+  }
+  return true;
+}
 
 export default withSignalWire;

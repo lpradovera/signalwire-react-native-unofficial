@@ -19,8 +19,10 @@ jest.mock('expo/config-plugins', () => ({
   // filesystem work with no meaning outside a real prebuild, so they pass the
   // config through untouched here. `verify:prebuild` asserts their real
   // behaviour against actual generated output.
-  withDangerousMod: (config: Record<string, unknown>) => config,
+  // `__voipHook` marks that the hook's file-writing mod was registered.
+  withDangerousMod: (config: Record<string, unknown>) => ({ ...config, __voipHook: true }),
   withXcodeProject: (config: Record<string, unknown>) => config,
+  WarningAggregator: { addWarningIOS: jest.fn() },
   AndroidConfig: {
     Manifest: {
       getMainApplicationOrThrow: (manifest: { application?: unknown[] }) => {
@@ -47,6 +49,11 @@ jest.mock('expo/config-plugins', () => ({
   }
 }));
 
+let mockCallKeepInstalled = true;
+jest.mock('./callKeep', () => ({
+  isCallKeepInstalled: jest.fn(() => mockCallKeepInstalled)
+}));
+
 interface TestConfig {
   name: string;
   slug: string;
@@ -63,6 +70,10 @@ function applyPlugin(options?: SignalWirePluginOptions): TestConfig {
 }
 
 describe('withSignalWire', () => {
+  beforeEach(() => {
+    mockCallKeepInstalled = true;
+  });
+
   it('adds the iOS microphone and camera usage strings', () => {
     const config = applyPlugin();
     expect(config.ios?.infoPlist?.NSMicrophoneUsageDescription).toEqual(expect.any(String));
@@ -257,5 +268,70 @@ describe('withSignalWire', () => {
     }) as unknown as { __manifest?: unknown };
 
     expect(result.__manifest).toBeUndefined();
+  });
+
+  describe('iOS VoIP push and its dependencies (plugins-6)', () => {
+    type IosResult = TestConfig & {
+      __voipHook?: boolean;
+      ios?: { infoPlist?: Record<string, unknown>; entitlements?: Record<string, unknown> };
+    };
+    const apply = (options?: Record<string, unknown>): IosResult =>
+      withSignalWire(
+        { ...baseConfig(), _internal: { projectRoot: '/app' } } as never,
+        options as never
+      ) as unknown as IosResult;
+
+    it('generates the hook by default when callkeep is installed', () => {
+      const result = apply();
+      expect(result.__voipHook).toBe(true);
+      expect(result.ios?.infoPlist?.UIBackgroundModes).toContain('voip');
+      expect(result.ios?.entitlements?.['aps-environment']).toBe('development');
+    });
+
+    it('turns iOS VoIP push off by default when CallKit is off', () => {
+      // The hook reports every push to CallKit through callkeep; with
+      // enableCallKit: false the app asked for no native call UI.
+      const result = apply({ enableCallKit: false });
+      expect(result.__voipHook).toBeUndefined();
+      expect(result.ios?.infoPlist?.UIBackgroundModes).not.toContain('voip');
+      expect(result.ios?.entitlements?.['aps-environment']).toBeUndefined();
+    });
+
+    it('still honours an explicit enableVoipPush: true alongside enableCallKit: false', () => {
+      expect(apply({ enableCallKit: false, enableVoipPush: true }).__voipHook).toBe(true);
+    });
+
+    it('skips the hook, with a warning, when callkeep is not installed', () => {
+      // The hook imports RNCallKeep.h: generated without callkeep, the iOS
+      // build fails with "'RNCallKeep.h' file not found".
+      mockCallKeepInstalled = false;
+      const { WarningAggregator } = jest.requireMock('expo/config-plugins') as {
+        WarningAggregator: { addWarningIOS: jest.Mock };
+      };
+      WarningAggregator.addWarningIOS.mockClear();
+
+      const result = apply();
+      expect(result.__voipHook).toBeUndefined();
+      expect(result.ios?.infoPlist?.UIBackgroundModes).not.toContain('voip');
+      expect(WarningAggregator.addWarningIOS).toHaveBeenCalledWith(
+        '@signalwire/react-native',
+        expect.stringContaining('react-native-callkeep')
+      );
+    });
+
+    it('fails prebuild when VoIP push is asked for without callkeep', () => {
+      mockCallKeepInstalled = false;
+      expect(() => apply({ enableVoipPush: true })).toThrow(/react-native-callkeep/);
+    });
+
+    it('rejects an option name it does not know', () => {
+      // A typo such as enableVoIPPush silently left VoIP push on.
+      expect(() => apply({ enableVoIPPush: false })).toThrow(/enableVoIPPush/);
+    });
+
+    it('rejects an option of the wrong type', () => {
+      expect(() => apply({ enableVoipPush: 'false' })).toThrow(/enableVoipPush/);
+      expect(() => apply({ microphonePermission: 42 })).toThrow(/microphonePermission/);
+    });
   });
 });

@@ -1,9 +1,9 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-import { withDangerousMod, withXcodeProject } from 'expo/config-plugins';
+import { IOSConfig, withDangerousMod, withXcodeProject } from 'expo/config-plugins';
 
-import type { ConfigPlugin } from 'expo/config-plugins';
+import type { ConfigPlugin, XcodeProject } from 'expo/config-plugins';
 
 /**
  * Writes a generated Objective-C file next to the AppDelegate and adds it to
@@ -37,32 +37,26 @@ export function withObjcSource(fileName: string, source: string, purpose: string
     ]);
 
     return withXcodeProject(withSource, (projectConfig) => {
-      const project = projectConfig.modResults;
       const projectName = projectConfig.modRequest.projectName;
-      if (!projectName) {
-        return projectConfig;
+      if (projectName) {
+        addObjcSourceToProject(projectConfig.modResults, projectName, fileName);
       }
-
-      const alreadyAdded = Object.values(
-        (project.hash?.project?.objects?.PBXBuildFile ?? {}) as Record<string, unknown>
-      ).some((entry) => typeof entry === 'object' && JSON.stringify(entry).includes(fileName));
-
-      if (alreadyAdded) {
-        return projectConfig;
-      }
-
-      const group = project.pbxGroupByName(projectName);
-      const groupKey = group
-        ? Object.keys(project.hash.project.objects.PBXGroup as Record<string, unknown>).find(
-            (key) =>
-              (project.hash.project.objects.PBXGroup as Record<string, { name?: string }>)[key]
-                ?.name === projectName
-          )
-        : undefined;
-
-      project.addSourceFile(`${projectName}/${fileName}`, { target: project.getFirstTarget().uuid }, groupKey);
-
       return projectConfig;
     });
   };
+}
+
+/**
+ * Adds `<projectName>/<fileName>` to the app target's compile sources, in the
+ * app's group, with Expo's own helper. Idempotent: prebuild without --clean
+ * re-runs mods over an existing project, and a duplicate build-file entry
+ * makes Xcode compile the translation unit twice, which fails on duplicate
+ * symbols; the helper skips a file the group already lists.
+ */
+export function addObjcSourceToProject(project: XcodeProject, projectName: string, fileName: string): void {
+  IOSConfig.XcodeUtils.addBuildSourceFileToGroup({
+    filepath: `${projectName}/${fileName}`,
+    groupName: projectName,
+    project
+  });
 }
