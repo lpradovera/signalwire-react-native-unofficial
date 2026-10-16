@@ -39,7 +39,7 @@ const call = (path: string, init: RequestInit = {}): Promise<Response> =>
 
 before(async () => {
   await new Promise<void>((resolve) => {
-    server = app.listen(0, resolve);
+    server = app.listen(0, () => resolve());
   });
   const address = server.address();
   base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
