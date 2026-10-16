@@ -126,4 +126,13 @@ const app = createApp({
   })
 });
 
-app.listen(PORT, () => log('Listening', { port: PORT, storePath: STORE_PATH }));
+// Express 5 passes a listen failure (EADDRINUSE, EACCES) to this callback
+// instead of throwing; without the check the server logged "Listening" and
+// exited 0.
+app.listen(PORT, (error?: Error) => {
+  if (error) {
+    log('Could not listen. Exiting.', { port: PORT, error: error.message });
+    process.exit(1);
+  }
+  log('Listening', { port: PORT, storePath: STORE_PATH });
+});
