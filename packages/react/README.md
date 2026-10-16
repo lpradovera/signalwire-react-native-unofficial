@@ -36,8 +36,9 @@ function Dialer() {
 `fetchToken` renews the token ahead of `expiresAt` and when the page becomes
 visible again, retries failures with a backoff, and reports a 401 or 403 (an
 error with that `status`, such as `TokenFetchError`) through
-`useSignalWire().tokenStatus` and `error`. A host platform can supply
-`watchForeground` for its own foreground signal. See the repository's
+`useSignalWire().tokenStatus` and `error`. A reconnect after the token
+expired (a suspended tab or app) waits for the new token before it opens. A
+host platform can supply `watchForeground` for its own foreground signal. See the repository's
 `docs/tokens.md`.
 
 ## Hooks
