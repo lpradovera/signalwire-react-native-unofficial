@@ -134,6 +134,128 @@ describe('SignalWireProvider observer wiring', () => {
     expect(observer.bindClient).toHaveBeenCalledWith(harness);
   });
 
+  it('binds an observer that arrives after the client was built, once', () => {
+    // React Native's provider builds its CallKit observer only once callKit is
+    // turned on, which can be after mount. Unbound, the observer never mirrors
+    // inbound calls into the native UI.
+    const tree = (observer?: CallObserver): React.JSX.Element => (
+      <SignalWireProvider credentialProvider={credentialProvider as never} observer={observer}>
+        <Probe />
+      </SignalWireProvider>
+    );
+    const later: CallObserver = { bindClient: jest.fn() };
+    const view = render(tree(undefined));
+
+    view.rerender(tree(later));
+    view.rerender(tree(later));
+
+    expect(later.bindClient).toHaveBeenCalledTimes(1);
+    expect(later.bindClient).toHaveBeenCalledWith(harness);
+  });
+
+  it('does not bind an observer twice when it was there from the start', () => {
+    const observer: CallObserver = { bindClient: jest.fn() };
+    const tree = (): React.JSX.Element => (
+      <SignalWireProvider credentialProvider={credentialProvider as never} observer={observer}>
+        <Probe />
+      </SignalWireProvider>
+    );
+    const view = render(tree());
+    view.rerender(tree());
+
+    expect(observer.bindClient).toHaveBeenCalledTimes(1);
+  });
+
+  it('unbinds an observer when it is replaced or removed', () => {
+    // React Native turns its CallKit observer off by passing none. A binding
+    // left behind keeps showing every SDK inbound call in CallKit while the
+    // app answers it directly: a connected call with no audio.
+    const tree = (observer?: CallObserver): React.JSX.Element => (
+      <SignalWireProvider credentialProvider={credentialProvider as never} observer={observer}>
+        <Probe />
+      </SignalWireProvider>
+    );
+    const unbindFirst = jest.fn();
+    const unbindSecond = jest.fn();
+    const first: CallObserver = { bindClient: jest.fn(() => unbindFirst) };
+    const second: CallObserver = { bindClient: jest.fn(() => unbindSecond) };
+
+    const view = render(tree(first));
+    view.rerender(tree(second));
+    expect(unbindFirst).toHaveBeenCalledTimes(1);
+    expect(second.bindClient).toHaveBeenCalledWith(harness);
+
+    view.rerender(tree(undefined));
+    expect(unbindSecond).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps one live binding for an observer re-created on every render', () => {
+    let live = 0;
+    const make = (): CallObserver => ({
+      bindClient: jest.fn(() => {
+        live += 1;
+        return () => {
+          live -= 1;
+        };
+      })
+    });
+    const tree = (observer: CallObserver): React.JSX.Element => (
+      <SignalWireProvider credentialProvider={credentialProvider as never} observer={observer}>
+        <Probe />
+      </SignalWireProvider>
+    );
+
+    const view = render(tree(make()));
+    view.rerender(tree(make()));
+    view.rerender(tree(make()));
+    view.rerender(tree(make()));
+
+    expect(live).toBe(1);
+  });
+
+  it('binds an inline observer that returns no unbind once per client', () => {
+    // The 0.1.0 contract: bindClient is called once and returns nothing. Such
+    // a binding can't be undone, so binding each render's new observer
+    // object stacked one more subscription per render.
+    const bindings: unknown[] = [];
+    const make = (): CallObserver => ({
+      bindClient: (client) => {
+        bindings.push(client);
+      }
+    });
+    const tree = (observer: CallObserver, credentials = credentialProvider): React.JSX.Element => (
+      <SignalWireProvider credentialProvider={credentials as never} observer={observer}>
+        <Probe />
+      </SignalWireProvider>
+    );
+
+    const view = render(tree(make()));
+    view.rerender(tree(make()));
+    view.rerender(tree(make()));
+    view.rerender(tree(make()));
+    expect(bindings).toEqual([harness]);
+
+    // A new client is a new binding.
+    view.rerender(tree(make(), { authenticate: jest.fn(async () => ({ token: 'u' })) }));
+    expect(bindings).toEqual([harness, harness]);
+  });
+
+  it('unbinds the observer when the provider unmounts', () => {
+    const unbind = jest.fn();
+    const view = render(
+      <SignalWireProvider
+        credentialProvider={credentialProvider as never}
+        observer={{ bindClient: () => unbind }}
+      >
+        <Probe />
+      </SignalWireProvider>
+    );
+
+    view.unmount();
+
+    expect(unbind).toHaveBeenCalledTimes(1);
+  });
+
   it('notifies the observer of an outgoing call', async () => {
     const observer: CallObserver = { onOutgoingCall: jest.fn() };
     let dial: ((destination: string) => Promise<unknown>) | undefined;

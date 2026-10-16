@@ -1,5 +1,5 @@
 import { SignalWire } from '@signalwire/js';
-import React, { createContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { logger } from './logger';
 
@@ -25,7 +25,12 @@ export interface SignalWireProviderProps {
    * `@signalwire/react-native` supplies one automatically.
    */
   platform?: SignalWirePlatform;
-  /** Observes call lifecycle — used by native call UI. */
+  /**
+   * Observes call lifecycle — used by native call UI. Its `bindClient` runs
+   * for each new observer object, so memoize an observer whose `bindClient`
+   * returns an unbind (an inline one is unbound and bound again on every
+   * render); one that returns nothing is bound once per client.
+   */
   observer?: CallObserver;
   /** Extra SDK options, merged over the platform's. */
   options?: SignalWireOptions;
@@ -48,17 +53,23 @@ export function SignalWireProvider({
 }: SignalWireProviderProps): React.JSX.Element {
   const [client, setClient] = useState<SignalWire | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  /**
+   * The client an observer bound without returning an unbind (the 0.1.0
+   * contract). That binding can't be undone, so it stays the client's only
+   * one: binding each new observer object (an inline observer is a new one on
+   * every render) would stack another subscription per render.
+   */
+  const boundForGood = useRef<SignalWire | null>(null);
 
   useEffect(() => {
     const instance = new SignalWire(credentialProvider, {
       ...platform?.options,
       ...options
     });
+    boundForGood.current = null;
 
     setClient(instance);
     setError(null);
-
-    observer?.bindClient?.(instance);
 
     const subscription = instance.errors$.subscribe((next) => {
       logger.warn('SDK error:', next);
@@ -81,6 +92,24 @@ export function SignalWireProvider({
     // be catastrophic. Change `credentialProvider` to force a rebuild.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [credentialProvider]);
+
+  // Bound here, not where the client is built: the observer can arrive or
+  // change later (React Native builds its CallKit observer only once callKit
+  // is turned on, and drops it when callKit is turned off). The unbind it
+  // returns runs when it changes or goes away, or the client is replaced, so
+  // a dropped observer stops handling the client's calls. An observer that
+  // returns no unbind is bound once per client, as in 0.1.0.
+  useEffect(() => {
+    if (!client || boundForGood.current === client || !observer?.bindClient) {
+      return undefined;
+    }
+    const unbind = observer.bindClient(client);
+    if (typeof unbind === 'function') {
+      return unbind;
+    }
+    boundForGood.current = client;
+    return undefined;
+  }, [client, observer]);
 
   const value = useMemo<SignalWireContextValue>(
     () => ({ client, error, observer }),
