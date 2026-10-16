@@ -124,3 +124,13 @@ for (const component of COMPONENTS) {
     );
   });
 }
+
+test('every JavaScript entry in exports can also be loaded through require()', { skip: !process.features.require_module && 'this Node cannot require() ES modules' }, () => {
+  const specs = Object.keys(pkg.exports)
+    .filter((key) => !key.endsWith('.css'))
+    .map((key) => (key === '.' ? '@signalwire/react-ui' : `@signalwire/react-ui/${key.slice(2)}`));
+  const failures = specs
+    .map((spec) => [spec, load(spec, 'require').error])
+    .filter(([, error]) => error !== undefined);
+  assert.deepEqual(failures, []);
+});

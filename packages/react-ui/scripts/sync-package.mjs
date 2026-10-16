@@ -21,10 +21,16 @@ const pkg = JSON.parse(await readFile(pkgPath, 'utf8'));
 
 const subpath = (tag) => tag.replace(/^sw-/, '');
 
-const entry = (name) => ({
-  import: { types: `./dist/${name}.d.mts`, default: `./dist/${name}.mjs` },
-  require: { types: `./dist/${name}.d.ts`, default: `./dist/${name}.js` }
-});
+// ES modules only. @signalwire/web-components is `type: module` and its
+// subpaths define only the `import` condition, so a CommonJS build of these
+// wrappers could never require() them (ERR_PACKAGE_PATH_NOT_EXPORTED). `default`
+// rather than `import` lets a require() on a Node that loads ES modules
+// through require() (20.19+, 22.12+) reach the same files.
+const entry = (name) => ({ types: `./dist/${name}.d.mts`, default: `./dist/${name}.mjs` });
+
+pkg.main = './dist/index.mjs';
+pkg.types = './dist/index.d.mts';
+delete pkg.module;
 
 pkg.exports = {
   '.': entry('index'),

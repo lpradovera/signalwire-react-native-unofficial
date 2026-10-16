@@ -89,6 +89,15 @@ The SDK's twelve `sw-ui-*` primitives are intentionally **not** wrapped. They
 are presentational internals of the Lit library rather than API most apps reach
 for, and they remain usable as plain custom elements.
 
+## ES modules only
+
+The package ships ES modules only. `@signalwire/web-components` is an ES module
+package whose subpaths define only the `import` condition, so a CommonJS build
+of these wrappers could never `require()` them. Bundlers load it as is. A Node
+that can `require()` ES modules (20.19+, 22.12+) loads it through `require()`
+too; Jest in a CommonJS project needs these packages transformed, as for any ES
+module dependency.
+
 ## Server rendering
 
 Every component module carries `'use client'`. Lit elements call
