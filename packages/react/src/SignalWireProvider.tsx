@@ -8,6 +8,13 @@ import type { FetchToken, TokenStatus } from './tokenSource';
 import type { CallObserver, SignalWirePlatform } from './types';
 import type { CredentialProvider, SignalWireOptions } from '@signalwire/js';
 
+/** The SDK's errors for a lost connection, by name: it exports none of the classes. */
+const CONNECTION_ERRORS = new Set([
+  'WebSocketConnectionError',
+  'WebSocketTimeoutError',
+  'TransportConnectionError'
+]);
+
 export interface SignalWireContextValue {
   readonly client: SignalWire | null;
   readonly error: Error | null;
@@ -56,13 +63,6 @@ export interface SignalWireProviderProps {
   options?: SignalWireOptions;
   children: React.ReactNode;
 }
-
-/** The SDK's errors for a lost connection, by name: it exports none of the classes. */
-const CONNECTION_ERRORS = new Set([
-  'WebSocketConnectionError',
-  'WebSocketTimeoutError',
-  'TransportConnectionError'
-]);
 
 /**
  * Owns the SignalWire client lifecycle and publishes it through context.
@@ -134,15 +134,16 @@ export function SignalWireProvider({
     // but its connection error would stay up for the rest of the session, so
     // a banner showing it said "disconnected" while calls worked. Cleared on
     // each registration; any other error stays until the next one replaces it.
-    const registered = instance.isRegistered$?.subscribe((isRegistered) => {
-      if (isRegistered) {
-        setError((current) => (current && CONNECTION_ERRORS.has(current.name) ? null : current));
-      }
-    });
+    subscription.add(
+      instance.isRegistered$?.subscribe((isRegistered) => {
+        if (isRegistered) {
+          setError((current) => (current && CONNECTION_ERRORS.has(current.name) ? null : current));
+        }
+      })
+    );
 
     return () => {
       subscription.unsubscribe();
-      registered?.unsubscribe();
       tokenSubscription?.unsubscribe();
       stopWatching?.();
       source?.dispose();
