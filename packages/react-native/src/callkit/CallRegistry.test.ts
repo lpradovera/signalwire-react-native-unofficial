@@ -902,3 +902,45 @@ describe('CallRegistry — fusion timeout set after construction', () => {
     expect(registry.entryForUuid(uuid)?.state).toBe('ended');
   });
 });
+
+describe('CallRegistry — empty caller names', () => {
+  // An empty name is no name: '' from a push's from_name (the support
+  // server's POST /notify passes fromName "" through) or an invite's
+  // caller_id_name. Kept by '??', it showed as a blank caller in the native UI
+  // and the in-app sheet; and with no name at all, 'Unknown caller' hid a
+  // number the registry had.
+  it('names a push with an empty name by its number', () => {
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+
+    registry.reportIncomingPush({ callId: 'c1', from: '+15551234', fromName: '' });
+
+    expect(host.displayIncomingCall).toHaveBeenCalledWith('uuid-1', '+15551234', '+15551234');
+  });
+
+  it('names a push with no name by its number', () => {
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+
+    registry.reportIncomingPush({ callId: 'c1', from: '+15551234' });
+
+    expect(registry.entries[0]?.displayName).toBe('+15551234');
+  });
+
+  it('names an SDK call with an empty caller name by its number', () => {
+    const host = createHost();
+    const registry = new CallRegistry({ host });
+
+    registry.attachIncomingCall({ ...createCall('c1'), from: '+15551234', fromName: '' } as never);
+
+    expect(host.displayIncomingCall).toHaveBeenCalledWith('uuid-1', '+15551234', '+15551234');
+  });
+
+  it('names an adopted native entry with empty fields by the placeholders', () => {
+    const registry = new CallRegistry({ host: createHost() });
+
+    registry.adoptNativeEntry({ uuid: 'native', from: '', fromName: '' });
+
+    expect(registry.entries[0]).toMatchObject({ handle: 'Unknown', displayName: 'Unknown caller' });
+  });
+});

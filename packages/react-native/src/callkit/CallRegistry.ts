@@ -54,6 +54,21 @@ const UNKNOWN_HANDLE = 'Unknown';
 function normalizeUuid(uuid: string): string {
   return uuid.toLowerCase();
 }
+
+/**
+ * The handle and name a call is shown with. `||`, not `??`: an empty string
+ * (a push's `from_name: ""`, an invite's empty `caller_id_name`) is no
+ * value, and a call with no name is named by its number, as a phone does.
+ */
+function callerOf(
+  from: string | undefined,
+  fromName: string | undefined
+): { handle: string; displayName: string } {
+  return {
+    handle: from || UNKNOWN_HANDLE,
+    displayName: fromName || from || UNKNOWN_NAME
+  };
+}
 const UNKNOWN_NAME = 'Unknown caller';
 
 /**
@@ -245,8 +260,7 @@ export class CallRegistry {
     }
 
     const uuid = normalizeUuid(this.host.generateUuid());
-    const handle = payload.from ?? UNKNOWN_HANDLE;
-    const displayName = payload.fromName ?? UNKNOWN_NAME;
+    const { handle, displayName } = callerOf(payload.from, payload.fromName);
 
     this.write({
       uuid,
@@ -294,8 +308,7 @@ export class CallRegistry {
       state: 'pending-push',
       expectedCallId: payload.callId ?? null,
       call: null,
-      handle: payload.from ?? UNKNOWN_HANDLE,
-      displayName: payload.fromName ?? UNKNOWN_NAME,
+      ...callerOf(payload.from, payload.fromName),
       intent: null,
       data: payload.data,
       fuseDeadline: this.host.now() + this.fusionTimeoutMs
@@ -330,8 +343,7 @@ export class CallRegistry {
     }
 
     const uuid = normalizeUuid(this.host.generateUuid());
-    const handle = call.from ?? UNKNOWN_HANDLE;
-    const displayName = call.fromName ?? UNKNOWN_NAME;
+    const { handle, displayName } = callerOf(call.from, call.fromName);
 
     this.write({
       uuid,
