@@ -568,18 +568,32 @@ describe('CallKeepBridge', () => {
     expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
   });
 
-  it("falls back to the app's supportsVideo for a call that does not report its media", async () => {
-    // trackCall is public; a Call without mediaDirections keeps main's behaviour.
+  it.each([
+    ['does not report its media', (call: ReturnType<typeof createCall>) => call],
+    [
+      'is destroyed',
+      (call: ReturnType<typeof createCall>) =>
+        Object.defineProperty(call, 'mediaDirections', {
+          get: () => {
+            throw new Error('Main peer connection not found');
+          }
+        })
+    ]
+  ])('starts a call that %s as voice, on the receiver, even when the app supports video', async (_, shape) => {
+    // supportsVideo lets the native UI show video; it never made a call video.
+    // Falling back to it started such a call in 'video' mode, on the speaker,
+    // and reported it to Telecom as a video call (seen on a Pixel 6 Pro).
     resetAudioRouteControllerForTesting();
     await bridge.setup({ appName: 'Demo', supportsVideo: true });
 
-    const call = createCall('legacy-1');
+    const call = shape(createCall('legacy-1'));
     const uuid = bridge.trackCall(call as never, '/public/room', 'Room');
     call.status$.next('connected');
     await Promise.resolve();
 
-    expect(RNCallKeep.startCall).toHaveBeenCalledWith(uuid, '/public/room', 'Room', 'generic', true);
-    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'video' });
+    expect(RNCallKeep.startCall).toHaveBeenCalledWith(uuid, '/public/room', 'Room', 'generic', false);
+    expect(InCallManager.start).toHaveBeenCalledWith({ media: 'audio' });
+    expect(InCallManager.setForceSpeakerphoneOn).not.toHaveBeenCalledWith(true);
   });
 
   it("takes an inbound call's type and audio mode from its own media", async () => {
