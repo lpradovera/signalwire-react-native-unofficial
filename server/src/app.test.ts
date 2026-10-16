@@ -184,3 +184,32 @@ describe('DELETE /devices/:token', () => {
     assert.equal(response.status, 404);
   });
 });
+
+describe('webhook diagnostics', () => {
+  it('logs an unmapped webhook body through the app logger', async () => {
+    const lines: Array<{ message: string; meta?: Record<string, unknown> }> = [];
+    const logged = createApp({
+      store: new InMemoryDeviceStore(),
+      service: new NotificationService({ store: new InMemoryDeviceStore(), senders: [] }),
+      log: (message, meta) => lines.push({ message, meta })
+    });
+    const listening = await new Promise<Server>((resolve) => {
+      const s = logged.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    try {
+      const address = listening.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      const response = await fetch(`http://127.0.0.1:${port}/webhooks/signalwire/inbound`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ something: 'unexpected' })
+      });
+      assert.equal(response.status, 422);
+      assert.equal(lines.length, 1);
+      assert.equal(lines[0]?.message, 'Unmapped SignalWire webhook');
+      assert.deepEqual(lines[0]?.meta?.body, { something: 'unexpected' });
+    } finally {
+      listening.close();
+    }
+  });
+});
