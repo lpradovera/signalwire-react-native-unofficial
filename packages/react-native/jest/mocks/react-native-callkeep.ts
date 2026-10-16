@@ -1,4 +1,7 @@
-const listeners = new Map<string, (payload: unknown) => void>();
+type Handler = (payload: unknown) => void;
+
+/** Every handler per event, as callkeep keeps them (one Set per event type). */
+const listeners = new Map<string, Set<Handler>>();
 
 const RNCallKeep = {
   setup: jest.fn(async () => undefined),
@@ -10,14 +13,28 @@ const RNCallKeep = {
   reportConnectedOutgoingCallWithUUID: jest.fn(),
   reportEndCallWithUUID: jest.fn(),
   endCall: jest.fn(),
-  addEventListener: jest.fn((event: string, handler: (payload: unknown) => void) => {
-    listeners.set(event, handler);
+  clearInitialEvents: jest.fn(),
+  /** Like callkeep 4.3.16: returns an EventListener whose remove() drops this handler only. */
+  addEventListener: jest.fn((event: string, handler: Handler) => {
+    const set = listeners.get(event) ?? new Set<Handler>();
+    set.add(handler);
+    listeners.set(event, set);
+    return { remove: jest.fn(() => void listeners.get(event)?.delete(handler)) };
   }),
-  removeEventListener: jest.fn((event: string) => {
-    listeners.delete(event);
+  /** Like callkeep 4.3.16: without a listener, removes every handler of the type. */
+  removeEventListener: jest.fn((event: string, handler?: Handler) => {
+    if (handler) {
+      listeners.get(event)?.delete(handler);
+    } else {
+      listeners.delete(event);
+    }
   }),
   /** Test helper — fire a native event. */
-  __emit: (event: string, payload: unknown) => listeners.get(event)?.(payload),
+  __emit: (event: string, payload: unknown) => {
+    for (const handler of [...(listeners.get(event) ?? [])]) {
+      handler(payload);
+    }
+  },
   __reset: () => listeners.clear()
 };
 
