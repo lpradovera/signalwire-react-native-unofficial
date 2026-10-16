@@ -434,6 +434,14 @@ Needs a native rebuild: the package now has an Android library (autolinked).
   `MissingPeerDependencyError` instead of a TypeError, here and later from
   every outbound call.
 
+### A call CallKit refused to show
+
+- When CallKit refuses an incoming call (a Focus mode that does not allow the
+  caller, the block list), the app's own Accept and Decline go straight to the
+  SDK. They asked CallKit to answer a call it did not have, which failed
+  silently, so they did nothing. A refused push is not adopted as a ringing
+  push, and a push entry the app reported is ended.
+
 ### CallKit audio belongs to its call
 
 - The audio session belongs to the call it was started for. Another call
