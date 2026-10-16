@@ -16,8 +16,8 @@ const PLACEHOLDER_APP_ID = 'com.example.swrnexample';
 /**
  * Lets the dev build talk to a Mac reached over Tailscale, in the clear.
  *
- * App Transport Security blocks plain HTTP by default. Expo's
- * `NSAllowsLocalNetworking` covers `.local` and the RFC1918 ranges, but a
+ * App Transport Security blocks plain HTTP by default. The template's
+ * `NSAllowsLocalNetworking` (kept below) covers `.local` and the RFC1918 ranges, but a
  * tailnet address is CGNAT (100.64/10), so it is not covered — and when the
  * device and the Mac are not on the same LAN, that is the only route there.
  *
@@ -31,12 +31,25 @@ const PLACEHOLDER_APP_ID = 'com.example.swrnexample';
  * do not copy it into a shipping app.
  */
 const TAILNET_ATS_EXCEPTION = {
-  NSExceptionDomains: {
-    'ts.net': {
-      NSIncludesSubdomains: true,
-      NSExceptionAllowsInsecureHTTPLoads: true
-    }
+  'ts.net': {
+    NSIncludesSubdomains: true,
+    NSExceptionAllowsInsecureHTTPLoads: true
   }
+};
+
+/**
+ * The template Info.plist's own App Transport Security settings.
+ *
+ * Expo lays `ios.infoPlist` over the template's Info.plist one level deep, so
+ * an `NSAppTransportSecurity` given here replaces the template's dict rather
+ * than adding to it, and `config.ios.infoPlist` does not hold the template's
+ * values to spread. Without these the exception above was the whole dict: no
+ * `NSAllowsLocalNetworking`, so iOS 17+ refused plain HTTP to a LAN IP (the
+ * token server, Metro). `npm run verify:prebuild` checks the generated file.
+ */
+const TEMPLATE_ATS = {
+  NSAllowsArbitraryLoads: false,
+  NSAllowsLocalNetworking: true
 };
 
 module.exports = ({ config }) => {
@@ -60,8 +73,12 @@ module.exports = ({ config }) => {
       infoPlist: {
         ...config.ios?.infoPlist,
         NSAppTransportSecurity: {
+          ...TEMPLATE_ATS,
           ...config.ios?.infoPlist?.NSAppTransportSecurity,
-          ...TAILNET_ATS_EXCEPTION
+          NSExceptionDomains: {
+            ...config.ios?.infoPlist?.NSAppTransportSecurity?.NSExceptionDomains,
+            ...TAILNET_ATS_EXCEPTION
+          }
         }
       }
     },
