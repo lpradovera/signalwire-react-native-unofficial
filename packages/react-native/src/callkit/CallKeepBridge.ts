@@ -68,19 +68,6 @@ export interface CallKitSetupOptions {
   fusionTimeoutMs?: number;
 }
 
-const NATIVE_EVENTS = [
-  'didDisplayIncomingCall',
-  'answerCall',
-  'endCall',
-  'didPerformDTMFAction',
-  'didToggleHoldCallAction',
-  'didPerformSetMutedCallAction',
-  'didActivateAudioSession',
-  'didDeactivateAudioSession',
-  // Replays what fired before JavaScript existed. See handleLoadedEvents.
-  'didLoadWithEvents'
-] as const;
-
 /**
  * Connects {@link CallRegistry} to `react-native-callkeep`.
  *
@@ -102,6 +89,18 @@ export class CallKeepBridge {
    * would wait for an event that has already fired.
    */
   private readonly audioSessionActive$ = new BehaviorSubject(false);
+  /**
+   * What each addEventListener returned. destroy() removes these, and only
+   * these: callkeep's removeEventListener(type) with no handler removes every
+   * handler of that type in the process, the app's own included.
+   */
+  private readonly nativeListeners: Array<{ remove(): void }> = [];
+  /**
+   * Replayed answers and ends for a uuid the registry doesn't know yet. The
+   * replay can reach JS before setup() adopts the cached launch push (see
+   * handleLoadedEvents); they are applied when that entry is adopted.
+   */
+  private readonly deferredReplay = new Map<string, Array<'answer' | 'end'>>();
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
 
@@ -130,8 +129,10 @@ export class CallKeepBridge {
     // — before setup() has had a chance to assert it is installed. An app that
     // only wants the SDK, with no native call UI, must not crash on import.
     if (typeof RNCallKeep?.addEventListener === 'function') {
-      RNCallKeep.addEventListener('didLoadWithEvents', (events) =>
-        this.handleLoadedEvents(events as LoadedEvent[])
+      this.keep(
+        RNCallKeep.addEventListener('didLoadWithEvents', (events) =>
+          this.handleLoadedEvents(events as LoadedEvent[])
+        )
       );
     }
   }
@@ -363,29 +364,41 @@ export class CallKeepBridge {
     this.destroyed$.next();
     this.destroyed$.complete();
     this.stopTicking();
-    for (const event of NATIVE_EVENTS) {
-      RNCallKeep.removeEventListener(event);
+    for (const listener of this.nativeListeners.splice(0)) {
+      listener.remove();
     }
+    this.deferredReplay.clear();
     this.registry.destroy();
     this.isSetup = false;
   }
 
   // ---------------------------------------------------------------- internals
 
+  /** Keeps an addEventListener result for destroy(); see {@link nativeListeners}. */
+  private keep(listener: unknown): void {
+    if (typeof (listener as { remove?: unknown } | undefined)?.remove === 'function') {
+      this.nativeListeners.push(listener as { remove(): void });
+    }
+  }
+
   private registerNativeListeners(): void {
     // A VoIP push is reported to CallKit natively, before JavaScript exists.
     // This is how the registry learns about a call that is already ringing:
     // without it the entry is created only when the app happens to be running,
     // and a cold-start answer has nothing to apply an intent to.
-    RNCallKeep.addEventListener(
-      'didDisplayIncomingCall',
-      // callkeep types `payload` as bare `object`, so it is narrowed below
-      // rather than in the parameter list.
-      (event) => this.handleDidDisplayIncomingCall(event as DisplayEvent)
+    this.keep(
+      RNCallKeep.addEventListener(
+        'didDisplayIncomingCall',
+        // callkeep types `payload` as bare `object`, so it is narrowed below
+        // rather than in the parameter list.
+        (event) => this.handleDidDisplayIncomingCall(event as DisplayEvent)
+      )
     );
 
-    RNCallKeep.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) =>
-      this.handleAnswerCall(callUUID)
+    this.keep(
+      RNCallKeep.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) =>
+        this.handleAnswerCall(callUUID)
+      )
     );
 
     this.registerRemainingListeners();
@@ -426,6 +439,7 @@ export class CallKeepBridge {
       data: Object.keys(data).length > 0 ? data : undefined
     });
     this.ensureTicking();
+    this.applyDeferredReplay(uuid);
     await clearPendingVoipCall();
   }
 
@@ -447,9 +461,9 @@ export class CallKeepBridge {
       if (event?.name === 'RNCallKeepDidDisplayIncomingCall') {
         this.handleDidDisplayIncomingCall(event.data as DisplayEvent);
       } else if (event?.name === 'RNCallKeepPerformAnswerCallAction') {
-        this.handleAnswerCall((event.data as { callUUID: string }).callUUID);
+        this.replayAction((event.data as { callUUID: string }).callUUID, 'answer');
       } else if (event?.name === 'RNCallKeepPerformEndCallAction') {
-        this.handleEndCall((event.data as { callUUID: string }).callUUID);
+        this.replayAction((event.data as { callUUID: string }).callUUID, 'end');
       } else if (event?.name === 'RNCallKeepDidActivateAudioSession') {
         this.setAudioSessionActive(true);
       } else if (event?.name === 'RNCallKeepDidDeactivateAudioSession') {
@@ -462,6 +476,41 @@ export class CallKeepBridge {
     // and an old activation would claim a session that is gone.
     if (typeof RNCallKeep.clearInitialEvents === 'function') {
       RNCallKeep.clearInitialEvents();
+    }
+  }
+
+  /**
+   * Applies a replayed answer or end, or holds it for a uuid the registry
+   * doesn't know yet. On a cold start the display event is in the replay only
+   * if callkeep's module existed when PushKit reported the call; under the new
+   * architecture it is created lazily, later, so the answer can arrive first
+   * and the entry only when setup() adopts the cached launch push.
+   */
+  private replayAction(uuid: string, action: 'answer' | 'end'): void {
+    if (this.registry.entryForUuid(uuid)) {
+      this.runReplayed(uuid, action);
+      return;
+    }
+    logger.debug(`Holding the replayed ${action} for ${uuid} until its entry is adopted`);
+    this.deferredReplay.set(uuid, [...(this.deferredReplay.get(uuid) ?? []), action]);
+  }
+
+  private applyDeferredReplay(uuid: string): void {
+    const actions = this.deferredReplay.get(uuid);
+    if (!actions) {
+      return;
+    }
+    this.deferredReplay.delete(uuid);
+    for (const action of actions) {
+      this.runReplayed(uuid, action);
+    }
+  }
+
+  private runReplayed(uuid: string, action: 'answer' | 'end'): void {
+    if (action === 'answer') {
+      this.handleAnswerCall(uuid);
+    } else {
+      this.handleEndCall(uuid);
     }
   }
 
@@ -507,46 +556,68 @@ export class CallKeepBridge {
           data: Object.keys(data).length > 0 ? data : undefined
         });
         this.ensureTicking();
+        this.applyDeferredReplay(callUUID);
     }
   }
 
   private registerRemainingListeners(): void {
-    RNCallKeep.addEventListener('endCall', ({ callUUID }: { callUUID: string }) =>
-      this.handleEndCall(callUUID)
+    this.keep(
+      RNCallKeep.addEventListener('endCall', ({ callUUID }: { callUUID: string }) =>
+        this.handleEndCall(callUUID)
+      )
     );
 
-    RNCallKeep.addEventListener(
-      'didPerformDTMFAction',
-      ({ callUUID, digits }: { callUUID: string; digits: string }) => {
-        void this.registry.entryForUuid(callUUID)?.call?.sendDigits(digits);
-      }
-    );
-
-    RNCallKeep.addEventListener('didToggleHoldCallAction', ({ callUUID }: { callUUID: string }) => {
-      void this.registry.entryForUuid(callUUID)?.call?.toggleHold();
-    });
-
-    RNCallKeep.addEventListener(
-      'didPerformSetMutedCallAction',
-      ({ callUUID, muted }: { callUUID: string; muted: boolean }) => {
-        const participant = this.registry.entryForUuid(callUUID)?.call?.self;
-        if (!participant) {
-          return;
+    this.keep(
+      RNCallKeep.addEventListener(
+        'didPerformDTMFAction',
+        ({ callUUID, digits }: { callUUID: string; digits: string }) => {
+          void this.registry.entryForUuid(callUUID)?.call?.sendDigits(digits);
         }
-        void (muted ? participant.mute() : participant.unmute());
-      }
+      )
+    );
+
+    this.keep(
+      RNCallKeep.addEventListener('didToggleHoldCallAction', ({ callUUID }: { callUUID: string }) => {
+        void this.registry.entryForUuid(callUUID)?.call?.toggleHold();
+      })
+    );
+
+    this.keep(
+      RNCallKeep.addEventListener(
+        'didPerformSetMutedCallAction',
+        ({ callUUID, muted }: { callUUID: string; muted: boolean }) => {
+          const participant = this.registry.entryForUuid(callUUID)?.call?.self;
+          if (!participant) {
+            return;
+          }
+          void (muted ? participant.mute() : participant.unmute());
+        }
+      )
     );
 
     // iOS only. Starting media before this fires yields a silent call.
-    RNCallKeep.addEventListener('didActivateAudioSession', () => {
-      logger.debug('Audio session activated');
-      this.setAudioSessionActive(true);
-    });
+    this.keep(
+      RNCallKeep.addEventListener('didActivateAudioSession', () => {
+        logger.debug('Audio session activated');
+        this.setAudioSessionActive(true);
+      })
+    );
 
-    RNCallKeep.addEventListener('didDeactivateAudioSession', () => {
-      logger.debug('Audio session deactivated');
-      this.setAudioSessionActive(false);
-    });
+    this.keep(
+      RNCallKeep.addEventListener('didDeactivateAudioSession', () => {
+        logger.debug('Audio session deactivated');
+        this.setAudioSessionActive(false);
+      })
+    );
+
+    // A provider reset ends every call and its session, with no deactivation
+    // event of its own.
+    this.keep(
+      RNCallKeep.addEventListener('didResetProvider', () => {
+        logger.debug('CallKit provider reset');
+        this.setAudioSessionActive(false);
+      })
+    );
   }
 
   private setAudioSessionActive(active: boolean): void {
@@ -577,8 +648,11 @@ export class CallKeepBridge {
     // The call can end during the wait. Started anyway, the session would stay
     // up with nothing left to stop it, and the next call, whose own start is
     // ignored because start() is first-wins, would inherit this call's mode.
+    // A push the user answered and then ended before its SDK call existed
+    // stays 'pending-push', holding a reject for that call; it is over too.
     const entry = this.registry.entryForUuid(uuid);
-    if (!entry || entry.state === 'ended') {
+    const rejectedPush = entry?.state === 'pending-push' && entry.intent === 'reject';
+    if (!entry || entry.state === 'ended' || rejectedPush) {
       logger.debug(`Call ${uuid} ended before its audio session was ready; not starting audio`);
       return;
     }
@@ -594,6 +668,10 @@ export class CallKeepBridge {
   }
 
   private stopAudio(): void {
+    // incall-manager's stop() deactivates the session itself, and the
+    // activation that stands now belonged to the call that is ending: the next
+    // call waits for its own (or the fallback).
+    this.setAudioSessionActive(false);
     try {
       getAudioRouteController().stop();
     } catch (error) {
