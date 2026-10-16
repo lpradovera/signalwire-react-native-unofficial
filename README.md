@@ -476,6 +476,16 @@ your backend learns an inbound call is coming (webhook), looks up the device
 token, and sends the push; the app receives it and calls `reportIncomingPush`.
 That call is the entire contract with this package.
 
+**The bridge consumes callkeep's launch buffer.** callkeep holds the events
+that fired before JavaScript started and sends them to `didLoadWithEvents`
+listeners; the bridge replays the call events among them and then calls
+`RNCallKeep.clearInitialEvents()`, because callkeep would otherwise send the
+same buffer again after an in-process JS reload. After that,
+`RNCallKeep.getInitialEvents()` resolves `[]`. To see the launch events
+yourself (a Recents or Siri call-back, a buffered mute), register your own
+`didLoadWithEvents` listener in your entry file: it receives the same
+dispatch.
+
 A runnable support server lives in [`server/`](server/) — device-token registry,
 APNs VoIP and FCM senders, and a webhook endpoint.
 **[`docs/push-setup.md`](docs/push-setup.md) is the full end-to-end guide** —
