@@ -346,6 +346,77 @@ describe('CallKeepBridge on iOS — the audio-session gate', () => {
   });
 });
 
+describe('CallKeepBridge on iOS — a CallKit provider reset', () => {
+  let bridge: CallKeepBridge;
+
+  beforeEach(async () => {
+    resetAudioRouteControllerForTesting();
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    callkeep.__reset();
+    bridge = new CallKeepBridge();
+    await bridge.setup({ appName: 'Demo' });
+  });
+
+  afterEach(() => {
+    bridge.destroy();
+    jest.useRealTimers();
+  });
+
+  it('ends every live call, hangs up its SDK call and stops the audio session', async () => {
+    // CallKit drops its calls on a reset and sends no endCall for them.
+    const a = createCall('out-a');
+    const uuidA = bridge.trackCall(a as never, '/public/room', 'Support');
+    callkeep.__emit('didActivateAudioSession', {});
+    a.status$.next('connected');
+    await flush();
+    expect(InCallManager.start).toHaveBeenCalledTimes(1);
+
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient({ session: { incomingCalls$: incoming$ } } as never);
+    const b = createCall('in-b');
+    incoming$.next([b]);
+    const uuidB = bridge.registry.uuidForCall(b as never)!;
+
+    callkeep.__emit('didResetProvider', {});
+
+    expect(a.hangup).toHaveBeenCalledTimes(1);
+    expect(b.hangup).toHaveBeenCalledTimes(1);
+    expect(bridge.registry.entryForUuid(uuidA)?.state).toBe('ended');
+    expect(bridge.registry.entryForUuid(uuidB)?.state).toBe('ended');
+    expect(InCallManager.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends a ringing push, so no audio starts for it', async () => {
+    const uuid = bridge.reportIncomingPush({ callId: 'p1' });
+    callkeep.__emit('answerCall', { callUUID: uuid });
+
+    callkeep.__emit('didResetProvider', {});
+    await jest.advanceTimersByTimeAsync(3100);
+
+    expect(bridge.registry.entryForUuid(uuid)?.intent).toBe('reject');
+    expect(InCallManager.start).not.toHaveBeenCalled();
+  });
+
+  it("starts the next call's audio afresh", async () => {
+    const a = createCall('out-a');
+    bridge.trackCall(a as never, '/public/room', 'Support');
+    callkeep.__emit('didActivateAudioSession', {});
+    a.status$.next('connected');
+    await flush();
+
+    callkeep.__emit('didResetProvider', {});
+
+    const b = createCall('out-b');
+    bridge.trackCall(b as never, '/public/room', 'Support');
+    b.status$.next('connected');
+    callkeep.__emit('didActivateAudioSession', {});
+    await flush();
+
+    expect(InCallManager.start).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('CallKeepBridge — the fusion tick timer', () => {
   let bridge: CallKeepBridge;
 
