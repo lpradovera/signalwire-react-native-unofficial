@@ -30,9 +30,9 @@
   the owner ends and no call is accepted within a second, the session is
   stopped, and the ringing call gets a session of its own if it is answered
   later.
-- A CallKit provider reset ends every live call as a native end would: its
-  SDK call is hung up, a ringing push is turned down, and the session is
-  released. CallKit sends no endCall action for the calls it drops.
+- A CallKit provider reset releases the session at once, with the calls it
+  drops (a ringing push included), and the next call owns a session of its
+  own.
 - `bindBridgeCall()` on a call already bound to the entry (trackCall's claim
   binds it, and the app binds it again after the dial) does nothing, so the
   call is watched once: one connected report, one audio start, one end.
