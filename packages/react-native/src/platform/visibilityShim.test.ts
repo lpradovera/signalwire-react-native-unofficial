@@ -87,4 +87,32 @@ describe('installVisibilityShim', () => {
     stop();
     expect(mockRemove).toHaveBeenCalled();
   });
+
+  it('keeps feeding a second platform when the first one disposes', () => {
+    const first = installVisibilityShim();
+    uninstall = installVisibilityShim();
+    first();
+
+    expect(mockRemove).not.toHaveBeenCalled();
+    const onChange = jest.fn();
+    doc().addEventListener('visibilitychange', onChange);
+    mockHandlers[0]?.('background');
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(doc().visibilityState).toBe('hidden');
+  });
+
+  it('tears down once the last platform disposes, and each handle counts once', () => {
+    const first = installVisibilityShim();
+    const second = installVisibilityShim();
+    first();
+    first();
+    expect(mockRemove).not.toHaveBeenCalled();
+    second();
+    expect(mockRemove).toHaveBeenCalledTimes(1);
+
+    uninstall = installVisibilityShim();
+    second();
+    expect(mockRemove).toHaveBeenCalledTimes(1);
+    expect(mockHandlers).toHaveLength(2);
+  });
 });
