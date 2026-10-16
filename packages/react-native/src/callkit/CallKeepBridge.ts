@@ -78,13 +78,15 @@ interface ConnectionEvent {
  * RECORD_AUDIO also gates callkeep's own `startCall`, which ignores the call
  * without it; POST_NOTIFICATIONS (13+) lets the incoming-call and ongoing-call
  * notifications show; BLUETOOTH_CONNECT (12+) lets incall-manager see a headset.
+ *
+ * Not CAMERA: react-native-webrtc's getUserMedia asks for it when a call first
+ * sends video, so an app that never does is never asked.
  */
-function androidCallPermissions(supportsVideo: boolean): string[] {
+function androidCallPermissions(): string[] {
   const api = Number(Platform.Version);
   return [
     'android.permission.READ_PHONE_NUMBERS',
     'android.permission.RECORD_AUDIO',
-    ...(supportsVideo ? ['android.permission.CAMERA'] : []),
     ...(api >= 33 ? ['android.permission.POST_NOTIFICATIONS'] : []),
     ...(api >= 31 ? ['android.permission.BLUETOOTH_CONNECT'] : [])
   ];
@@ -150,6 +152,8 @@ export class CallKeepBridge {
 
   private readonly destroyed$ = new Subject<void>();
   private supportsVideo = false;
+  /** Outgoing calls dialled with video; every other call is audio. */
+  private readonly videoCalls = new Set<string>();
   private isSetup = false;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private releaseAudioGate: (() => void) | null = null;
@@ -172,10 +176,20 @@ export class CallKeepBridge {
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     const host: CallRegistryHost = {
+      // Audio: a native answer is audio-only (CallRegistry.runIntent), and
+      // the offer cannot say otherwise, since SignalWire offers video to a
+      // subscriber whatever the caller dialled. Reporting `supportsVideo`
+      // here made every call a video call: Telecom gave it a video state,
+      // and the audio session started in 'video' mode, on the speaker.
       displayIncomingCall: (uuid, handle, displayName) =>
-        RNCallKeep.displayIncomingCall(uuid, handle, displayName, HANDLE_TYPE, this.supportsVideo),
-      startOutgoingCall: (uuid, handle, displayName) =>
-        RNCallKeep.startCall(uuid, handle, displayName, HANDLE_TYPE, this.supportsVideo),
+        RNCallKeep.displayIncomingCall(uuid, handle, displayName, HANDLE_TYPE, false),
+      startOutgoingCall: (uuid, handle, displayName, hasVideo) => {
+        const video = hasVideo && this.supportsVideo;
+        if (video) {
+          this.videoCalls.add(uuid);
+        }
+        RNCallKeep.startCall(uuid, handle, displayName, HANDLE_TYPE, video);
+      },
       // callkeep's reportConnectedOutgoingCallWithUUID is iOS-only, a no-op on
       // Android. There a connection stays RINGING or DIALING in Telecom until
       // it is set active (no audio focus, no "ongoing call" anywhere, and
@@ -201,6 +215,11 @@ export class CallKeepBridge {
     this.registry.entries$
       .pipe(takeUntil(this.destroyed$))
       .subscribe(() => {
+        for (const uuid of this.videoCalls) {
+          if (!this.registry.isLive(uuid)) {
+            this.videoCalls.delete(uuid);
+          }
+        }
         this.releaseAudioIfOwnerEnded();
         this.withdrawSettledNotifications();
       });
@@ -429,8 +448,13 @@ export class CallKeepBridge {
     }
   }
 
-  /** Registers an outbound call with the native UI. Returns its UUID. */
-  trackCall(call: Call, handle: string, displayName: string): string {
+  /**
+   * Registers an outbound call with the native UI. Returns its UUID.
+   *
+   * @param hasVideo - The call was dialled with video. Shown as video only
+   *   when the native UI supports it (`supportsVideo`).
+   */
+  trackCall(call: Call, handle: string, displayName: string, hasVideo = false): string {
     const claimed = this.pendingBridgeUuid;
     if (claimed !== null) {
       this.pendingBridgeUuid = null;
@@ -453,7 +477,7 @@ export class CallKeepBridge {
       logger.debug(`Entry ${claimed} vanished during the bridge dial`);
     }
 
-    const uuid = this.registry.attachOutgoingCall(call, handle, displayName);
+    const uuid = this.registry.attachOutgoingCall(call, handle, displayName, hasVideo);
     this.watchCallStatus(call);
     // Deliberate breadcrumb: RNCallKeep's own logs are NSLog-only, invisible in
     // Metro when launched outside Xcode, so without this line the entire
@@ -756,7 +780,7 @@ export class CallKeepBridge {
       return;
     }
     const request = () => {
-      const permissions = androidCallPermissions(this.supportsVideo);
+      const permissions = androidCallPermissions();
       void PermissionsAndroid.requestMultiple(permissions as never)
         .then((results) => {
           const refused = Object.entries(results as Record<string, string>)
@@ -846,7 +870,8 @@ export class CallKeepBridge {
     }
     this.audioUuid = uuid;
     try {
-      getAudioRouteController().start(this.supportsVideo ? 'video' : 'audio');
+      // 'video' defaults the route to the speaker; an audio call starts on the earpiece.
+      getAudioRouteController().start(this.videoCalls.has(uuid) ? 'video' : 'audio');
     } catch (error) {
       logger.warn('Audio routing unavailable:', error);
     }

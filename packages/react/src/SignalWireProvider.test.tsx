@@ -153,7 +153,32 @@ describe('SignalWireProvider observer wiring', () => {
       await dial?.('/public/room');
     });
 
-    expect(observer.onOutgoingCall).toHaveBeenCalledWith({ id: 'call-1' }, '/public/room');
+    expect(observer.onOutgoingCall).toHaveBeenCalledWith({ id: 'call-1' }, '/public/room', undefined);
+  });
+
+  it('passes the dial options to the observer, so native UI knows a video call', async () => {
+    const observer: CallObserver = { onOutgoingCall: jest.fn() };
+    let dial: ((destination: string, options?: object) => Promise<unknown>) | undefined;
+
+    function DialProbe(): React.JSX.Element {
+      dial = useSignalWire().dial;
+      return <span>ok</span>;
+    }
+
+    render(
+      <SignalWireProvider credentialProvider={credentialProvider as never} observer={observer}>
+        <DialProbe />
+      </SignalWireProvider>
+    );
+
+    await act(async () => {
+      await dial?.('/public/room', { audio: true, video: true });
+    });
+
+    expect(observer.onOutgoingCall).toHaveBeenCalledWith({ id: 'call-1' }, '/public/room', {
+      audio: true,
+      video: true
+    });
   });
 
   it('dials fine with no observer, which is the web case', async () => {
