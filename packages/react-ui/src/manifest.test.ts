@@ -73,12 +73,13 @@ describe('component manifest', () => {
     }
   });
 
-  it('marks every generated component as a client module', () => {
-    for (const component of COMPONENTS) {
-      const source = readFileSync(
-        join(root, 'src', 'components', `${component.name}.ts`),
-        'utf8'
-      );
+  it('marks every generated component and the barrel as a client module', () => {
+    const files = [
+      join(root, 'src', 'index.ts'),
+      ...COMPONENTS.map((c) => join(root, 'src', 'components', `${c.name}.ts`))
+    ];
+    for (const file of files) {
+      const source = readFileSync(file, 'utf8');
       // Lit elements touch the DOM at module scope, so these can never run in
       // a React Server Component.
       expect(source).toContain("'use client'");

@@ -4,9 +4,8 @@
   "description": "React components for the SignalWire web components — browser only",
   "license": "MIT",
   "type": "commonjs",
-  "main": "./dist/index.js",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.mts",
   "engines": {
     "node": ">=18"
   },
@@ -18,7 +17,7 @@
   "scripts": {
     "generate": "node scripts/generate.mjs && node scripts/sync-package.mjs",
     "build": "tsup",
-    "test": "jest",
+    "test": "jest && node --test test/entries.test.mjs",
     "type-check": "tsc --noEmit",
     "lint": "eslint src"
   },
@@ -53,156 +52,112 @@
   },
   "exports": {
     ".": {
-      "import": {
-        "types": "./dist/index.d.mts",
-        "default": "./dist/index.mjs"
-      },
-      "require": {
-        "types": "./dist/index.d.ts",
-        "default": "./dist/index.js"
-      }
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
     },
     "./theme.css": "./theme.css",
     "./call-media": {
-      "import": {
-        "types": "./dist/components/CallMedia.d.mts",
-        "default": "./dist/components/CallMedia.mjs"
-      },
-      "require": {
-        "types": "./dist/components/CallMedia.d.ts",
-        "default": "./dist/components/CallMedia.js"
-      }
+      "types": "./dist/components/CallMedia.d.mts",
+      "default": "./dist/components/CallMedia.mjs"
     },
     "./self-media": {
-      "import": {
-        "types": "./dist/components/SelfMedia.d.mts",
-        "default": "./dist/components/SelfMedia.mjs"
-      },
-      "require": {
-        "types": "./dist/components/SelfMedia.d.ts",
-        "default": "./dist/components/SelfMedia.js"
-      }
+      "types": "./dist/components/SelfMedia.d.mts",
+      "default": "./dist/components/SelfMedia.mjs"
     },
     "./local-camera": {
-      "import": {
-        "types": "./dist/components/LocalCamera.d.mts",
-        "default": "./dist/components/LocalCamera.mjs"
-      },
-      "require": {
-        "types": "./dist/components/LocalCamera.d.ts",
-        "default": "./dist/components/LocalCamera.js"
-      }
+      "types": "./dist/components/LocalCamera.d.mts",
+      "default": "./dist/components/LocalCamera.mjs"
     },
     "./call-status": {
-      "import": {
-        "types": "./dist/components/CallStatus.d.mts",
-        "default": "./dist/components/CallStatus.mjs"
-      },
-      "require": {
-        "types": "./dist/components/CallStatus.d.ts",
-        "default": "./dist/components/CallStatus.js"
-      }
+      "types": "./dist/components/CallStatus.d.mts",
+      "default": "./dist/components/CallStatus.mjs"
     },
     "./call-provider": {
-      "import": {
-        "types": "./dist/components/CallProvider.d.mts",
-        "default": "./dist/components/CallProvider.mjs"
-      },
-      "require": {
-        "types": "./dist/components/CallProvider.d.ts",
-        "default": "./dist/components/CallProvider.js"
-      }
+      "types": "./dist/components/CallProvider.d.mts",
+      "default": "./dist/components/CallProvider.mjs"
     },
     "./call-dialpad": {
-      "import": {
-        "types": "./dist/components/CallDialpad.d.mts",
-        "default": "./dist/components/CallDialpad.mjs"
-      },
-      "require": {
-        "types": "./dist/components/CallDialpad.d.ts",
-        "default": "./dist/components/CallDialpad.js"
-      }
+      "types": "./dist/components/CallDialpad.d.mts",
+      "default": "./dist/components/CallDialpad.mjs"
     },
     "./audio-level": {
-      "import": {
-        "types": "./dist/components/AudioLevel.d.mts",
-        "default": "./dist/components/AudioLevel.mjs"
-      },
-      "require": {
-        "types": "./dist/components/AudioLevel.d.ts",
-        "default": "./dist/components/AudioLevel.js"
-      }
+      "types": "./dist/components/AudioLevel.d.mts",
+      "default": "./dist/components/AudioLevel.mjs"
     },
     "./click-to-call": {
-      "import": {
-        "types": "./dist/components/ClickToCall.d.mts",
-        "default": "./dist/components/ClickToCall.mjs"
-      },
-      "require": {
-        "types": "./dist/components/ClickToCall.d.ts",
-        "default": "./dist/components/ClickToCall.js"
-      }
+      "types": "./dist/components/ClickToCall.d.mts",
+      "default": "./dist/components/ClickToCall.mjs"
     },
     "./call-controls": {
-      "import": {
-        "types": "./dist/components/CallControls.d.mts",
-        "default": "./dist/components/CallControls.mjs"
-      },
-      "require": {
-        "types": "./dist/components/CallControls.d.ts",
-        "default": "./dist/components/CallControls.js"
-      }
+      "types": "./dist/components/CallControls.d.mts",
+      "default": "./dist/components/CallControls.mjs"
     },
     "./participants": {
-      "import": {
-        "types": "./dist/components/Participants.d.mts",
-        "default": "./dist/components/Participants.mjs"
-      },
-      "require": {
-        "types": "./dist/components/Participants.d.ts",
-        "default": "./dist/components/Participants.js"
-      }
+      "types": "./dist/components/Participants.d.mts",
+      "default": "./dist/components/Participants.mjs"
     },
     "./participant-controls": {
-      "import": {
-        "types": "./dist/components/ParticipantControls.d.mts",
-        "default": "./dist/components/ParticipantControls.mjs"
-      },
-      "require": {
-        "types": "./dist/components/ParticipantControls.d.ts",
-        "default": "./dist/components/ParticipantControls.js"
-      }
+      "types": "./dist/components/ParticipantControls.d.mts",
+      "default": "./dist/components/ParticipantControls.mjs"
     },
     "./directory": {
-      "import": {
-        "types": "./dist/components/Directory.d.mts",
-        "default": "./dist/components/Directory.mjs"
-      },
-      "require": {
-        "types": "./dist/components/Directory.d.ts",
-        "default": "./dist/components/Directory.js"
-      }
+      "types": "./dist/components/Directory.d.mts",
+      "default": "./dist/components/Directory.mjs"
     },
     "./device-selector": {
-      "import": {
-        "types": "./dist/components/DeviceSelector.d.mts",
-        "default": "./dist/components/DeviceSelector.mjs"
-      },
-      "require": {
-        "types": "./dist/components/DeviceSelector.d.ts",
-        "default": "./dist/components/DeviceSelector.js"
-      }
+      "types": "./dist/components/DeviceSelector.d.mts",
+      "default": "./dist/components/DeviceSelector.mjs"
     },
     "./call-widget": {
-      "import": {
-        "types": "./dist/components/CallWidget.d.mts",
-        "default": "./dist/components/CallWidget.mjs"
-      },
-      "require": {
-        "types": "./dist/components/CallWidget.d.ts",
-        "default": "./dist/components/CallWidget.js"
-      }
+      "types": "./dist/components/CallWidget.d.mts",
+      "default": "./dist/components/CallWidget.mjs"
     }
   },
-  "sideEffects": true
+  "sideEffects": true,
+  "typesVersions": {
+    "*": {
+      "call-media": [
+        "./dist/components/CallMedia.d.mts"
+      ],
+      "self-media": [
+        "./dist/components/SelfMedia.d.mts"
+      ],
+      "local-camera": [
+        "./dist/components/LocalCamera.d.mts"
+      ],
+      "call-status": [
+        "./dist/components/CallStatus.d.mts"
+      ],
+      "call-provider": [
+        "./dist/components/CallProvider.d.mts"
+      ],
+      "call-dialpad": [
+        "./dist/components/CallDialpad.d.mts"
+      ],
+      "audio-level": [
+        "./dist/components/AudioLevel.d.mts"
+      ],
+      "click-to-call": [
+        "./dist/components/ClickToCall.d.mts"
+      ],
+      "call-controls": [
+        "./dist/components/CallControls.d.mts"
+      ],
+      "participants": [
+        "./dist/components/Participants.d.mts"
+      ],
+      "participant-controls": [
+        "./dist/components/ParticipantControls.d.mts"
+      ],
+      "directory": [
+        "./dist/components/Directory.d.mts"
+      ],
+      "device-selector": [
+        "./dist/components/DeviceSelector.d.mts"
+      ],
+      "call-widget": [
+        "./dist/components/CallWidget.d.mts"
+      ]
+    }
+  }
 }

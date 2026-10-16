@@ -9,6 +9,6 @@ module.exports = {
   transformIgnorePatterns: ['node_modules/(?!(@lit/react)/)'],
   moduleNameMapper: {
     // See jest/web-components.mock.js for why the real Lit elements are not loaded.
-    '^@signalwire/web-components/.*$': '<rootDir>/jest/web-components.mock.js'
+    '^@signalwire/web-components(/.*)?$': '<rootDir>/jest/web-components.mock.js'
   }
 };
