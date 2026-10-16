@@ -31,6 +31,7 @@ export const CallWidget = createSwComponent({
   tagName: 'sw-call-widget',
   elementClass: SwCallWidget,
   events: {
+    onAddressEvent: 'signalwire-address:event',
     onCallEnded: 'sw-call-ended',
     onCallHangup: 'sw-call-hangup',
     onContentDrawerClose: 'sw-content-drawer-close',
@@ -39,6 +40,9 @@ export const CallWidget = createSwComponent({
     onFullscreenToggle: 'sw-fullscreen-toggle',
     onModalClose: 'sw-modal-close',
     onTranscriptToggle: 'sw-transcript-toggle'
+  },
+  eventOrigins: {
+    onCallHangup: 'sw-call-controls'
   }
 });
 

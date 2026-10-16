@@ -76,15 +76,20 @@ so the selector can only be imported from the package root.
 | `/local-camera` | `sw-local-camera` | — |
 | `/call-status` | `sw-call-status` | — |
 | `/call-provider` | `sw-call-provider` | — |
-| `/call-dialpad` | `sw-call-dialpad` | — |
+| `/call-dialpad` | `sw-call-dialpad` | `onDigitPress`, `onDial` |
 | `/audio-level` | `sw-audio-level` | — |
-| `/click-to-call` | `sw-click-to-call` | — |
+| `/click-to-call` | `sw-click-to-call` | `onCallEnded`, `onCallHangup`, `onDial` |
 | `/call-controls` | `sw-call-controls` | `onCallHangup` |
 | `/participants` | `sw-participants` | `onParticipantMuteAudio`, `onParticipantMuteVideo`, `onParticipantRemove` |
 | `/participant-controls` | `sw-participant-controls` | `onParticipantPinToggle`, `onParticipantVolumeChange` |
 | `/directory` | `sw-directory` | `onAddressSelect`, `onDial` |
 | `/device-selector` | `sw-device-selector` | `onDeviceChange` |
-| `/call-widget` | `sw-call-widget` | `onCallEnded`, `onCallHangup`, `onContentDrawerClose`, `onDial`, `onDisplayContent`, `onFullscreenToggle`, `onModalClose`, `onTranscriptToggle` |
+| `/call-widget` | `sw-call-widget` | `onAddressEvent` (`signalwire-address:event`), `onCallEnded`, `onCallHangup`, `onContentDrawerClose`, `onDial`, `onDisplayContent`, `onFullscreenToggle`, `onModalClose`, `onTranscriptToggle` |
+
+`onCallHangup` runs once per hang-up click. The elements' events bubble out of
+their shadow roots, so the click reaches the host both from the inner control
+bar and from `<sw-call-controls>`, which re-dispatches it; the wrappers pass on
+only the `<sw-call-controls>` one.
 
 The SDK's twelve `sw-ui-*` primitives are intentionally **not** wrapped. They
 are presentational internals of the Lit library rather than API most apps reach

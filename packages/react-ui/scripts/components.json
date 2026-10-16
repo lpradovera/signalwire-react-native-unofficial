@@ -44,7 +44,10 @@
       "sw-ui-dialpad",
       "sw-ui-icon"
     ],
-    "events": {}
+    "events": {
+      "onDigitPress": "sw-digit-press",
+      "onDial": "sw-dial"
+    }
   },
   {
     "tag": "sw-audio-level",
@@ -73,7 +76,14 @@
       "sw-ui-split-button",
       "sw-ui-transcript-view"
     ],
-    "events": {}
+    "events": {
+      "onCallEnded": "sw-call-ended",
+      "onCallHangup": {
+        "event": "sw-call-hangup",
+        "from": "sw-call-controls"
+      },
+      "onDial": "sw-dial"
+    }
   },
   {
     "tag": "sw-call-controls",
@@ -86,7 +96,10 @@
       "sw-ui-split-button"
     ],
     "events": {
-      "onCallHangup": "sw-call-hangup"
+      "onCallHangup": {
+        "event": "sw-call-hangup",
+        "from": "sw-call-controls"
+      }
     }
   },
   {
@@ -152,8 +165,12 @@
       "sw-ui-transcript-view"
     ],
     "events": {
+      "onAddressEvent": "signalwire-address:event",
       "onCallEnded": "sw-call-ended",
-      "onCallHangup": "sw-call-hangup",
+      "onCallHangup": {
+        "event": "sw-call-hangup",
+        "from": "sw-call-controls"
+      },
       "onContentDrawerClose": "sw-content-drawer-close",
       "onDial": "sw-dial",
       "onDisplayContent": "sw-display-content",

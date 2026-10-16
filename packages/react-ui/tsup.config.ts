@@ -6,7 +6,7 @@ interface ComponentEntry {
   tag: string;
   className: string;
   name: string;
-  events: Record<string, string>;
+  events: Record<string, unknown>;
 }
 
 const COMPONENTS = JSON.parse(
