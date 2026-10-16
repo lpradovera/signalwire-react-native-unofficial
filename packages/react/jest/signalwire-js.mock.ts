@@ -1,9 +1,11 @@
 /**
- * Runtime double for `@signalwire/js` used by this package's tests.
+ * Runtime double for `@signalwire/js` used by this package's unit tests.
  *
- * The core is universal and owns no SDK behaviour — it wires observables into
- * React. Its tests therefore supply their own fakes, and loading the real SDK
- * would only drag in an ESM-only `uuid` that Jest cannot parse.
+ * The core wires the SDK's observables into React, and most of its tests
+ * only need the module's shape. Where the SDK's real behaviour matters
+ * (destroy() that throws before connect, a session that appears only when
+ * connect() finishes, deferred emissions), the tests load the real client
+ * instead: see jest/realSdk.ts.
  *
  * Type correctness against the real SDK is covered by `tsc --noEmit`, which
  * resolves the genuine package.

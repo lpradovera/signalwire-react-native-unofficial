@@ -5,7 +5,9 @@ import type { Call, SignalWire, SignalWireOptions } from '@signalwire/js';
  *
  * On the web there is nothing to supply — the SDK uses browser globals — so
  * `SignalWireProvider` takes this as optional. `@signalwire/react-native`
- * provides one covering WebRTC, storage, and the NetInfo/AppState shims.
+ * provides one covering WebRTC, storage, and the NetInfo/AppState shims, and
+ * passes the provider a function that builds one, so each client gets its
+ * own and the next client never inherits a disposed one.
  */
 export interface SignalWirePlatform {
   /** Merged into the `SignalWire` constructor options. */
