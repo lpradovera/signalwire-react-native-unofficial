@@ -83,8 +83,10 @@ just a stale ordering.
 concurrently against one Metro cache, and the Android figure tracks cache
 warmth rather than the bundle: on this repo it has been observed at 1088 on a
 cold cache and falling through the 800s, 600s and 400s on successive warm runs,
-while iOS stays fixed. Clear `$TMPDIR/metro-cache` first if you want a
-reproducible number, or just check that both platforms bundle without error.
+while iOS stays fixed. Clear the repository's Metro caches
+(`rm -rf node_modules/.cache/metro node_modules/.cache/metro-file-map`; the
+example's `metro.config.js` keeps them there, not in `$TMPDIR`) first if you want
+a reproducible number, or just check that both platforms bundle without error.
 
 The four packages are `@signalwire/react` (universal core), `@signalwire/react-ui`
 (browser Lit wrappers), `@signalwire/react-native` (platform layer) and
