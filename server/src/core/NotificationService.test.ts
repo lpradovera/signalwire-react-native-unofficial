@@ -242,4 +242,27 @@ describe('NotificationService', () => {
     assert.equal(result.pruned, 0);
     assert.ok(logged.some((line) => /Failed to prune/.test(line) && /EACCES/.test(line)));
   });
+
+  it('does not let an extra overwrite the core fields (server-22)', async () => {
+    const store = await storeWith({ token: 'ios-1' });
+    const ios = recordingSender('ios');
+    const service = new NotificationService({ store, senders: [ios], uuid: () => 'the-uuid' });
+
+    await service.notify({
+      externalUserId: 'user-1',
+      correlationId: 'call-9',
+      from: '+15550001',
+      fromName: 'Ada',
+      data: { call_id: 'forged', from: 'x', from_name: 'y', uuid: 'z', bridgeToken: 'bt-1' }
+    });
+
+    assert.deepEqual(ios.sent[0]?.payload, {
+      call_id: 'call-9',
+      from: '+15550001',
+      from_name: 'Ada',
+      uuid: 'the-uuid',
+      bridgeToken: 'bt-1'
+    });
+  });
 });
+

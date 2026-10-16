@@ -123,15 +123,16 @@ export class NotificationService {
 
     try {
       await sender.send(device, {
+        // Opaque extras first (a bridge token rides here), so the core fields
+        // below always win: an extra cannot replace the call id, the caller or
+        // the CallKit uuid.
+        ...(notification.data ?? {}),
         call_id: notification.correlationId,
         from: notification.from ?? 'Unknown',
         from_name: notification.fromName ?? 'Unknown caller',
         // iOS only: generated here so the AppDelegate hook and the JS side
         // agree on one identifier for the CallKit entry.
-        ...(device.platform === 'ios' ? { uuid: this.uuid() } : {}),
-        // Opaque extras last: a bridge token rides here, and nothing above
-        // should be silently overwritten by it.
-        ...(notification.data ?? {})
+        ...(device.platform === 'ios' ? { uuid: this.uuid() } : {})
       });
 
       return { token: device.token, platform: device.platform, status: 'delivered' };
