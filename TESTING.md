@@ -256,6 +256,42 @@ open SignalWireRNExample.xcworkspace
 **Xcode 26 or newer is required** — any iOS 26 device needs it, and Xcode 16.x
 cannot build SDK 54 anyway.
 
+**Xcode 27 / iOS 27** need two things the example applies itself, as config
+plugins in `example/plugins/`. An app of your own built with the iOS 27 SDK on
+Expo SDK 54 needs the same; copy `generatedCode.js` along with them.
+
+- `withPodDeploymentTarget` raises pod resource bundles that still declare
+  iOS 9 to the app's deployment target (Xcode 27 refuses anything below 15.0;
+  React Native already raises the pods' own targets). It adds a tagged block
+  right after the Podfile's `post_install do |installer|` line. React Native
+  fixed this upstream in facebook/react-native#58687 (commit d45fc2d289, not in
+  0.88.0); drop the plugin once your React Native release contains it.
+- `withSceneLifecycle` adopts the UIScene lifecycle, without which iOS 27 ends
+  the app at launch in
+  `_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`. It merges a
+  scene manifest into Info.plist (other scene roles, such as CarPlay's, are
+  kept; it refuses an app that already names its own window-scene delegate),
+  and adds a `SceneDelegate` to `AppDelegate.swift` that moves the
+  AppDelegate's window onto the scene. React Native now starts when the scene
+  connects, with the scene's URL in the launch options, so
+  `Linking.getInitialURL()` returns a link that cold-started the app; a launch
+  with no scene (a VoIP push in the background) still starts it, on the next
+  turn of the main queue. In Debug builds with expo-dev-client the start stays
+  in `didFinishLaunching`, which expo-dev-launcher requires, and the launcher
+  passes the link on as the app's initial URL. The `SceneDelegate` hands URLs
+  (with their options), user activities, active/background transitions and
+  quick actions back to the AppDelegate, so Expo modules' AppDelegate
+  subscribers still get them. A link a scene connects with while React Native
+  is already running (it was started by a VoIP push) arrives as a `url` event
+  once the first screen is up, not from `getInitialURL()`. The app has one
+  window, so with `UIApplicationSupportsMultipleScenes` each new window scene
+  takes it. Expo SDK 58's template adopts scenes itself; drop the plugin there.
+
+Both plugins write Expo's tagged blocks (`@generated begin ... end`), so
+`expo prebuild` without `--clean` updates them in place and keeps anything
+else in the files. `npm test -w @signalwire/react-native-example` runs them
+through Expo's mod compiler and type-checks the generated Swift (on a Mac).
+
 ### The application identifier is not in the repo
 
 Bundle identifiers must be globally unique across Apple's ecosystem and
@@ -335,8 +371,15 @@ double-conversion) as prebuilt binaries. **Use it.** Without it, CocoaPods
 compiles glog from source by running `./configure`, which blocks forever
 reading a stdin that CocoaPods never writes to.
 
-**Do not add `RCT_USE_PREBUILT_RNCORE=1`.** Precompiled React core is broken on
-this toolchain — the `React-Core-prebuilt` umbrella header pulls in source-tree
+The example runs the New Architecture, where Expo's Podfile turns on
+precompiled React core by itself (`RCT_USE_PREBUILT_RNCORE ||= '1'`). That
+configuration builds and launches on Xcode 27 / the iOS 27 Simulator
+(2026-10-15: clean `expo prebuild`, `RCT_USE_RN_DEP=1 pod install`, Release
+build). The note below is from the old architecture, where the variable was
+off by default and setting it by hand failed.
+
+**Old architecture: do not add `RCT_USE_PREBUILT_RNCORE=1`.** Precompiled React core was broken on
+that toolchain — the `React-Core-prebuilt` umbrella header pulls in source-tree
 headers that are not part of its module, and `-Wnon-modular-include-in-framework-module`
 is promoted to an error:
 

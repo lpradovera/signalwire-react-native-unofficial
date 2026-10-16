@@ -8,7 +8,12 @@ Supplies the platform adapters the browser-oriented SDK needs on mobile, an
 idiomatic React API over its RxJS observables, and native call UI through
 CallKit and ConnectionService.
 
-Supports iOS 13+ and Android 8+, on React Native 0.76+ (bare or Expo).
+Supports iOS 13+ and Android 8+, on React Native 0.76+ (bare or Expo), with
+**React Native's New Architecture only** (the default since 0.76; React
+Native 0.82 removes the old one). Apps that set `newArchEnabled: false` are
+not supported. The native peers (react-native-webrtc, react-native-callkeep,
+react-native-incall-manager) run through React Native's interop layer for
+legacy modules and views.
 
 ## What is verified
 
@@ -22,6 +27,10 @@ Tested on hardware and an emulator, not just in unit tests.
 | Answer from a **killed** app | ✅ | ✅ (release build — see note) |
 | Two-way audio on a bridged call | ✅ | ✅ |
 | Hang-up propagation, both directions | ✅ | ✅ |
+
+These rows were verified on the old architecture. On the New Architecture the
+example app has been built and launched on the iOS 27 Simulator with every
+native peer; the device rows are still to be repeated on it.
 
 Android cold start needs a **release** build to be tested meaningfully: the
 Expo dev client starts a second JS runtime for the activity, so the entry

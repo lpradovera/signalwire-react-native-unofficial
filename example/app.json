@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "scheme": "signalwire-example",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
     },
@@ -21,7 +21,9 @@
           "enableVoipPush": true
         }
       ],
-      "./plugins/withCleartextTraffic"
+      "./plugins/withCleartextTraffic",
+      "./plugins/withPodDeploymentTarget",
+      "./plugins/withSceneLifecycle"
     ]
   }
 }
