@@ -198,6 +198,20 @@ describe('CallControls', () => {
     expect(between).toBe(0);
   });
 
+  it('wraps onto a second row rather than pushing the end buttons off a narrow screen', async () => {
+    // Five controls need ~410 pt at the default text size, more than a
+    // 375-pt iPhone; React Native children don't shrink (flexShrink 0), so a
+    // single row overflows and Yoga centres it past both edges.
+    audio.__state.pickerAvailable = true;
+    await render(<CallControls call={createCall() as never} testID="bar" />);
+    expect(StyleSheet.flatten(screen.getByTestId('bar').props.style)).toMatchObject({
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      rowGap: expect.any(Number)
+    });
+  });
+
   it('leaves the output button out where it is not, or when asked', async () => {
     await render(<CallControls call={createCall() as never} />);
     expect(screen.queryByTestId('sw-route-picker')).toBeNull();

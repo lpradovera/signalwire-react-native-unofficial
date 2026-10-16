@@ -20,7 +20,10 @@ export interface CallControlsProps {
    * Show the system audio output button, iOS's own menu of the phone, the
    * speaker and each connected headset or car. Default: `showAudioRoute`, so
    * an app that hides audio routing doesn't get it either. It appears only on
-   * iOS, in an app built with this package's native code.
+   * iOS, in an app built with this package's native code, and with
+   * react-native-incall-manager's iOS audio routes (the upstream change, or
+   * the patch in `@signalwire/react-native`'s repository, `docs/patches/`);
+   * released incall-manager through 4.3.0 shows nothing.
    */
   showRoutePicker?: boolean;
   /** Called once the user has hung up, for navigating away. Always fires,
@@ -54,7 +57,7 @@ export function CallControls({
     <View
       testID={testID}
       accessibilityRole="toolbar"
-      style={[styles.bar, { gap: theme.spacing.sm, padding: theme.spacing.md }, style]}
+      style={[styles.bar, { columnGap: theme.spacing.sm, rowGap: theme.spacing.sm, padding: theme.spacing.md }, style]}
     >
       <ControlButton
         testID="sw-mute"
@@ -125,5 +128,8 @@ const ROUTE_LABELS: Record<AudioRoute, string> = {
 };
 
 const styles = StyleSheet.create({
-  bar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }
+  // Wraps: with the output button the row needs about 410 pt at the default
+  // text size, more than most iPhones, and children don't shrink, so one row
+  // would push Mute and End off both edges (more so at large Dynamic Type).
+  bar: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }
 });
