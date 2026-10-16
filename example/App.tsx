@@ -8,6 +8,7 @@ import { CallScreen } from './src/screens/CallScreen';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { useBridgeAnswer } from './src/useBridgeAnswer';
+import { useCallBack } from './src/useCallBack';
 import { SUBSCRIBER_REFERENCE } from './src/subscriber';
 import { useDeviceRegistration } from './src/useDeviceRegistration';
 import { useServerToken } from './src/useServerToken';
@@ -21,6 +22,8 @@ function Shell(): React.JSX.Element {
   useDeviceRegistration(SUBSCRIBER_REFERENCE);
   // Answering a parked-caller push means dialling, not answering — see the hook.
   useBridgeAnswer(setActiveCall);
+  // A tap in Recents, or "Hey Siri, call back": dial it.
+  useCallBack(setActiveCall);
 
   // A CallKit Accept answers the call — audio and all — without touching
   // React. Subscribe to the registry so a native answer also brings up the

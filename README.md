@@ -364,6 +364,11 @@ void getCallKit().setup({ appName: 'My App', supportsVideo: true });
 <SignalWireProvider credentialProvider={credentials} callKit>
 ```
 
+Calls appear in the Phone app's Recents. To call back from there, or from
+Siri, dial what `getCallKit().startCallRequested$` emits (`handle`,
+`displayName`, `video`); the Expo plugin generates the native forwarder it
+needs. See [native setup](docs/native-setup.md#ios-calling-back-from-recents-and-siri).
+
 Then, from your own push handler:
 
 ```ts
