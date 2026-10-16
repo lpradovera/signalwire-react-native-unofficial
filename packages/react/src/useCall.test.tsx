@@ -196,17 +196,29 @@ describe('useCall', () => {
     const { getByTestId, rerender } = render(<Probe call={call} />);
     expect(getByTestId('status').textContent).toBe('ringing');
 
-    // Simulate teardown: every getter now throws, as the real SDK's do.
-    const dead = new Proxy(call, {
-      get(target, prop) {
-        if (prop === 'hangup' || prop === 'toggleHold' || prop === 'sendDigits') {
-          return Reflect.get(target, prop);
+    // Simulate teardown: every getter of the same call object now throws, as
+    // the real SDK's do.
+    for (const key of [
+      'status$',
+      'status',
+      'participants$',
+      'participants',
+      'self$',
+      'self',
+      'localStream$',
+      'localStream',
+      'remoteStream$',
+      'remoteStream',
+      'errors$'
+    ]) {
+      Object.defineProperty(call, key, {
+        get() {
+          throw new Error('Dependency Main peer connection not found');
         }
-        throw new Error('Dependency Main peer connection not found');
-      }
-    });
+      });
+    }
 
-    expect(() => rerender(<Probe call={dead as never} />)).not.toThrow();
+    expect(() => rerender(<Probe call={call} />)).not.toThrow();
     // Last-known state survives — the snapshot outlives the getters. Resetting
     // to 'new' mid-teardown would flash a bogus state; a crash is worse still.
     expect(getByTestId('status').textContent).toBe('ringing');

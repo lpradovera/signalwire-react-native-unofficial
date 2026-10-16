@@ -11,6 +11,7 @@ import React, { useContext } from 'react';
 import { installFakeFetch, options, quietSdk, server, tick, token } from '../jest/realSdk';
 import { SignalWireContext, SignalWireProvider } from './SignalWireProvider';
 import { useIncomingCalls } from './useIncomingCalls';
+import { useObservable } from './useObservable';
 import { useSignalWire } from './useSignalWire';
 
 jest.mock('@signalwire/js', () => jest.requireActual('../jest/realSdk').sdk);
@@ -229,6 +230,32 @@ describe('useIncomingCalls', () => {
     });
 
     expect(screen.getByTestId('incoming').textContent).toBe('1');
+    view.unmount();
+  });
+});
+
+describe('useObservable across a change of source', () => {
+  it("does not carry one real client's error over to another's errors$", async () => {
+    const { sdk } = jest.requireActual('../jest/realSdk') as typeof import('../jest/realSdk');
+    const offline = { ...options, skipConnection: true };
+    const failing = new sdk.SignalWire(
+      { authenticate: async () => Promise.reject(new Error('bad token')) },
+      offline
+    );
+    const healthy = new sdk.SignalWire({ authenticate: async () => ({ token }) }, offline);
+
+    function LastError({ client }: { client: typeof failing }): React.JSX.Element {
+      const error = useObservable<Error | null>(client.errors$, null);
+      return <span data-testid="error">{error?.message ?? 'none'}</span>;
+    }
+
+    const view = render(<LastError client={failing} />);
+    expect(await waitUntil(() => screen.getByTestId('error').textContent === 'bad token')).toBe(true);
+
+    view.rerender(<LastError client={healthy} />);
+    await settle(50);
+
+    expect(screen.getByTestId('error').textContent).toBe('none');
     view.unmount();
   });
 });
