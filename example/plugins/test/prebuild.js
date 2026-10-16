@@ -81,4 +81,4 @@ function count(text, needle) {
   return text.split(needle).length - 1;
 }
 
-module.exports = { FIXTURE, appDelegatePlugin, count, makeProject, prebuild, removeProjects };
+module.exports = { appDelegatePlugin, count, makeProject, prebuild, removeProjects };

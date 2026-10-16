@@ -247,11 +247,6 @@ const SCENE_DELEGATE = `class SceneDelegate: UIResponder, UIWindowSceneDelegate 
   }
 }`;
 
-// What earlier versions of this plugin wrote: an untagged launch line, and the
-// SceneDelegate as the last thing in the file.
-const PREVIOUS_LAUNCH_LINE = /^[ \t]*\/\/ withSceneLifecycle: watch for the first screen\n[ \t]*SceneDelegate\.watchForContent\(\)\n/m;
-const PREVIOUS_SCENE_DELEGATE = /\n\/\/ withSceneLifecycle: SceneDelegate\nclass SceneDelegate\b[\s\S]*?\n\}\n/;
-
 // The template's `factory.startReactNative(...)` call, to its closing parenthesis at the end of a line.
 const START_CALL = /^([ \t]*)factory\.startReactNative\([\s\S]*?\)[ \t]*$/m;
 const START_BLOCK = new RegExp(
@@ -290,7 +285,6 @@ function wrapStart(contents) {
 }
 
 function addSceneDelegate(contents) {
-  contents = contents.replace(PREVIOUS_LAUNCH_LINE, '').replace(PREVIOUS_SCENE_DELEGATE, '');
   contents = wrapStart(contents);
   return mergeContents({
     src: contents,

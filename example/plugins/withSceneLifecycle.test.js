@@ -145,18 +145,6 @@ test('changed generated code reaches an existing ios/ without --clean', async ()
   assert.equal(two.appDelegate, one.appDelegate);
 });
 
-test("replaces the previous version's launch line and SceneDelegate", async () => {
-  const legacy = fs.readFileSync(path.join(__dirname, '__fixtures__', 'legacy-12abf23', 'AppDelegate.swift'), 'utf8');
-  const fresh = await prebuild(makeProject('fresh'), [withSceneLifecycle]);
-  const { appDelegate } = await prebuild(makeProject('legacy', { 'HelloWorld/AppDelegate.swift': () => legacy }), [
-    withSceneLifecycle
-  ]);
-  assert.ok(!appDelegate.includes('watchForContent()\n    window ='));
-  assert.ok(!appDelegate.includes('// withSceneLifecycle: SceneDelegate'));
-  assert.equal(count(appDelegate, 'class SceneDelegate:'), 1);
-  assert.equal(appDelegate, fresh.appDelegate);
-});
-
 test('fails with a message when the AppDelegate has no React Native start to hand over', async () => {
   const root = makeProject('no-start', {
     'HelloWorld/AppDelegate.swift': (contents) => contents.replace(/factory\.startReactNative\([\s\S]*?\)\n/, '')
