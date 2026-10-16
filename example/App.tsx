@@ -16,20 +16,27 @@ import { HomeScreen } from './src/screens/HomeScreen';
 import { useBridgeAnswer } from './src/useBridgeAnswer';
 import { useCallBack } from './src/useCallBack';
 import { useBridgeDecline } from './src/useBridgeDecline';
-import { SUBSCRIBER_REFERENCE } from './src/subscriber';
-import { fetchServerToken } from './src/serverToken';
+import { fetchServerToken, useServerReference } from './src/fetchServerToken';
 import { useDeviceRegistration } from './src/useDeviceRegistration';
 
 import type { Call, CredentialProvider } from '@signalwire/js';
 
-function Shell(): React.JSX.Element {
+/** A pasted subscriber token, and the subscriber it was minted for when known. */
+interface Credentials {
+  token: string;
+  reference: string | null;
+}
+
+function Shell({ reference }: { reference: string | null }): React.JSX.Element {
   const { isConnected, connect, disconnect } = useSignalWire();
   const [activeCall, setActiveCall] = useState<Call | null>(null);
   // Set by the Disconnect button: the SDK does not reconnect after an explicit
   // disconnect, so this offers Connect instead of "Connecting…" forever.
   const [disconnected, setDisconnected] = useState(false);
-  // Must match the subscriber reference the token was minted for.
-  useDeviceRegistration(SUBSCRIBER_REFERENCE);
+  // The subscriber the signed-in token was minted for: the server's answer,
+  // or what was entered beside a pasted token. A build-time constant here
+  // registered a pasted token's device under another subscriber.
+  useDeviceRegistration(reference);
   // Answering a parked-caller push means dialling, not answering — see the hook.
   useBridgeAnswer(setActiveCall);
   // A tap in Recents, or "Hey Siri, call back": dial it.
@@ -81,8 +88,14 @@ function Shell(): React.JSX.Element {
   );
 }
 
+/** The fetchToken path: the server says whose token it minted. */
+function ServerShell(): React.JSX.Element {
+  return <Shell reference={useServerReference()} />;
+}
+
 export default function App(): React.JSX.Element {
-  const [token, setToken] = useState<string | null>(null);
+  const [credentials, setCredentials] = useState<Credentials | null>(null);
+  const token = credentials?.token;
 
   // A pasted token: a plain credentialProvider, never renewed. Memoized: a
   // new identity tears down the client and rebuilds it.
@@ -98,7 +111,7 @@ export default function App(): React.JSX.Element {
       <SafeAreaProvider>
         <SafeAreaView style={styles.root}>
           <SignalWireProvider fetchToken={fetchServerToken} callKit platform={{ netInfo: true }}>
-            <Shell />
+            <ServerShell />
           </SignalWireProvider>
           {/* Last in the root: the incoming-call sheet draws here, not in a Modal. */}
           <CallOverlayHost />
@@ -111,7 +124,7 @@ export default function App(): React.JSX.Element {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.root}>
-          <ConnectScreen onSubmitToken={setToken} />
+          <ConnectScreen onSubmitToken={(pasted, reference) => setCredentials({ token: pasted, reference })} />
         </SafeAreaView>
       </SafeAreaProvider>
     );
@@ -125,7 +138,7 @@ export default function App(): React.JSX.Element {
           callKit
           platform={{ netInfo: true }}
         >
-          <Shell />
+          <Shell reference={credentials?.reference ?? null} />
         </SignalWireProvider>
         {/* Last in the root: the incoming-call sheet draws here, not in a Modal. */}
         <CallOverlayHost />
