@@ -688,11 +688,26 @@ export class CallKeepBridge {
     // A provider reset ends every call and its session, with no deactivation
     // event of its own.
     this.keep(
-      RNCallKeep.addEventListener('didResetProvider', () => {
-        logger.debug('CallKit provider reset');
-        this.setAudioSessionActive(false);
-      })
+      RNCallKeep.addEventListener('didResetProvider', () => this.handleProviderReset())
     );
+  }
+
+  /**
+   * CallKit dropped every call (callservicesd restarted, say) and sends no
+   * endCall action for any of them. Each live entry is ended as a native end
+   * would end it, which hangs up its SDK call; a ringing push is turned down.
+   * Left in place, an entry outlived its call: the next call found the
+   * session still started for it, and ringing-push consumers still saw it.
+   */
+  private handleProviderReset(): void {
+    logger.debug('CallKit provider reset; ending every call');
+    for (const entry of this.registry.entries) {
+      const rejectedPush = entry.state === 'pending-push' && entry.intent === 'reject';
+      if (entry.state !== 'ended' && !rejectedPush) {
+        this.handleEndCall(entry.uuid);
+      }
+    }
+    this.stopAudio();
   }
 
   private setAudioSessionActive(active: boolean): void {

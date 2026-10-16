@@ -170,6 +170,11 @@
   being dropped.
 - `CallKeepBridge.destroy()` removes only the bridge's own callkeep handlers,
   not every handler of each event type in the app.
+- A CallKit provider reset (callservicesd restarting, say) ends every live
+  call as a native end would: its SDK call is hung up, a ringing push is
+  turned down, and the audio session is stopped. CallKit sends no endCall
+  action for the calls it drops, so before this they stayed live in the
+  registry and the next call found the session still started for them.
 
 ### CallKit audio belongs to its call
 
