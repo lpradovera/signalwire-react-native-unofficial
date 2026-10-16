@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### answered$ and finished calls
+
+- `answered$` hands a call answered in the native UI while nobody was
+  subscribed to the first subscriber, if the call is still live. On a cold
+  start the buffered answer runs as soon as the SDK call fuses, which can be
+  before the app's call screen subscribes.
+- An `answered$` subscriber that ends the call it was handed (with
+  `registry.endCall()`) is no longer undone: the registry wrote back a stale
+  copy of the entry after the emission, which made the ended call live again
+  and started its audio.
+- The registry keeps the last 10 ended entries instead of every call the
+  process ever handled, each holding its SDK call.
+
+### Pushed calls: UUID case, duplicates, one dial per answer, declines, end reasons
+
+- A pushed call whose UUID is upper-case (the native hook's own
+  `[[NSUUID UUID] UUIDString]` when the payload has no `uuid`, or a backend
+  that sends one) works: callkeep reports every CallKit action lower-cased,
+  and the registry now keys on the lower-case UUID, so answer, end, hold,
+  DTMF and mute find the call.
+- A push for a call the registry already has (its SDK invite arrived first)
+  shows no second native call; a PushKit display of such a call is ended at
+  once as a duplicate.
+- One answer places one call: `answerRequested$` delivers each answer once
+  (replayed only to the first subscriber when none was there), answering
+  twice asks once, `bindCall()` refuses a second call for an entry that has
+  one, and a bridge dial whose entry ended or already has its call is hung
+  up instead of being reported as a new outgoing call.
+- The example's `useBridgeAnswer` subscribes once and reads `dial` and
+  `onCallStarted` when it uses them. Keyed on `dial`, which changes when the
+  provider creates its client, it subscribed twice on a cold start, and with
+  each answer delivered once the copy that received it held the `dial` of a
+  client that did not exist yet: it failed and ended the call the user had
+  answered.
+- New `CallRegistry.rejectRequested$`: a decline of a push with no SDK call
+  (the parked-caller flow), so the app can tell its server. The example
+  posts it to the support server's `POST /swml/decline`.
+- End reasons from callkeep's per-platform table: a missed push is
+  UNANSWERED on iOS (callkeep's MISSED is remoteEnded there) and MISSED on
+  Android; `registry.endCall(uuid, 'failed')` and an answered push that
+  never gets its call end as FAILED; a declined push is ended at once
+  through `rejectCall` instead of ringing until the deadline and being
+  reported missed.
+- `setup({ fusionTimeoutMs })` takes effect (it was dropped); the default
+  is 45 s, not the 20 s the JSDoc said.
+- An empty caller name (a push's `from_name: ""`, an empty
+  `caller_id_name`) is no name: the call is shown by its number, and a call
+  with no name at all is too, instead of 'Unknown caller'.
+
 ### CallKit audio belongs to its call
 
 - The audio session belongs to the call it was started for. Another call

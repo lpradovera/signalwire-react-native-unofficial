@@ -31,10 +31,17 @@ async function waitFor(ready: () => boolean, timeoutMs: number): Promise<void> {
 export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
   const { dial, isConnected } = useSignalWire();
 
-  // Read through a ref so the effect does not re-subscribe when the
-  // connection flips, which would drop a replayed answer on the floor.
+  // Read through refs so the effect subscribes once. Each answer is handed to
+  // one subscriber, and `dial` changes identity when the provider creates its
+  // client: an effect keyed on it re-subscribed on a cold start, and the first
+  // copy, holding the `dial` of a client that did not exist yet, failed and
+  // ended the call the user had answered.
   const connectedRef = useRef(isConnected);
   connectedRef.current = isConnected;
+  const dialRef = useRef(dial);
+  dialRef.current = dial;
+  const onCallStartedRef = useRef(onCallStarted);
+  onCallStartedRef.current = onCallStarted;
 
   useEffect(() => {
     const bridge = getCallKit();
@@ -66,7 +73,7 @@ export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
           }
           if (!connectedRef.current) {
             console.warn('SDK never connected; cannot bridge');
-            bridge.registry.endCall(entry.uuid);
+            bridge.registry.endCall(entry.uuid, 'failed');
             return;
           }
           // The user may have ended the call in CallKit while we waited.
@@ -82,7 +89,7 @@ export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
 
           // Audio only: an SDP answer cannot introduce an m-line the offer
           // lacks, and this destination is a voice bridge.
-          const call = await dial(`${address}?bridgeToken=${encodeURIComponent(token)}`, {
+          const call = await dialRef.current(`${address}?bridgeToken=${encodeURIComponent(token)}`, {
             audio: true,
             video: false
           }).finally(() => bridge.endBridgeDial());
@@ -97,16 +104,16 @@ export function useBridgeAnswer(onCallStarted: (call: Call) => void): void {
             return;
           }
 
-          onCallStarted(call);
+          onCallStartedRef.current(call);
         } catch (error) {
           console.warn('Bridge dial failed:', (error as Error).message);
           // Ends the native entry so CallKit does not keep ringing for a call
-          // that will never connect.
-          bridge.registry.endCall(entry.uuid);
+          // that will never connect, as a failed call.
+          bridge.registry.endCall(entry.uuid, 'failed');
         }
       })();
     });
 
     return () => subscription.unsubscribe();
-  }, [dial, onCallStarted]);
+  }, []);
 }

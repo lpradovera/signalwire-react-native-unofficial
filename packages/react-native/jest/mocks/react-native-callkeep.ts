@@ -21,14 +21,22 @@ const RNCallKeep = {
   __reset: () => listeners.clear()
 };
 
+/**
+ * callkeep 4.3.16's table (index.js), which differs per platform. Read at
+ * access time from the test's mocked Platform; callkeep reads it at import.
+ */
 export const CONSTANTS = {
-  END_CALL_REASONS: {
-    FAILED: 1,
-    REMOTE_ENDED: 2,
-    UNANSWERED: 3,
-    ANSWERED_ELSEWHERE: 4,
-    DECLINED_ELSEWHERE: 5,
-    MISSED: 6
+  get END_CALL_REASONS() {
+    const { Platform } = require('react-native') as { Platform?: { OS?: string } };
+    const isIOS = Platform?.OS === 'ios';
+    return {
+      FAILED: 1,
+      REMOTE_ENDED: 2,
+      UNANSWERED: 3,
+      ANSWERED_ELSEWHERE: 4,
+      DECLINED_ELSEWHERE: isIOS ? 5 : 2,
+      MISSED: isIOS ? 2 : 6
+    };
   }
 };
 
