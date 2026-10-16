@@ -33,7 +33,6 @@ export const VOIP_PUSH_SOURCE = `//
 //
 
 #import <Foundation/Foundation.h>
-#import <objc/runtime.h>
 #import <PushKit/PushKit.h>
 #import <UIKit/UIKit.h>
 
@@ -62,6 +61,25 @@ static NSString *SWCallUUID(id value) {
   NSUUID *parsed = string != nil ? [[NSUUID alloc] initWithUUIDString:string] : nil;
   return [(parsed ?: [NSUUID UUID]).UUIDString lowercaseString];
 }
+
+// The token and the pending calls are written on PushKit's queue (main) and
+// read on React Native's module queue. Every access takes this one lock: an
+// unsynchronised read can be handed an object the other thread is releasing.
+static NSObject *SWCacheLock(void) {
+  static NSObject *lock = nil;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    lock = [NSObject new];
+  });
+  return lock;
+}
+
+static NSString *sCachedToken = nil;
+static NSMutableArray<NSDictionary *> *sPendingCalls = nil;
+
+// More unread pushes than this means nothing is reading them (an app that
+// never runs getCallKit().setup()); the oldest are dropped first.
+static const NSUInteger SWMaxPendingCalls = 8;
 
 @interface SignalWireVoipPushDelegate : NSObject <PKPushRegistryDelegate>
 @property (nonatomic, strong) PKPushRegistry *registry;
@@ -92,11 +110,19 @@ static NSString *SWCallUUID(id value) {
 }
 
 + (NSString *)cachedToken {
-  return objc_getAssociatedObject(self, @selector(cachedToken));
+  @synchronized (SWCacheLock()) {
+    return sCachedToken;
+  }
+}
+
++ (void)setCachedToken:(NSString *)token {
+  @synchronized (SWCacheLock()) {
+    sCachedToken = [token copy];
+  }
 }
 
 /**
- * The last push, kept for JavaScript that did not exist when it arrived.
+ * The pushes JavaScript has not taken yet, oldest first.
  *
  * callkeep reports the incoming call to CallKit natively, but its
  * didDisplayIncomingCall event is delivered to JavaScript listeners that, on
@@ -104,17 +130,37 @@ static NSString *SWCallUUID(id value) {
  * not fire on iOS here. The registry therefore had no entry, and the user's
  * answer arrived with nothing to apply it to. This is the same problem the
  * token cache solves, and the same solution.
+ *
+ * One entry per call, not one slot: a second push inside the JS start-up
+ * window (call waiting) would otherwise replace the first, whose answer then
+ * reaches no registry entry while CallKit shows it connected.
  */
-+ (NSDictionary *)cachedCall {
-  return objc_getAssociatedObject(self, @selector(cachedCall));
++ (NSArray<NSDictionary *> *)pendingCalls {
+  @synchronized (SWCacheLock()) {
+    return sPendingCalls != nil ? [sPendingCalls copy] : @[];
+  }
 }
 
-+ (void)setCachedCall:(NSDictionary *)call {
-  objc_setAssociatedObject(self, @selector(cachedCall), call, OBJC_ASSOCIATION_COPY_NONATOMIC);
++ (void)addPendingCall:(NSDictionary *)call {
+  @synchronized (SWCacheLock()) {
+    if (sPendingCalls == nil) {
+      sPendingCalls = [NSMutableArray array];
+    }
+    [self removePendingCall:call[@"uuid"]];
+    [sPendingCalls addObject:[call copy]];
+    while (sPendingCalls.count > SWMaxPendingCalls) {
+      [sPendingCalls removeObjectAtIndex:0];
+    }
+  }
 }
 
-+ (void)setCachedToken:(NSString *)token {
-  objc_setAssociatedObject(self, @selector(cachedToken), token, OBJC_ASSOCIATION_COPY_NONATOMIC);
++ (void)removePendingCall:(NSString *)uuid {
+  @synchronized (SWCacheLock()) {
+    NSIndexSet *matches = [sPendingCalls indexesOfObjectsPassingTest:^BOOL(NSDictionary *call, NSUInteger idx, BOOL *stop) {
+      return [call[@"uuid"] isEqual:uuid];
+    }];
+    [sPendingCalls removeObjectsAtIndexes:matches];
+  }
 }
 
 - (void)pushRegistry:(PKPushRegistry *)registry
@@ -191,7 +237,7 @@ static NSString *SWCallUUID(id value) {
   pending[@"callId"] = callId;
   pending[@"handle"] = handle;
   pending[@"callerName"] = callerName;
-  [SignalWireVoipPushDelegate setCachedCall:pending];
+  [SignalWireVoipPushDelegate addPendingCall:pending];
 
   // Reported unconditionally, even when the payload is malformed: iOS kills an
   // app that takes a VoIP push without reporting a call, and a call that ends
@@ -261,18 +307,19 @@ RCT_EXPORT_METHOD(getToken
   resolve([SignalWireVoipPushDelegate cachedToken]);
 }
 
-/** The last push, so a cold-started app can rebuild the call it woke for. */
-RCT_EXPORT_METHOD(getPendingCall
+/** The pushes JavaScript has not taken, so a cold-started app can rebuild the calls it woke for. */
+RCT_EXPORT_METHOD(getPendingCalls
                   : (RCTPromiseResolveBlock)resolve reject
                   : (RCTPromiseRejectBlock)reject) {
-  resolve([SignalWireVoipPushDelegate cachedCall]);
+  resolve([SignalWireVoipPushDelegate pendingCalls]);
 }
 
-/** Clears it once JavaScript has taken it, so it is not adopted twice. */
-RCT_EXPORT_METHOD(clearPendingCall
+/** Forgets one once JavaScript has taken it, so it is not adopted twice. */
+RCT_EXPORT_METHOD(forgetPendingCall
+                  : (NSString *)uuid resolve
                   : (RCTPromiseResolveBlock)resolve reject
                   : (RCTPromiseRejectBlock)reject) {
-  [SignalWireVoipPushDelegate setCachedCall:nil];
+  [SignalWireVoipPushDelegate removePendingCall:uuid];
   resolve(nil);
 }
 

@@ -339,6 +339,31 @@ describe('CallKeepBridge — the fusion tick timer', () => {
     delete nativeModules.SignalWireVoipPush;
   });
 
+  it('adopts every push that arrived before JavaScript ran', async () => {
+    // A second push (call waiting) inside the JS start-up window replaced
+    // the first in a one-slot cache, and the first call's answer then had no
+    // entry to apply to while CallKit showed it connected.
+    const forgetPendingCall = jest.fn(async () => undefined);
+    nativeModules.SignalWireVoipPush = {
+      getToken: async () => 'tok',
+      getPendingCalls: async () => [
+        { uuid: 'first-uuid', callId: 'c-first', handle: '+15550000001', callerName: 'Ada' },
+        { uuid: 'second-uuid', callId: 'c-second', handle: '+15550000002', callerName: 'Grace' }
+      ],
+      forgetPendingCall
+    };
+
+    const fresh = new CallKeepBridge();
+    await fresh.setup({ appName: 'Demo' });
+
+    expect(fresh.registry.entryForUuid('first-uuid')?.expectedCallId).toBe('c-first');
+    expect(fresh.registry.entryForUuid('second-uuid')?.expectedCallId).toBe('c-second');
+    expect(forgetPendingCall).toHaveBeenCalledWith('first-uuid');
+    expect(forgetPendingCall).toHaveBeenCalledWith('second-uuid');
+    fresh.destroy();
+    delete nativeModules.SignalWireVoipPush;
+  });
+
   it('does not adopt anything when the app was not woken by a push', async () => {
     nativeModules.SignalWireVoipPush = {
       getToken: async () => 'tok',

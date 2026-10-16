@@ -76,4 +76,38 @@ describe('generated SignalWireVoipPush.m', () => {
       expect(body).toContain('setCachedToken:nil');
     });
   });
+
+  describe('the cache shared with the module queue (plugins-16)', () => {
+    it('uses no non-atomic associated objects', () => {
+      expect(VOIP_PUSH_SOURCE).not.toContain('NONATOMIC');
+    });
+
+    it('guards every read and write of the cache with one lock', () => {
+      for (const selector of [
+        '+ (NSString *)cachedToken',
+        '+ (void)setCachedToken:',
+        '+ (NSArray<NSDictionary *> *)pendingCalls',
+        '+ (void)addPendingCall:',
+        '+ (void)removePendingCall:'
+      ]) {
+        expect(methodBody(VOIP_PUSH_SOURCE, selector)).toContain('@synchronized (SWCacheLock())');
+      }
+    });
+  });
+
+  describe('more than one push before JavaScript runs (sweep-native-2)', () => {
+    it('keeps every pending call instead of one slot', () => {
+      expect(pushHandler()).toContain('addPendingCall:');
+      expect(VOIP_PUSH_SOURCE).not.toContain('setCachedCall');
+    });
+
+    it('lets JavaScript read them all and forget them one by one', () => {
+      expect(VOIP_PUSH_SOURCE).toMatch(/RCT_EXPORT_METHOD\(getPendingCalls\b/);
+      expect(VOIP_PUSH_SOURCE).toMatch(/RCT_EXPORT_METHOD\(forgetPendingCall\s*:\s*\(NSString \*\)uuid/);
+    });
+
+    it('bounds the cache, so an app that never reads it does not grow it forever', () => {
+      expect(methodBody(VOIP_PUSH_SOURCE, '+ (void)addPendingCall:')).toContain('SWMaxPendingCalls');
+    });
+  });
 });

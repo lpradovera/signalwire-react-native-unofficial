@@ -5,9 +5,10 @@ import { EMPTY, of, Subject, switchMap, takeUntil } from 'rxjs';
 import { getAudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
-import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
+import { forgetPendingVoipCall, getPendingVoipCalls } from '../push/voipToken';
 import { CallRegistry } from './CallRegistry';
 
+import type { PendingCall } from '../push/voipToken';
 import type { CallRegistryHost, PushPayload } from './types';
 
 /** The `didDisplayIncomingCall` payload, which callkeep types loosely. */
@@ -190,7 +191,9 @@ export class CallKeepBridge {
     RNCallKeep.setAvailable(true);
     this.registerNativeListeners();
     this.isSetup = true;
-    await this.adoptPendingNativeCall();
+    for (const pending of await getPendingVoipCalls()) {
+      await this.adoptPendingNativeCall(pending);
+    }
     logger.debug('CallKit ready');
   }
 
@@ -417,11 +420,7 @@ export class CallKeepBridge {
    * nothing: no bridge is dialled and the caller waits on a parked leg until
    * it times out.
    */
-  private async adoptPendingNativeCall(): Promise<void> {
-    const pending = await getPendingVoipCall();
-    if (!pending?.uuid) {
-      return;
-    }
+  private async adoptPendingNativeCall(pending: PendingCall): Promise<void> {
     if (this.registry.entryForUuid(pending.uuid)) {
       return;
     }
@@ -443,7 +442,7 @@ export class CallKeepBridge {
       data: Object.keys(data).length > 0 ? data : undefined
     });
     this.ensureTicking();
-    await clearPendingVoipCall();
+    await forgetPendingVoipCall(uuid);
   }
 
   /** Replays the events callkeep buffered while JavaScript was starting. */
