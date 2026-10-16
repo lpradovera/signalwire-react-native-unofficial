@@ -107,6 +107,28 @@ prebuild('android');
 prebuild('ios');
 check(IOS_PLIST, readFileSync(join(example, IOS_PLIST), 'utf8'), EXPECTED_PLIST_ENTRIES);
 
+// App Transport Security, which app.config.js extends with a tailnet
+// exception. Expo lays ios.infoPlist over the template's Info.plist one level
+// deep, so an NSAppTransportSecurity dict there replaces the template's
+// instead of adding to it: the exception once deleted NSAllowsLocalNetworking,
+// and iOS 17+ then refused plain HTTP to a LAN IP (the token server, Metro).
+{
+  const plist = readFileSync(join(example, IOS_PLIST), 'utf8');
+  const ats = [
+    ['NSAllowsArbitraryLoads is false', /<key>NSAllowsArbitraryLoads<\/key>\s*<false\/>/],
+    ['NSAllowsLocalNetworking is true', /<key>NSAllowsLocalNetworking<\/key>\s*<true\/>/],
+    [
+      'the ts.net exception allows insecure HTTP loads',
+      /<key>ts\.net<\/key>\s*<dict>(?:(?!<\/dict>)[\s\S])*<key>NSExceptionAllowsInsecureHTTPLoads<\/key>\s*<true\/>/
+    ]
+  ];
+  for (const [label, pattern] of ats) {
+    if (!pattern.test(plist)) {
+      failures.push(`${IOS_PLIST}: NSAppTransportSecurity: expected ${label}`);
+    }
+  }
+}
+
 // The VoIP hook is native code that only runs if Xcode compiles it. Writing
 // the file is not enough: an unreferenced .m is silently ignored, and the
 // failure shows up much later as "pushes do nothing".
@@ -159,5 +181,6 @@ if (failures.length > 0) {
 console.log(
   `\n✓ ${EXPECTED_ANDROID_PERMISSIONS.length} Android permissions, ` +
     `${EXPECTED_PLIST_ENTRIES.length} iOS Info.plist entries, and the VoIP push ` +
-    `hook (generated and compiled) applied by the plugin.`
+    `hook (generated and compiled) applied by the plugin; App Transport Security ` +
+    `keeps local networking beside the tailnet exception.`
 );

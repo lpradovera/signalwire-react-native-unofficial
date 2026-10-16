@@ -509,38 +509,41 @@ real Hermes runtime in one shot. If it red-screens on startup, capture the stack
 
 ## Reaching the support server from a device
 
-A real device cannot reach the Mac's loopback, and the generated `Info.plist`
-sets `NSAllowsArbitraryLoads=false` with `NSAllowsLocalNetworking=true`. That
-combination decides what actually works:
+A real device cannot reach the Mac's loopback. The generated `Info.plist` keeps
+the template's `NSAllowsArbitraryLoads=false` and `NSAllowsLocalNetworking=true`,
+and `example/app.config.js` adds an `NSExceptionDomains` entry that allows plain
+HTTP to `ts.net` and its subdomains (a development convenience for the example;
+do not copy it into a shipping app). `npm run verify:prebuild` checks all three.
+Together they decide what actually works:
 
 | Route | Works? | Why |
 | --- | --- | --- |
 | `http://localhost:3000` | Simulator only | The device has its own loopback |
 | `http://<LAN IP>:3000` | Yes, same Wi-Fi | Covered by `NSAllowsLocalNetworking`; expect an iOS "allow local network access" prompt on first launch |
-| `http://100.x.y.z:3000` (Tailscale IP) | **No** | Tailscale uses `100.64.0.0/10` (CGNAT), which is not one of the private ranges `NSAllowsLocalNetworking` covers, so ATS blocks it |
-| `https://<host>.<tailnet>.ts.net` | Yes | Real certificate, so plain ATS is satisfied; also avoids the local-network prompt |
+| `http://<host>.<tailnet>.ts.net:3000` | Yes | The `ts.net` exception. This is the route the example is set up for |
+| `http://100.x.y.z:3000` (Tailscale IP) | **No** | Tailscale uses `100.64.0.0/10` (CGNAT), which is not one of the private ranges `NSAllowsLocalNetworking` covers, and a domain exception does not cover an IP address. Use the hostname |
+| `https://<host>.<tailnet>.ts.net` via `tailscale serve` | Should, but see below | A real certificate satisfies ATS without any exception |
 
-The Tailscale route survives changing networks, which matters when the Mac and
-the device are not on one Wi-Fi:
+The Tailscale routes survive changing networks, which matters when the Mac and
+the device are not on one Wi-Fi. Use the tailnet hostname over plain HTTP; the
+server already listens on every interface:
 
 ```bash
-tailscale serve --bg 3000          # proxies https://<host>.<tailnet>.ts.net -> localhost:3000
-tailscale serve status
-tailscale serve --https=443 off    # when finished
+# example/.env — EXPO_PUBLIC_ is what makes Expo inline it into the bundle
+EXPO_PUBLIC_SW_TOKEN_URL=http://<host>.<tailnet>.ts.net:3000/token
 ```
 
-Then set the app's endpoint, remembering that `EXPO_PUBLIC_` is what makes Expo
-inline it into the bundle:
+Verify from the Mac before blaming the app — a token minted through the tailnet
+name proves the whole chain except the device's own network:
 
 ```bash
-# example/.env
-EXPO_PUBLIC_SW_TOKEN_URL=https://<host>.<tailnet>.ts.net/token
-```
-
-Verify from the Mac before blaming the app — a token minted over HTTPS proves
-the whole chain except the device's own network:
-
-```bash
-curl -X POST https://<host>.<tailnet>.ts.net/token \
+curl -X POST http://<host>.<tailnet>.ts.net:3000/token \
   -H 'content-type: application/json' -d '{}'
 ```
+
+HTTPS through `tailscale serve --bg 3000` needs no exception, and it is what
+this section used to recommend. On the iPad the example was developed on, every
+handshake failed with `errSSLRecordOverflow` while the same URL gave curl on
+the Mac a clean 200, which is why `app.config.js` adds the exception instead
+(its comment has the history). If you try it, `tailscale serve status` shows
+the proxy, and `tailscale serve --https=443 off` removes it.
