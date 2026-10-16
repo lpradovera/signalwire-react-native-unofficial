@@ -12,6 +12,10 @@ const listeners = new Map<string, Set<Handler>>();
 let legacyApi = false;
 const legacyHandlers = new Map<string, { remove(): void }>();
 
+/** The event the SignalWire callkeep fork (4.4.0-signalwire) adds; 4.3.16 throws for it. */
+const FORK_EVENTS = new Set(['didFailCallAction']);
+let forkEvents = true;
+
 /** react-native-callkeep 4.3.16's event names (actions.js); any other name throws there. */
 const KNOWN_EVENTS = new Set([
   'didReceiveStartCallAction',
@@ -50,7 +54,7 @@ const RNCallKeep = {
   setOnHold: jest.fn(),
   /** Like callkeep 4.3.16: returns an EventListener whose remove() drops this handler only. */
   addEventListener: jest.fn((event: string, handler: Handler) => {
-    if (!KNOWN_EVENTS.has(event)) {
+    if (!KNOWN_EVENTS.has(event) && !(forkEvents && FORK_EVENTS.has(event))) {
       // What callkeep does: `listeners[type]` is undefined, and calling it throws.
       throw new TypeError(`listeners[type] is not a function (${event})`);
     }
@@ -81,6 +85,10 @@ const RNCallKeep = {
       handler(payload);
     }
   },
+  /** Test helper — behave like stock callkeep 4.3.16, without the fork's events. */
+  __useStockEvents: (): void => {
+    forkEvents = false;
+  },
   /** Test helper — behave like callkeep 4.3.0-4.3.8 (see {@link legacyApi}). */
   __useLegacyApi: (): void => {
     legacyApi = true;
@@ -89,6 +97,7 @@ const RNCallKeep = {
     listeners.clear();
     legacyHandlers.clear();
     legacyApi = false;
+    forkEvents = true;
   }
 };
 

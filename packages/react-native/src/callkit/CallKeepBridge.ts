@@ -124,6 +124,21 @@ interface ConnectionEvent {
 }
 
 /**
+ * callkeep's `didFailCallAction` payload (the SignalWire fork): CallKit refused
+ * a transaction (iOS), or Telecom refused an outgoing connection (Android,
+ * `startCall` only, errorCode `ConnectionRefused`).
+ */
+interface FailedActionEvent {
+  callUUID?: string;
+  action?: string;
+  errorCode?: string;
+  error?: string;
+}
+
+/** Refused actions after which the native side has no call: start, answer and end. */
+const CALL_ACTIONS = new Set(['startCall', 'answerCall', 'endCall']);
+
+/**
  * Runtime permissions the call needs on Android, for this API level.
  *
  * callkeep requests none of them with `selfManaged: true` (its `_setupAndroid`
@@ -881,6 +896,8 @@ export class CallKeepBridge {
         this.setAudioSessionActive(false);
       } else if (event?.name === 'RNCallKeepDidReceiveStartCallAction') {
         this.handleStartCallAction(event.data as StartCallEvent);
+      } else if (event?.name === 'RNCallKeepDidFailCallAction') {
+        this.handleCallActionFailed(event.data as FailedActionEvent);
       }
     }
     // callkeep keeps this buffer for the life of the process and sends it
@@ -1111,6 +1128,44 @@ export class CallKeepBridge {
     this.listen<ConnectionEvent>('createIncomingConnectionFailed', (event) =>
       this.handleConnectionFailed(event)
     );
+
+    // The SignalWire callkeep fork only; stock callkeep throws for an event
+    // name it doesn't know.
+    try {
+      this.listen<FailedActionEvent>('didFailCallAction', (event) => this.handleCallActionFailed(event));
+    } catch (error) {
+      logger.debug('callkeep has no didFailCallAction (stock callkeep):', error);
+    }
+  }
+
+  /**
+   * CallKit refused a call action the bridge asked for, or Telecom refused to
+   * start a call. After a refused start, answer or end, or any refusal for a
+   * call CallKit no longer knows (UnknownCallUUID), the native side has no
+   * call: the entry is dropped and its SDK call hung up, which would
+   * otherwise run on with no native UI and nothing to end it from. A refused
+   * hold, mute or DTMF for a call CallKit still has is only logged.
+   */
+  private handleCallActionFailed(event: FailedActionEvent): void {
+    const uuid = typeof event?.callUUID === 'string' ? event.callUUID : '';
+    const action = event?.action ?? 'unknown';
+    const errorCode = event?.errorCode ?? 'Unknown';
+    const entry = uuid ? this.registry.entryForUuid(uuid) : undefined;
+    if (!entry || !this.registry.isLive(entry.uuid)) {
+      logger.debug(`Native ${action} refused (${errorCode}) for ${uuid || 'no call'}; no live call`);
+      return;
+    }
+    const lost = CALL_ACTIONS.has(action) || errorCode === 'UnknownCallUUID';
+    logger.warn(
+      `${Platform.OS === 'ios' ? 'CallKit' : 'Telecom'} refused ${action} for call ${entry.uuid} (${errorCode})` +
+        (lost ? '; ending the call' : '')
+    );
+    if (!lost) {
+      return;
+    }
+    this.refused.add(entry.uuid);
+    this.withdrawNotification(entry.uuid);
+    this.registry.endCall(entry.uuid, action === 'endCall' ? 'local' : 'failed');
   }
 
   private handleStartCallAction(event: StartCallEvent): void {
