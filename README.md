@@ -8,7 +8,8 @@ Supplies the platform adapters the browser-oriented SDK needs on mobile, an
 idiomatic React API over its RxJS observables, and native call UI through
 CallKit and ConnectionService.
 
-Supports iOS 13+ and Android 8+, on React Native 0.76+ (bare or Expo).
+Supports iOS 15.1+ and Android 8+, on React Native 0.76+ (bare or Expo). iOS
+15.1 is React Native's own minimum from 0.76 on.
 
 ## What is verified
 
