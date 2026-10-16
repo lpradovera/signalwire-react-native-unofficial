@@ -6,7 +6,7 @@ import type { SignalWirePluginOptions } from './withSignalWire';
 // during a real prebuild. Replace it with a synchronous stand-in that applies
 // the same mutation to `config.ios.infoPlist`, so the plugin's own logic is
 // what gets tested.
-jest.mock('@expo/config-plugins', () => ({
+jest.mock('expo/config-plugins', () => ({
   withInfoPlist: (
     config: Record<string, unknown>,
     action: (c: { modResults: Record<string, unknown> }) => { modResults: Record<string, unknown> }

@@ -25,6 +25,6 @@ export default defineConfig({
     'react-native-incall-manager',
     '@react-native-async-storage/async-storage',
     '@react-native-community/netinfo',
-    '@expo/config-plugins'
+    'expo/config-plugins'
   ]
 });
