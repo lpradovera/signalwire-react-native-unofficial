@@ -287,11 +287,15 @@ range is `>=22.0.0` and, on legacy architecture, `<23`.
    and `FCM_PRIVATE_KEY`. That key can send as your whole project — treat it
    like a password.
 
-> **A wrinkle worth knowing.** Firebase's Expo plugin demands an iOS
-> `GoogleService-Info.plist` whenever it is applied, even for an Android-only
-> setup and even when prebuilding iOS, which uses PushKit and no Firebase at
-> all. Either add an iOS app in Firebase purely to obtain that file, or apply
-> the plugin conditionally, as `example/app.config.js` does.
+> **A wrinkle worth knowing.** Firebase's Expo plugin configures iOS too, and
+> fails an iOS prebuild without a `GoogleService-Info.plist`, even for an
+> Android-only setup and even though iOS uses PushKit and no Firebase at all.
+> Making the plugin conditional on `GOOGLE_SERVICES_JSON` is not enough: that
+> variable is set for the whole environment, so once Android push is set up
+> every iOS prebuild applies the plugin and fails. Apply only the plugin's
+> Android half instead, as `example/plugins/withFirebaseAndroid.js` does (or
+> add an iOS app in Firebase purely to obtain the plist, accepting that the
+> plugin then also configures Firebase in the iOS `AppDelegate`).
 
 ### 2c. Register the token
 

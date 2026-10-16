@@ -8,6 +8,11 @@
  * up. Without it, the placeholder below is used, which is fine for
  * `expo export` and the unit tests but will not sign against a real team.
  *
+ * One value serves as both the iOS bundle identifier and the Android package,
+ * so it must be valid for both: letters, digits and dots, no hyphens (iOS
+ * allows them, Android's package-name check does not) and no underscores (the
+ * reverse).
+ *
  * The value is read at config-evaluation time, so it must be set for
  * `expo prebuild` and `expo run:ios`, not just at runtime. See TESTING.md.
  */
@@ -42,13 +47,15 @@ const TAILNET_ATS_EXCEPTION = {
 module.exports = ({ config }) => {
   const appId = process.env.SW_APP_ID || PLACEHOLDER_APP_ID;
 
-  // Firebase is Android-only here: iOS uses PushKit, not FCM. Adding the
-  // plugin unconditionally makes an iOS prebuild demand a
-  // GoogleService-Info.plist that this app has no use for, so an iOS-only
-  // consumer cannot prebuild at all. Applied only when Android push is
-  // actually configured.
+  // Firebase is Android-only here: iOS uses PushKit, not FCM. Firebase's own
+  // plugin configures iOS as well and fails an iOS prebuild without a
+  // GoogleService-Info.plist, and GOOGLE_SERVICES_JSON is set for the whole
+  // environment rather than per platform, so applying that plugin whenever
+  // the variable is set broke every iOS prebuild once Android push was set
+  // up. withFirebaseAndroid applies only its Android half. Applied only when
+  // Android push is actually configured.
   const plugins = process.env.GOOGLE_SERVICES_JSON
-    ? ['@react-native-firebase/app', ...(config.plugins ?? [])]
+    ? ['./plugins/withFirebaseAndroid', ...(config.plugins ?? [])]
     : (config.plugins ?? []);
 
   return {
