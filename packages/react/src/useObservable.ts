@@ -13,15 +13,6 @@ interface Peeked<T> {
 }
 
 /**
- * Synchronously peeks the current value of a hot observable.
- *
- * A plain BehaviorSubject emits on subscribe, so this captures the real value
- * before React's first paint. The SDK, however, pipes its state observables
- * through `observeOn(asapScheduler)`, which defers even a BehaviorSubject's
- * replay to a microtask — so this reports "nothing emitted" for most SDK
- * observables, and the caller's synchronous getter carries the value instead.
- */
-/**
  * Walks an observable's `source` chain to the object it ultimately reads from.
  *
  * The SDK hands out `subject.asObservable().pipe(observeOn(asapScheduler))`,
@@ -44,6 +35,15 @@ function rootSource(observable$: Observable<unknown> | undefined): unknown {
   return current;
 }
 
+/**
+ * Synchronously peeks the current value of a hot observable.
+ *
+ * A plain BehaviorSubject emits on subscribe, so this captures the real value
+ * before React's first paint. The SDK, however, pipes its state observables
+ * through `observeOn(asapScheduler)`, which defers even a BehaviorSubject's
+ * replay to a microtask — so this reports "nothing emitted" for most SDK
+ * observables, and the caller's synchronous getter carries the value instead.
+ */
 function peek<T>(observable$: Observable<T>): Peeked<T> {
   let value: T | undefined;
   let emitted = false;
