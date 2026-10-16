@@ -2,7 +2,12 @@ import { SignalWireProvider, useSignalWire } from '@signalwire/react-native';
 import { getCallKit } from '@signalwire/react-native/callkit';
 import { CallOverlayHost } from '@signalwire/react-native-ui';
 import React, { useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
+// React Native's own SafeAreaView is iOS-only; on Android 15+ (edge-to-edge is
+// enforced for targetSdk 35+) it applies no insets, so content drew under the
+// status bar and the in-call buttons under the navigation bar, where taps go
+// to the system instead of the app.
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { IncomingCallSheet } from './src/components/IncomingCallSheet';
 import { CallScreen } from './src/screens/CallScreen';
@@ -67,36 +72,42 @@ export default function App(): React.JSX.Element {
   // itself, from launch: a push-woken cold start connects the same way.
   if (fetchServerToken) {
     return (
-      <SafeAreaView style={styles.root}>
-        <SignalWireProvider fetchToken={fetchServerToken} callKit platform={{ netInfo: true }}>
-          <Shell />
-        </SignalWireProvider>
-        {/* Last in the root: the incoming-call sheet draws here, not in a Modal. */}
-        <CallOverlayHost />
-      </SafeAreaView>
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.root}>
+          <SignalWireProvider fetchToken={fetchServerToken} callKit platform={{ netInfo: true }}>
+            <Shell />
+          </SignalWireProvider>
+          {/* Last in the root: the incoming-call sheet draws here, not in a Modal. */}
+          <CallOverlayHost />
+        </SafeAreaView>
+      </SafeAreaProvider>
     );
   }
 
   if (!credentialProvider) {
     return (
-      <SafeAreaView style={styles.root}>
-        <ConnectScreen onSubmitToken={setToken} />
-      </SafeAreaView>
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.root}>
+          <ConnectScreen onSubmitToken={setToken} />
+        </SafeAreaView>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <SafeAreaView style={styles.root}>
-      <SignalWireProvider
-        credentialProvider={credentialProvider}
-        callKit
-        platform={{ netInfo: true }}
-      >
-        <Shell />
-      </SignalWireProvider>
-      {/* Last in the root: the incoming-call sheet draws here, not in a Modal. */}
-      <CallOverlayHost />
-    </SafeAreaView>
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.root}>
+        <SignalWireProvider
+          credentialProvider={credentialProvider}
+          callKit
+          platform={{ netInfo: true }}
+        >
+          <Shell />
+        </SignalWireProvider>
+        {/* Last in the root: the incoming-call sheet draws here, not in a Modal. */}
+        <CallOverlayHost />
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
