@@ -364,6 +364,26 @@ void getCallKit().setup({ appName: 'My App', supportsVideo: true });
 <SignalWireProvider credentialProvider={credentials} callKit>
 ```
 
+Native call UI runs **one call at a time**. While a call is live (a ringing
+push included), `dial()` rejects with `CallInProgressError` before anything
+is placed: CallKit would refuse the second call's start, and callkeep does not
+tell JavaScript, so the call would run with no native UI to end it from.
+Answering a push by dialling a bridge is not refused.
+
+```ts
+import { CallInProgressError } from '@signalwire/react-native';
+
+try {
+  setCall(await dial(destination));
+} catch (error) {
+  if (error instanceof CallInProgressError) {
+    showToast('Hang up the current call first');
+  } else {
+    throw error;
+  }
+}
+```
+
 Then, from your own push handler:
 
 ```ts

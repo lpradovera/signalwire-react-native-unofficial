@@ -17,6 +17,7 @@
  */
 export { CallKeepBridge, getCallKit, resetCallKitForTesting } from './callkit/CallKeepBridge';
 export type { CallKitSetupOptions } from './callkit/CallKeepBridge';
+export { CallInProgressError } from './errors';
 export { CallRegistry } from './callkit/CallRegistry';
 export type {
   CallEntry,

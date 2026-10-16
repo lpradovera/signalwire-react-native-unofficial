@@ -25,3 +25,27 @@ export class PolyfillNotInstalledError extends Error {
     this.name = 'PolyfillNotInstalledError';
   }
 }
+
+/**
+ * Thrown when an outbound call is started while another call is live.
+ *
+ * CallKit is set up for one call at a time (`maximumCallGroups: 1`) and
+ * refuses a second start transaction, but react-native-callkeep only logs
+ * that refusal, so the second call would run with no native call UI and
+ * nothing to end it from. `useSignalWire().dial()` therefore rejects with
+ * this before the SDK places anything, while CallKit is on. Hang up (or wait
+ * for) the live call first. Answering a push by dialling a bridge is not
+ * refused: that call belongs to the entry already on screen.
+ */
+export class CallInProgressError extends Error {
+  constructor(
+    /** The native UUID of the call that is live. */
+    public readonly liveCallUuid: string
+  ) {
+    super(
+      `A call is already in progress (${liveCallUuid}). End it before starting another: ` +
+        'native call UI runs one call at a time.'
+    );
+    this.name = 'CallInProgressError';
+  }
+}

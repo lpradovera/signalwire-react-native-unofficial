@@ -156,6 +156,35 @@ describe('SignalWireProvider observer wiring', () => {
     expect(observer.onOutgoingCall).toHaveBeenCalledWith({ id: 'call-1' }, '/public/room');
   });
 
+  it('lets the observer refuse a dial before the SDK places it', async () => {
+    const refusal = new Error('call in progress');
+    const observer: CallObserver = {
+      beforeOutgoingCall: jest.fn(() => {
+        throw refusal;
+      }),
+      onOutgoingCall: jest.fn()
+    };
+    let dial: ((destination: string) => Promise<unknown>) | undefined;
+
+    function DialProbe(): React.JSX.Element {
+      dial = useSignalWire().dial;
+      return <span>ok</span>;
+    }
+
+    render(
+      <SignalWireProvider credentialProvider={credentialProvider as never} observer={observer}>
+        <DialProbe />
+      </SignalWireProvider>
+    );
+
+    await act(async () => {
+      await expect(dial?.('/public/room')).rejects.toBe(refusal);
+    });
+    expect(observer.beforeOutgoingCall).toHaveBeenCalledWith('/public/room');
+    expect(harness.dial).not.toHaveBeenCalled();
+    expect(observer.onOutgoingCall).not.toHaveBeenCalled();
+  });
+
   it('dials fine with no observer, which is the web case', async () => {
     let dial: ((destination: string) => Promise<unknown>) | undefined;
 
