@@ -56,6 +56,20 @@ function reasonOf(body: string): string {
  * of every incoming call. A connection that errors, closes or receives GOAWAY
  * is dropped and the next push opens a new one.
  */
+/** The `reason` from a GOAWAY frame's debug data, if it carries Apple's JSON. */
+function goawayReason(opaqueData: Buffer | undefined): string | undefined {
+  if (!opaqueData || opaqueData.length === 0) {
+    return undefined;
+  }
+  const text = opaqueData.toString('utf8');
+  try {
+    const parsed = JSON.parse(text) as { reason?: unknown };
+    return typeof parsed.reason === 'string' ? parsed.reason : text.slice(0, 120);
+  } catch {
+    return text.slice(0, 120);
+  }
+}
+
 export class ApnsVoipSender implements PushSender {
   readonly platform = 'ios' as const;
 
@@ -124,8 +138,18 @@ export class ApnsVoipSender implements PushSender {
       }
     });
     session.on('close', forget);
-    session.on('goaway', () => {
+    session.on('goaway', (errorCode: number, _lastStreamId: number, opaqueData?: Buffer) => {
       forget();
+      // Apple puts a JSON reason in the GOAWAY's debug data (e.g. Shutdown,
+      // or the provider-token errors). Requests the frame cut off would
+      // otherwise wait out their timeout and report nothing useful.
+      const reason = goawayReason(opaqueData);
+      const error = new Error(
+        `APNs sent GOAWAY (code ${errorCode}${reason ? `, reason ${reason}` : ''}) before responding`
+      );
+      for (const fail of waiting) {
+        fail(error);
+      }
       session.close();
     });
     // Idle, the connection must not keep the process alive.
@@ -191,7 +215,20 @@ export class ApnsVoipSender implements PushSender {
         request.on('data', (chunk: Buffer) => {
           data += chunk.toString();
         });
-        request.on('end', () => resolve({ status, body: data }));
+        request.on('end', () => {
+          if (status === 0) {
+            // The stream ended (RST_STREAM NO_ERROR, or the connection went)
+            // before APNs sent any response headers: say so, rather than
+            // report a status that was never received.
+            reject(
+              new Error(
+                `APNs closed the stream with no response (RST_STREAM code ${request.rstCode ?? 'unknown'})`
+              )
+            );
+            return;
+          }
+          resolve({ status, body: data });
+        });
         request.on('error', reject);
       });
 
