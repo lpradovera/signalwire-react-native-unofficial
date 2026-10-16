@@ -69,4 +69,11 @@ describe('generated SignalWireVoipPush.m', () => {
       expect(VOIP_PUSH_SOURCE).toMatch(/#if DEBUG\s+NSLog\(@"\[SignalWireVoipPush\] token %@", hex\);/);
     });
   });
+
+  describe('token invalidation (plugins-15)', () => {
+    it('drops the cached token when PushKit invalidates it', () => {
+      const body = methodBody(VOIP_PUSH_SOURCE, 'didInvalidatePushTokenForType:(PKPushType)type');
+      expect(body).toContain('setCachedToken:nil');
+    });
+  });
 });

@@ -141,6 +141,16 @@ static NSString *SWCallUUID(id value) {
                                                     userInfo:@{ @"token": [hex copy] }];
 }
 
+// PushKit's header: "use this method to notify your server not to send push
+// notifications using the matching push token". The cached copy goes, so a
+// later getToken() (a JS reload, a watcher re-run for another user) cannot
+// register the dead token again; the replacement arrives through
+// didUpdatePushCredentials as usual.
+- (void)pushRegistry:(PKPushRegistry *)registry didInvalidatePushTokenForType:(PKPushType)type {
+  [SignalWireVoipPushDelegate setCachedToken:nil];
+  NSLog(@"[SignalWireVoipPush] token invalidated");
+}
+
 /** callkeep hands this dictionary back to JS on didDisplayIncomingCall. */
 - (NSDictionary *)payloadWithCallId:(NSString *)callId extras:(NSDictionary *)extras {
   NSMutableDictionary *result = [NSMutableDictionary dictionaryWithDictionary:extras];
