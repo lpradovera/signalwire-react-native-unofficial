@@ -76,7 +76,7 @@ just a stale ordering.
 | build | Four packages, each `ESM/CJS/DTS ⚡️ Build success` |
 | lint | no output, exit 0 |
 | type-check | no `error TS` lines, across seven workspaces |
-| test | 57 core + 13 react-ui + 167 react-native + 23 react-native-ui = **260**, plus 37 server |
+| test | Every suite passes: a jest summary for each of the four packages (core, react-ui, react-native, react-native-ui) with `Tests: … passed` and nothing failed, then the server's `node:test` summary with `fail 0`. The counts rise with each change, so a different number is not a regression; a failure, a skip or a missing package is |
 | bundle-check | `iOS Bundled … (~1090 modules)`, an `Android Bundled …` line, and a Vite `✓ built in …` |
 
 **Do not treat the Android module count as a gate.** Both platforms export
