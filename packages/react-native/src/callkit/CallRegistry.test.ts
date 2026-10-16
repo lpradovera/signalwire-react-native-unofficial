@@ -455,6 +455,52 @@ describe('CallRegistry — ending', () => {
 
       expect(registry.bindCall(uuid, createCall('bridge-leg') as never)).toBe(false);
     });
+
+    it('refuses to bind a push the user answered and then ended', () => {
+      // The user pressed End in CallKit while the bridge call was being
+      // placed. The entry stays 'pending-push' with a buffered reject (an
+      // inbound call that still arrives must be turned down, not ring again),
+      // but the call is over: binding would bridge the user to the caller with
+      // a live microphone and no native UI.
+      const host = createHost();
+      const registry = new CallRegistry({ host });
+      const uuid = registry.reportIncomingPush({ callId: 'a-leg-sid' });
+      registry.applyIntent(uuid, 'answer');
+      registry.applyIntent(uuid, 'reject');
+
+      expect(registry.bindCall(uuid, createCall('bridge-leg') as never)).toBe(false);
+      expect(registry.entryForUuid(uuid)?.intent).toBe('reject');
+    });
+  });
+
+  describe('isLive', () => {
+    it('is true for a ringing, answered or connected entry', () => {
+      const registry = new CallRegistry({ host: createHost() });
+      const ringing = registry.reportIncomingPush({ callId: 'c1' });
+      const answered = registry.reportIncomingPush({ callId: 'c2' });
+      registry.applyIntent(answered, 'answer');
+      const outbound = registry.attachOutgoingCall(createCall('c3') as never, 'h', 'n');
+
+      expect([ringing, answered, outbound].map((uuid) => registry.isLive(uuid))).toEqual([
+        true,
+        true,
+        true
+      ]);
+    });
+
+    it('is false for an ended entry, an unknown uuid and a push the user ended', () => {
+      const registry = new CallRegistry({ host: createHost() });
+      const ended = registry.reportIncomingPush({ callId: 'c1' });
+      registry.endCall(ended);
+      const rejected = registry.reportIncomingPush({ callId: 'c2' });
+      registry.applyIntent(rejected, 'reject');
+
+      expect([ended, 'unknown', rejected].map((uuid) => registry.isLive(uuid))).toEqual([
+        false,
+        false,
+        false
+      ]);
+    });
   });
 
   it('replays an answer to a subscriber that mounts after it', () => {

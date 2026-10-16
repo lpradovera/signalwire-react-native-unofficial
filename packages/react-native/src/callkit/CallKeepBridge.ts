@@ -114,6 +114,12 @@ export class CallKeepBridge {
    * their offer carried. See {@link mediaFor}.
    */
   private readonly inboundCalls = new WeakSet<Call>();
+  /**
+   * The call the audio session was started for. There is one session per
+   * app, so only this call may stop it, and it is released when this call
+   * ends, by whichever path. See {@link startAudio}.
+   */
+  private audioUuid: string | null = null;
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     const host: CallRegistryHost = {
@@ -131,6 +137,16 @@ export class CallKeepBridge {
     };
 
     this.registry = new CallRegistry({ host, fusionTimeoutMs: options.fusionTimeoutMs });
+
+    // A call can end in the native UI, from the SDK, or in the registry
+    // itself: the app's endCall (a failed bridge dial), or tick() expiring an
+    // answered push. CallKit answers none of the registry's own reports with
+    // an endCall action, so watching the entries is the one place that sees
+    // every end. Without it a session started for such a call stayed up in the
+    // idle app, and the next call's start was ignored.
+    this.registry.entries$
+      .pipe(takeUntil(this.destroyed$))
+      .subscribe(() => this.releaseAudioIfOwnerEnded());
 
     // Registered here, not in setup(): callkeep flushes the events it buffered
     // while JavaScript was starting as soon as the bundle finishes loading,
@@ -383,6 +399,15 @@ export class CallKeepBridge {
         logger.debug(`Adopted bridge call ${call.id} into existing entry ${claimed}`);
         return claimed;
       }
+      if (this.registry.entryForUuid(claimed)?.state === 'pending-push') {
+        // The user ended the answered push while this call was being placed.
+        // They have hung up: no second native call, and nothing left live.
+        logger.debug(`Entry ${claimed} was ended by the user during the bridge dial; hanging up`);
+        void call.hangup().catch((error: unknown) => {
+          logger.debug('Hangup of the abandoned bridge call failed:', error);
+        });
+        return claimed;
+      }
       // The entry died while we were dialling. Fall through and report a
       // normal outbound call, so the user is not left on a live call with no
       // native UI to end it.
@@ -402,6 +427,9 @@ export class CallKeepBridge {
     this.destroyed$.next();
     this.destroyed$.complete();
     this.stopTicking();
+    if (this.audioUuid !== null) {
+      this.stopAudio(this.audioUuid);
+    }
     for (const listener of this.nativeListeners.splice(0)) {
       listener.remove();
     }
@@ -560,6 +588,7 @@ export class CallKeepBridge {
     void this.startAudioWhenSessionReady(callUUID);
   }
 
+  /** Audio, if this call owns it, is released by {@link releaseAudioIfOwnerEnded}. */
   private handleEndCall(callUUID: string): void {
     logger.debug(`Native end for ${callUUID}`);
     const entry = this.registry.entryForUuid(callUUID);
@@ -568,7 +597,6 @@ export class CallKeepBridge {
       return;
     }
     this.registry.endCall(callUUID);
-    this.stopAudio();
   }
 
   private handleDidDisplayIncomingCall(event: DisplayEvent): void {
@@ -686,11 +714,9 @@ export class CallKeepBridge {
     // The call can end during the wait. Started anyway, the session would stay
     // up with nothing left to stop it, and the next call, whose own start is
     // ignored because start() is first-wins, would inherit this call's mode.
-    // A push the user answered and then ended before its SDK call existed
-    // stays 'pending-push', holding a reject for that call; it is over too.
+    // A push the user ended before its SDK call existed is over too.
     const entry = this.registry.entryForUuid(uuid);
-    const rejectedPush = entry?.state === 'pending-push' && entry.intent === 'reject';
-    if (!entry || entry.state === 'ended' || rejectedPush) {
+    if (!entry || !this.registry.isLive(uuid)) {
       logger.debug(`Call ${uuid} ended before its audio session was ready; not starting audio`);
       return;
     }
@@ -702,7 +728,7 @@ export class CallKeepBridge {
       logger.debug(`Call ${uuid} has no SDK call yet; its audio starts when that call connects`);
       return;
     }
-    this.startAudio(this.mediaFor(entry.call));
+    this.startAudio(uuid, this.mediaFor(entry.call));
   }
 
   /**
@@ -757,7 +783,17 @@ export class CallKeepBridge {
     RNCallKeep.updateDisplay(uuid, entry.displayName, entry.handle, { ios: { hasVideo: true } });
   }
 
-  private startAudio(media: 'audio' | 'video'): void {
+  /**
+   * Starts the session for `uuid`, which then owns it. While another live
+   * call owns it (a call waiting behind it was answered), the session is left
+   * as it is: `AudioRouteController.start` is first-wins either way.
+   */
+  private startAudio(uuid: string, media: 'audio' | 'video'): void {
+    if (this.audioUuid !== null && this.audioUuid !== uuid) {
+      logger.debug(`Audio session belongs to ${this.audioUuid}; not starting it for ${uuid}`);
+      return;
+    }
+    this.audioUuid = uuid;
     try {
       getAudioRouteController().start(media);
     } catch (error) {
@@ -765,7 +801,18 @@ export class CallKeepBridge {
     }
   }
 
-  private stopAudio(): void {
+  /** Releases the session the ending call owns; another call ending leaves it alone. */
+  private releaseAudioIfOwnerEnded(): void {
+    if (this.audioUuid !== null && !this.registry.isLive(this.audioUuid)) {
+      this.stopAudio(this.audioUuid);
+    }
+  }
+
+  private stopAudio(uuid: string): void {
+    if (uuid !== this.audioUuid) {
+      return;
+    }
+    this.audioUuid = null;
     // incall-manager's stop() deactivates the session itself, and the
     // activation that stands now belonged to the call that is ending: the next
     // call waits for its own (or the fallback).
@@ -796,8 +843,8 @@ export class CallKeepBridge {
         return;
       }
       if (TERMINAL_STATUSES.has(status)) {
+        // Ends the entry, which releases its audio if it owns the session.
         this.registry.reportRemoteEnded(uuid);
-        this.stopAudio();
       }
     });
   }
