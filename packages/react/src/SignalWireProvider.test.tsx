@@ -38,6 +38,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   constructed.length = 0;
   harness.isConnected$.next(false);
+  harness.isRegistered$.next(false);
 });
 
 describe('SignalWireProvider on the web — no platform supplied', () => {
@@ -118,6 +119,55 @@ describe('SignalWireProvider with a platform', () => {
 
     // The SDK's teardown may still touch platform globals, so order matters.
     expect(order).toEqual(['destroy', 'dispose']);
+  });
+});
+
+/*
+ * `error` is the SDK's last error. A dropped WebSocket reports
+ * "WebSocket connection error" and the SDK reconnects by itself, but nothing
+ * cleared the error, so an app that shows it (the example's banner) said the
+ * connection was broken for the rest of the session.
+ */
+describe('SignalWireProvider error after a reconnect', () => {
+  function connectionError(name: string): Error {
+    const error = new Error('WebSocket connection error');
+    error.name = name;
+    return error;
+  }
+
+  async function renderConnected(): Promise<void> {
+    render(
+      <SignalWireProvider credentialProvider={credentialProvider as never}>
+        <Probe />
+      </SignalWireProvider>
+    );
+    await act(async () => {
+      harness.isConnected$.next(true);
+      harness.isRegistered$.next(true);
+    });
+  }
+
+  it.each(['WebSocketConnectionError', 'WebSocketTimeoutError', 'TransportConnectionError'])(
+    'clears a %s once the client registers again',
+    async (name) => {
+      await renderConnected();
+      await act(async () => harness.errors$.next(connectionError(name)));
+      expect(screen.getByTestId('state').textContent).toBe('error:WebSocket connection error');
+
+      // The SDK re-registers after its own reconnect.
+      await act(async () => harness.isRegistered$.next(true));
+
+      expect(screen.getByTestId('state').textContent).toBe('true');
+    }
+  );
+
+  it('keeps an error that is not about the connection', async () => {
+    await renderConnected();
+    await act(async () => harness.errors$.next(new Error('Call creation failed')));
+
+    await act(async () => harness.isRegistered$.next(true));
+
+    expect(screen.getByTestId('state').textContent).toBe('error:Call creation failed');
   });
 });
 
