@@ -15,7 +15,11 @@ import {
 import type { Observable, Subscription } from 'rxjs';
 import type { AudioDeviceName, AudioDeviceStatus } from './nativeAudioRoutes';
 
-export type AudioRoute = 'earpiece' | 'speaker' | 'bluetooth';
+/**
+ * Where a call's audio plays: one route per incall-manager device. A wired or
+ * USB-C headset is `'headset'`; a Bluetooth headset or car is `'bluetooth'`.
+ */
+export type AudioRoute = 'earpiece' | 'speaker' | 'headset' | 'bluetooth';
 
 /** A route, and whether the user picked it or it is the call's default. */
 interface RouteState {
@@ -23,26 +27,22 @@ interface RouteState {
   readonly chosen: boolean;
 }
 
-/** Where speaker-off goes: a route, and the device iOS reported for it (iOS routes only). */
-interface BeforeSpeaker extends RouteState {
-  readonly device: AudioDeviceName | null;
-}
-
 /** Off the speaker, with nothing chosen: iOS uses a connected headset or car, else the receiver. */
-const DEFAULT_ROUTE: BeforeSpeaker = { route: 'earpiece', chosen: false, device: null };
+const DEFAULT_ROUTE: RouteState = { route: 'earpiece', chosen: false };
 
-/** The route a device stands for. A wired headset reads as `'earpiece'`: off the speaker. */
+/** The route each incall-manager device is. incall-manager reports USB audio as WIRED_HEADSET and a car as BLUETOOTH. */
 const ROUTE_FOR_DEVICE: Record<AudioDeviceName, AudioRoute> = {
   EARPIECE: 'earpiece',
   SPEAKER_PHONE: 'speaker',
-  WIRED_HEADSET: 'earpiece',
+  WIRED_HEADSET: 'headset',
   BLUETOOTH: 'bluetooth'
 };
 
-/** incall-manager's name for each route the user can choose. */
+/** incall-manager's name for each route. */
 const DEVICE_FOR_ROUTE: Record<AudioRoute, AudioDeviceName> = {
   earpiece: 'EARPIECE',
   speaker: 'SPEAKER_PHONE',
+  headset: 'WIRED_HEADSET',
   bluetooth: 'BLUETOOTH'
 };
 
@@ -63,7 +63,7 @@ function warnNoIosRoutes(): void {
 
 /** The route state a refused choice goes back to. */
 interface Snapshot extends RouteState {
-  readonly beforeSpeaker: BeforeSpeaker;
+  readonly beforeSpeaker: RouteState;
 }
 
 /**
@@ -83,8 +83,7 @@ interface Session {
    * previous call's last device, or an idle read), so they are ignored.
    */
   ready: boolean;
-  /** The device iOS last reported, and what is connected. */
-  device: AudioDeviceName | null;
+  /** What is connected, as last reported or answered. */
   available: readonly AudioDeviceName[];
   /** Writes sent to incall-manager whose settled status hasn't come back. */
   pending: number;
@@ -107,12 +106,12 @@ interface Session {
  *   incall-manager keeps its own speaker setting in step with those changes,
  *   so nothing is written back from here.
  * - **Without** (released incall-manager through 4.3.0): speaker on and off
- *   only. `'bluetooth'` logs a warning once and is ignored, `'earpiece'` turns
- *   the speaker off (iOS still prefers a connected headset or car), and
- *   `route` is what was asked for.
+ *   only. `'bluetooth'` logs a warning once and is ignored, `'earpiece'` and
+ *   `'headset'` turn the speaker off (iOS still prefers a connected headset
+ *   or car), and `route` is what was asked for.
  *
  * Android uses incall-manager's routes; a choice it can't make (Bluetooth
- * with no device) goes back, as on iOS.
+ * or a headset with no such device) goes back, as on iOS.
  *
  * A choice made before the call's session starts (a speaker tap while an
  * outbound call rings, with CallKit driving the session) is shown at once and
@@ -123,7 +122,7 @@ export class AudioRouteController {
   /** Whether the current route is the user's choice, not the call's default. */
   private chosen = false;
   /** What turning the speaker off returns to. */
-  private beforeSpeaker: BeforeSpeaker = DEFAULT_ROUTE;
+  private beforeSpeaker: RouteState = DEFAULT_ROUTE;
   private session: Session | null = null;
   /** A choice made before start(), applied when it runs. */
   private early: RouteState | null = null;
@@ -185,7 +184,6 @@ export class AudioRouteController {
       iosRoutes: Platform.OS === 'ios' && hasIosAudioRoutes(),
       devices: null,
       ready: false,
-      device: null,
       available: [],
       pending: 0,
       deferred: null
@@ -276,22 +274,12 @@ export class AudioRouteController {
     const known = session !== null && (session.iosRoutes || Platform.OS === 'android');
     const present = (device: AudioDeviceName): boolean => !known || session.available.includes(device);
     const back = this.beforeSpeaker;
-    const target = back.chosen && !present(DEVICE_FOR_ROUTE[back.route]) ? DEFAULT_ROUTE : back;
-    const offTo = target.device !== null && present(target.device) ? target.device : null;
+    const target = present(DEVICE_FOR_ROUTE[back.route]) ? back : DEFAULT_ROUTE;
     // A device that turns out to be gone when asked for: speaker off anyway.
-    this.select(target.route, target.chosen, () => this.select(DEFAULT_ROUTE.route, false), offTo);
+    this.select(target.route, target.chosen, () => this.select(DEFAULT_ROUTE.route, false));
   }
 
-  /**
-   * @param offTo - For speaker-off to the default: the headset or car the
-   *   speaker replaced, if it is still there (see {@link applyRoute}).
-   */
-  private select(
-    route: AudioRoute,
-    chosen: boolean,
-    onRefused?: () => void,
-    offTo: AudioDeviceName | null = null
-  ): void {
+  private select(route: AudioRoute, chosen: boolean, onRefused?: () => void): void {
     const session = this.session;
     if (route === 'bluetooth' && Platform.OS === 'ios' && !(session?.iosRoutes ?? hasIosAudioRoutes())) {
       warnNoIosRoutes();
@@ -299,12 +287,12 @@ export class AudioRouteController {
     }
     const before: Snapshot = { route: this._route$.value, chosen: this.chosen, beforeSpeaker: this.beforeSpeaker };
     if (route === 'speaker' && before.route !== 'speaker') {
-      this.beforeSpeaker = { route: before.route, chosen: this.chosen, device: session?.device ?? null };
+      this.beforeSpeaker = { route: before.route, chosen: this.chosen };
     }
     this.chosen = chosen;
     this._route$.next(route);
     if (session) {
-      this.applyRoute(session, route, chosen, before, onRefused, offTo);
+      this.applyRoute(session, route, chosen, before, onRefused);
       return;
     }
     if (this.holdsUntilStart) {
@@ -331,20 +319,21 @@ export class AudioRouteController {
     route: AudioRoute,
     chosen: boolean,
     before: Snapshot,
-    onRefused: (() => void) | undefined,
-    offTo: AudioDeviceName | null
+    onRefused: (() => void) | undefined
   ): void {
-    if (session.iosRoutes ? chosen : Platform.OS === 'android' && route === 'bluetooth') {
+    const android = Platform.OS === 'android';
+    if (session.iosRoutes ? chosen : android && (route === 'bluetooth' || route === 'headset')) {
       this.choose(session, route, before, onRefused);
       return;
     }
-    // Speaker on, or off. Off goes back to a headset or car the speaker had
-    // replaced at incall-manager's default (null), which keeps a video call
-    // in video chat mode there; only a call that was on the receiver gets
-    // "speaker off" (false), which also takes a video call out of video chat
-    // mode, so it doesn't fall back to the speaker.
-    const off = offTo === 'WIRED_HEADSET' || offTo === 'BLUETOOTH' ? null : false;
-    const flag = route === 'speaker' ? true : off;
+    // Speaker on, or off. With iOS routes, off goes back to a headset or car
+    // the speaker had replaced at incall-manager's default (null), which
+    // keeps a video call in video chat mode there; a call that was on the
+    // receiver, or any call without iOS routes, gets "speaker off" (false),
+    // which also takes a video call out of video chat mode, so it doesn't
+    // fall back to the speaker.
+    const toDevice = session.iosRoutes && (route === 'headset' || route === 'bluetooth');
+    const flag = route === 'speaker' ? true : toDevice ? null : false;
     if (!session.iosRoutes) {
       this.writeSpeaker(route, flag);
       return;
@@ -439,8 +428,8 @@ export class AudioRouteController {
    * Takes on the route iOS reports (iOS routes only): the call's starting
    * device, a choice in the system route picker or CallKit, a headset or car
    * connecting or dropping. incall-manager has already brought its speaker
-   * setting in step, so nothing is written back. The user's choice ends when
-   * a different device than the chosen one takes the call.
+   * setting in step, so nothing is written back. A reported route other than
+   * the one shown ends the user's choice.
    */
   private mirror(session: Session, status: AudioDeviceStatus): void {
     if (this.session !== session || !session.ready) {
@@ -454,25 +443,18 @@ export class AudioRouteController {
     if (status.selected === null) {
       return;
     }
-    const device = status.selected;
-    const wasChosen = this.chosen;
-    if (device !== session.device) {
-      // A different device than the one chosen has the call: nothing of ours
-      // pins it any more (a wired headset replacing a receiver choice, say).
-      if (session.device !== null && !(this.chosen && DEVICE_FOR_ROUTE[this._route$.value] === device)) {
-        this.chosen = false;
-      }
-      session.device = device;
-    }
-    const route = ROUTE_FOR_DEVICE[device];
+    const route = ROUTE_FOR_DEVICE[status.selected];
     const previous = this._route$.value;
     if (route === previous) {
       return;
     }
     if (route === 'speaker') {
       // Speaker off goes back to where the call was, chosen or not.
-      this.beforeSpeaker = { route: previous, chosen: wasChosen, device: previousDevice(session, previous) };
+      this.beforeSpeaker = { route: previous, chosen: this.chosen };
     }
+    // Something else has the call (a wired headset replacing a receiver
+    // choice, say): nothing of ours pins it any more.
+    this.chosen = false;
     this._route$.next(route);
   }
 
@@ -489,12 +471,6 @@ export class AudioRouteController {
     this.stop();
     this._route$.complete();
   }
-}
-
-/** The device behind `route` just before the speaker took over, as far as reports tell. */
-function previousDevice(session: Session, route: AudioRoute): AudioDeviceName | null {
-  const device = session.device;
-  return device !== null && ROUTE_FOR_DEVICE[device] === route ? device : null;
 }
 
 /** Same duplication hazard as the CallKit bridge — see its note. One audio
