@@ -101,9 +101,16 @@ arrives; no ghost call remains; the caller sees a decline, not a timeout.
 ## Audio and resilience
 
 **8. Audio routing.**
-Toggle speaker and earpiece mid-call. Then connect a Bluetooth headset mid-call.
-Expect: output follows each change. Note that `'bluetooth'` is a request — the
-OS makes the final choice, so verify by ear rather than by the reported route.
+Toggle speaker and earpiece mid-call. Plug in wired or USB-C headphones
+mid-call (the label should read "Headset"). Then connect a Bluetooth headset mid-call,
+pick a route in the system route menu, and tap CallKit's speaker button.
+Expect: output follows each change, and with incall-manager's iOS routes
+`route` (the speaker button's label) names where the audio actually is: check
+both by ear and against the label. With released incall-manager on iOS,
+`'bluetooth'` is ignored with a warning and `route` is what was asked for.
+Also: tap the speaker while an outbound call is still ringing (it should apply
+when the call connects), and start a video call with AirPods connected (it
+should stay on the AirPods).
 
 **9. Backgrounded call audio.**
 Background the app mid-call.
