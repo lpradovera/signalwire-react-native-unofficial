@@ -37,6 +37,6 @@ https://github.com/lpradovera/signalwire-react-native-unofficial
 | `@signalwire/react-native` | adapter, hooks, `SignalWireVideoView` |
 | `@signalwire/react-native/polyfills` | required side-effect imports |
 | `@signalwire/react-native/callkit` | native call UI (needs `react-native-callkeep`) |
-| `@signalwire/react-native/audio` | audio routing (needs `react-native-incall-manager`) |
+| `@signalwire/react-native/audio` | audio routing (needs `react-native-incall-manager`; iOS routes beyond speaker on/off need its iOS routes, see the repository README; the iOS output button is native code, so rebuild the app after installing) |
 
 MIT

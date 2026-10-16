@@ -30,7 +30,7 @@ function CallScreen({ call }) {
 
 | Component | Purpose |
 | --- | --- |
-| `CallControls` | Mute, camera, audio route and hang up |
+| `CallControls` | Mute, camera, speaker toggle, iOS audio output button and hang up |
 | `CallStatus` | Status pill, showing call errors when present |
 | `Dialpad` | DTMF keypad; works with or without a call |
 | `ParticipantList` | Participants with live talking and mute state |
@@ -81,8 +81,17 @@ Every control carries an `accessibilityRole`, a label and â€” where it toggles â
   React Native does not have. `ParticipantList` shows talking state from the
   SDK's `isTalking$` instead, which is server-driven and works.
 - **No audio *output* picker in `DeviceSelector`.** React Native has no
-  `setSinkId`. Routing between earpiece, speaker and Bluetooth is
-  `useAudioRoute`, which `CallControls` exposes.
+  `setSinkId`. Routing between earpiece, speaker, headset and Bluetooth is
+  `useAudioRoute`, whose speaker toggle `CallControls` shows. On iOS
+  `CallControls` also shows the system audio output button
+  (`AudioRoutePickerButton` from `@signalwire/react-native/audio`, iOS's own
+  menu of the phone, the speaker and each headset or car); `showRoutePicker`
+  (default: `showAudioRoute`) hides it. It needs react-native-incall-manager
+  with iOS audio routes (the upstream change, or the patch in
+  `@signalwire/react-native`'s `docs/patches/`); on released incall-manager
+  4.3.0 it isn't shown and the controls offer speaker on/off. It is native
+  code: it appears only once the app has been rebuilt (`pod install`, or
+  `expo prebuild`) with this version of `@signalwire/react-native`.
 - **No video component.** `SignalWireVideoView` already ships in
   `@signalwire/react-native`.
 

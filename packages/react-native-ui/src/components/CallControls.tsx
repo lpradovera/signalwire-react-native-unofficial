@@ -1,5 +1,5 @@
 import { logger, useCall } from '@signalwire/react';
-import { useAudioRoute } from '@signalwire/react-native/audio';
+import { AudioRoutePickerButton, useAudioRoute } from '@signalwire/react-native/audio';
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 
@@ -7,6 +7,7 @@ import { useSignalWireTheme } from '../theme/ThemeProvider';
 import { ControlButton } from './ControlButton';
 
 import type { Call } from '@signalwire/js';
+import type { AudioRoute } from '@signalwire/react-native/audio';
 import type { StyleProp, ViewStyle } from 'react-native';
 
 export interface CallControlsProps {
@@ -15,6 +16,13 @@ export interface CallControlsProps {
   showVideo?: boolean;
   /** Hide the speaker toggle. Default `true`. */
   showAudioRoute?: boolean;
+  /**
+   * Show the system audio output button, iOS's own menu of the phone, the
+   * speaker and each connected headset or car. Default: `showAudioRoute`, so
+   * an app that hides audio routing doesn't get it either. It appears only on
+   * iOS, in an app built with this package's native code.
+   */
+  showRoutePicker?: boolean;
   /** Called once the user has hung up, for navigating away. Always fires,
    * even when the SDK teardown fails — see the handler below. */
   onHangup?: () => void;
@@ -23,7 +31,7 @@ export interface CallControlsProps {
 }
 
 /**
- * Mute, camera, speaker and hang up.
+ * Mute, camera, speaker, audio output (iOS) and hang up.
  *
  * Owns no state: everything comes from `useCall` and `useAudioRoute`, so the
  * bar always agrees with the SDK even when the change came from elsewhere —
@@ -33,13 +41,14 @@ export function CallControls({
   call,
   showVideo = true,
   showAudioRoute = true,
+  showRoutePicker = showAudioRoute,
   onHangup,
   style,
   testID
 }: CallControlsProps): React.JSX.Element {
   const theme = useSignalWireTheme();
   const { isAudioMuted, isVideoMuted, setAudioMuted, setVideoMuted, hangup } = useCall(call);
-  const { route, setRoute } = useAudioRoute();
+  const { route, setSpeakerOn } = useAudioRoute();
 
   return (
     <View
@@ -66,9 +75,23 @@ export function CallControls({
       {showAudioRoute ? (
         <ControlButton
           testID="sw-route"
-          label={route === 'speaker' ? 'Speaker' : 'Earpiece'}
+          label={ROUTE_LABELS[route]}
           active={route === 'speaker'}
-          onPress={() => setRoute(route === 'speaker' ? 'earpiece' : 'speaker')}
+          // Off returns to the call's own route (a headset or car, if one is
+          // connected), not the receiver.
+          onPress={() => setSpeakerOn(route !== 'speaker')}
+        />
+      ) : null}
+
+      {showRoutePicker ? (
+        // Renders nothing off iOS, without the native view, or without
+        // incall-manager's iOS routes. The pill style sits on the button: on
+        // the New Architecture React Native's interop container paints the
+        // background and radius and insets the native view by the padding.
+        <AudioRoutePickerButton
+          testID="sw-route-picker"
+          tintColor={theme.colors.text}
+          style={{ backgroundColor: theme.colors.surface, borderRadius: theme.radii.pill, padding: theme.spacing.xs }}
         />
       ) : null}
 
@@ -92,6 +115,14 @@ export function CallControls({
     </View>
   );
 }
+
+/** The speaker toggle names the route the call is on. */
+const ROUTE_LABELS: Record<AudioRoute, string> = {
+  speaker: 'Speaker',
+  earpiece: 'Earpiece',
+  headset: 'Headset',
+  bluetooth: 'Bluetooth'
+};
 
 const styles = StyleSheet.create({
   bar: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center' }

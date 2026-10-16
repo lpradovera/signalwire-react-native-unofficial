@@ -97,7 +97,7 @@ so the two UI packages are siblings by name only and share no code.
 | `@signalwire/react-native` | Provider, hooks, video view |
 | `@signalwire/react-native/polyfills` | **Must be line 1** of your entry file |
 | `@signalwire/react-native/callkit` | Native call UI, push tokens, `registerAndroidCallPush` |
-| `@signalwire/react-native/audio` | Speaker / earpiece / Bluetooth routing |
+| `@signalwire/react-native/audio` | Speaker / earpiece / headset / Bluetooth routing |
 | `@signalwire/react-native/ringing` | `useRingingPushes`, for drawing your own incoming-call UI |
 
 `./ringing` is deliberately separate from `./callkit`: the latter imports
@@ -203,11 +203,20 @@ Optional, each unlocking one feature:
 | Package | Unlocks |
 | --- | --- |
 | `react-native-callkeep` | `@signalwire/react-native/callkit` — native call UI |
-| `react-native-incall-manager` | `@signalwire/react-native/audio` — speaker/earpiece/Bluetooth routing |
+| `react-native-incall-manager` | `@signalwire/react-native/audio` — speaker/earpiece/headset/Bluetooth routing (iOS beyond speaker on/off: see [Audio routes on iOS](#audio-routes-on-ios)) |
 | `@react-native-community/netinfo` | Network-loss detection and SDK reconnection |
 
 Importing a subpath without its peer throws `MissingPeerDependencyError`, which
 names the package and the install command.
+
+**This package has a little native code on iOS** (`ios/`, pod
+`SignalWireReactNative`): the system audio output button,
+`AudioRoutePickerButton`. It autolinks, but only into a rebuilt app: run
+`pod install` (Expo: `expo prebuild` or `expo run:ios`) after installing or
+upgrading. Until then the button renders nothing, and it also renders
+nothing without incall-manager's iOS routes (see
+[Audio routes on iOS](#audio-routes-on-ios)). Everything else, audio
+routing included, is JavaScript over the peers above.
 
 ## The import-order rule
 
@@ -341,11 +350,74 @@ export default function App() {
 | `useIncomingCalls()` | `calls`, `answer`, `reject` | `@signalwire/react-native` |
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` | `@signalwire/react-native` |
 | `useObservable(obs$, initial)` | The latest value of any SDK observable | `@signalwire/react-native` |
-| `useAudioRoute()` | `route`, `setRoute` | `@signalwire/react-native/audio` |
+| `useAudioRoute()` | `route`, `setRoute`, `setSpeakerOn` | `@signalwire/react-native/audio` |
+| `useAudioDevices()` | `available`, `selected`, `selectedName` (e.g. the car's name). iOS, with incall-manager iOS routes. Live while a call's session runs; outside a call, the last status read. | `@signalwire/react-native/audio` |
+| `getAudioDeviceStatus()` (function) | The same status, read now, for code outside React. Resolves `null` without iOS routes (the hook gives an empty status instead). | `@signalwire/react-native/audio` |
 
 `useObservable` is built on `useSyncExternalStore`, so it is tear-free under
 concurrent rendering, and it seeds from the SDK's synchronous getters rather
 than flashing a default. Every hook is safe with a null call or client.
+
+### Audio routes
+
+`useAudioRoute()` has four routes, one for each of incall-manager's devices:
+`'earpiece'` (the receiver), `'speaker'`, `'headset'` (a wired or USB-C
+headset) and `'bluetooth'` (a Bluetooth headset or a car). Use `setSpeakerOn(on)` for a speaker toggle: off returns to the
+route the call had before (a connected headset or car, or the receiver).
+`setRoute(route)` is a choice of that route; `setRoute('earpiece')` means the
+phone's receiver, as on Android, and with iOS routes it moves a call off a
+connected headset or car. A toggle written as
+`setRoute(route === 'speaker' ? 'earpiece' : 'speaker')` should use
+`setSpeakerOn(route !== 'speaker')`.
+
+A route chosen before the call's audio session starts (a speaker tap while an
+outbound CallKit call still rings) shows at once and is applied when the
+session starts. A video call starts on the speaker only when nothing else is
+connected: incall-manager's own start decides, and this package doesn't force
+the speaker over a headset or car. A route that can't be chosen (no such
+device) goes back to where it was, on Android too.
+
+#### Audio routes on iOS
+
+This package never writes the iOS audio session itself: incall-manager does,
+and so do callkeep (its category and mode on every CallKit activation) and
+WebRTC. Released incall-manager (through 4.3.0) has iOS speaker on/off only,
+and what you get depends on which you have:
+
+| | incall-manager 4.3.0 | incall-manager with iOS routes |
+| --- | --- | --- |
+| Speaker on / off | ✅ | ✅ |
+| `setRoute('earpiece')` | Speaker off; a connected headset or car keeps the call | The receiver |
+| `setRoute('headset')` | Speaker off; a plugged-in headset takes the call | The wired or USB-C headset |
+| `setRoute('bluetooth')` | Ignored, with one warning | A connected Bluetooth headset or car |
+| `route` | What was asked for | What iOS reports: the starting device, a headset or car connecting or dropping, a choice in the system route menu or CallKit |
+| `useAudioDevices()` | Empty | The devices, by name, kept current during a call |
+
+iOS routes come from a change to incall-manager that is proposed upstream
+(chooseAudioRoute, getAudioDeviceStatus and onAudioDeviceChanged on iOS, with
+incall-manager following route changes it didn't make). To use it now, apply
+[`docs/patches/react-native-incall-manager+4.3.0.patch`](docs/patches/react-native-incall-manager+4.3.0.patch)
+with [patch-package](https://github.com/ds300/patch-package): pin
+`react-native-incall-manager` to `4.3.0`, copy the file into your app's
+`patches/`, add `"postinstall": "patch-package"`, and rebuild the app (native
+code). A vendored copy of incall-manager with the same change works the same
+way. This package detects the iOS routes at run time, so nothing else
+changes; without them it falls back as in the first column.
+
+For iOS's own output menu, render `<AudioRoutePickerButton />` from
+`@signalwire/react-native/audio` (an `AVRoutePickerView`, which lists the phone,
+the speaker and each connected headset or car by name, and switches the call
+itself). `CallControls` in `@signalwire/react-native-ui` shows it on iOS next
+to the speaker toggle; `showRoutePicker` defaults to `showAudioRoute`. The
+button needs incall-manager's iOS routes, which follow a choice made there
+(`route` reports it) and keep it. **On released incall-manager 4.3.0 the
+button isn't rendered** (`isAudioRoutePickerAvailable()` is false): nothing
+would report its choice, and 4.3.0 re-applies the speaker on the next audio
+category change, undoing it. There `CallControls` offers speaker on/off
+only; for full routing, apply the incall-manager patch above
+(`docs/patches/`) or wait for the upstream change. VoiceOver reads the button as
+"Audio output" (`accessibilityLabel`). Its `activeTintColor` is AVKit's
+colour for AirPlay being active; a headset or car is not AirPlay.
 
 `useDevices()` has no `refresh`-free auto-update: React Native emits no
 `devicechange` event, so the platform sets `skipDeviceMonitoring: true` and you
