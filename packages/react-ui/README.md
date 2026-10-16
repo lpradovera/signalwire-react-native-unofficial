@@ -1,7 +1,8 @@
 # `@signalwire/react-ui`
 
-> **Alpha.** On its way to becoming SignalWire's supported React Native SDK;
-> APIs may change between alpha releases.
+> **Alpha.** The browser component kit of an SDK on its way to becoming
+> SignalWire's supported React and React Native SDK; APIs may change between
+> alpha releases.
 
 React components for the SignalWire [web components](https://www.npmjs.com/package/@signalwire/web-components).
 **Browser only** — React Native has its own component kit.

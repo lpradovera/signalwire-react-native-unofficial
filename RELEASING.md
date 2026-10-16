@@ -2,7 +2,10 @@
 
 The four packages, `@signalwire/react`, `@signalwire/react-ui`,
 `@signalwire/react-native` and `@signalwire/react-native-ui`, are released
-together at one version, and each depends on the others at `^<that version>`.
+together at one version. Where one needs another it names it at
+`^<that version>`: `@signalwire/react-native` depends on `@signalwire/react`,
+and `@signalwire/react-native-ui` has both as peers; `@signalwire/react` and
+`@signalwire/react-ui` name none of the others.
 They publish under npm's `alpha` dist-tag (`publishConfig.tag` in each
 package.json). Publishing needs an owner of the `@signalwire` npm
 organization.
@@ -82,9 +85,20 @@ When the APIs are settled:
    new repository and that the `v<version>` tag is pushed there. Until the
    move they name the repository the code is in today,
    `lpradovera/signalwire-react-native-unofficial`.
-3. Run the checks above, then publish in the same order.
-4. If any package was published without moving `latest`, move it:
-   `npm dist-tag add @signalwire/react-native@2.0.0 latest`.
+3. Run the checks above, then publish in the same order, with `--tag latest`
+   in place of the alpha steps' `--tag alpha`. A `--tag` on the command line
+   overrides `publishConfig.tag`, so the alpha commands as written would put
+   2.0.0 on `alpha`:
+
+   ```bash
+   npm publish -w @signalwire/react --tag latest
+   npm publish -w @signalwire/react-ui --tag latest
+   npm publish -w @signalwire/react-native --tag latest
+   npm publish -w @signalwire/react-native-ui --tag latest
+   ```
+4. Check `npm view <package> dist-tags` for each of the four: `latest` must be
+   2.0.0. Move it on any package where it isn't, for example
+   `npm dist-tag add @signalwire/react-ui@2.0.0 latest`.
 5. If it wasn't done at the first alpha, point users of the old SDK at the new one:
 
    ```bash
