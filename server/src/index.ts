@@ -1,5 +1,5 @@
 import { createApp } from './app.js';
-import { createSendersFromEnv } from './config.js';
+import { createSendersFromEnv, parseParkRoutes } from './config.js';
 import { JsonFileDeviceStore } from './core/DeviceStore.js';
 import { NotificationService } from './core/NotificationService.js';
 import { BridgeTokenStore } from './core/BridgeTokenStore.js';
@@ -27,7 +27,10 @@ if (senders.length === 0) {
 }
 
 if (!process.env.API_TOKEN) {
-  log('API_TOKEN is unset — every endpoint is unauthenticated. Development only.');
+  log(
+    'API_TOKEN is unset — /devices and /notify are unauthenticated: anyone can register a device ' +
+      'under any user, list every token, and push to anyone. Development only.'
+  );
 }
 
 const minted = createMinterFromEnv();
@@ -54,33 +57,47 @@ if ('missing' in minted) {
   tokenRoutes = createTokenRoutes({ minter: minted.minter, authenticateCaller: () => null });
 }
 
-/**
- * `PARK_ROUTES` maps dialled destinations to subscribers, e.g.
- * `+15551234567:rn-example`. Needed the moment a phone number points at the
- * park resource: nothing in an E.164 number names a user.
- */
-function parseParkRoutes(raw: string | undefined): Record<string, string> {
-  if (!raw) {
-    return {};
-  }
-  const routes: Record<string, string> = {};
-  for (const pair of raw.split(',')) {
-    const [destination, subscriber] = pair.split(':').map((part) => part.trim());
-    if (destination && subscriber) {
-      routes[destination] = subscriber;
-    }
-  }
-  return routes;
-}
-
 const service = new NotificationService({ store, senders, log });
 const bridgeTokens = new BridgeTokenStore();
 
-if (!process.env.PUBLIC_URL) {
+const publicUrl = process.env.PUBLIC_URL;
+const signingKey = process.env.SIGNALWIRE_SIGNING_KEY;
+
+if (!publicUrl) {
   log(
-    'PUBLIC_URL is unset — the park script falls back to SignalWire-generated ringback. ' +
-      'Set it to your tunnel to serve your own audio.'
+    'PUBLIC_URL is unset — /swml/bridge cannot give SignalWire a status_url, so a parked ' +
+      'caller is left up, in silence, when the device hangs up. Set it to your tunnel.'
   );
+}
+
+if (!signingKey) {
+  log(
+    'SIGNALWIRE_SIGNING_KEY is unset — /swml/park, /swml/bridge and /swml/bridge/status accept ' +
+      'requests from anyone who can reach this server, who can then ring any subscriber. ' +
+      'Development only.'
+  );
+} else if (!publicUrl) {
+  log('SIGNALWIRE_SIGNING_KEY is set but PUBLIC_URL is not; signatures cover the public URL. Exiting.');
+  process.exit(1);
+}
+
+let swmlRoutes;
+try {
+  swmlRoutes = createSwmlRoutes({
+    tokens: bridgeTokens,
+    service,
+    publicUrl,
+    signingKey,
+    routes: parseParkRoutes(process.env.PARK_ROUTES),
+    ringback: process.env.PARK_RINGBACK_URL,
+    ringbackSeconds: process.env.PARK_RINGBACK_SECONDS
+      ? Number(process.env.PARK_RINGBACK_SECONDS)
+      : undefined,
+    callEnder: createCallEnderFromEnv()
+  });
+} catch (error) {
+  log(`${(error as Error).message} Exiting.`);
+  process.exit(1);
 }
 
 const app = createApp({
@@ -88,14 +105,7 @@ const app = createApp({
   service,
   apiToken: process.env.API_TOKEN,
   tokenRoutes,
-  swmlRoutes: createSwmlRoutes({
-    tokens: bridgeTokens,
-    service,
-    publicUrl: process.env.PUBLIC_URL,
-    routes: parseParkRoutes(process.env.PARK_ROUTES),
-    ringback: process.env.PARK_RINGBACK_URL,
-    callEnder: createCallEnderFromEnv()
-  })
+  swmlRoutes
 });
 
 app.listen(PORT, () => log('Listening', { port: PORT, storePath: STORE_PATH }));

@@ -2,8 +2,8 @@ import express from 'express';
 
 import { createDeviceRoutes } from './routes/devices.js';
 import { createNotifyRoutes } from './routes/notify.js';
+import { captureRawBody } from './signalwire/signature.js';
 import { createSignalWireWebhook } from './signalwire/webhook.js';
-import { createSwmlRoutes } from './routes/swml.js';
 
 import type { DeviceStore } from './core/DeviceStore.js';
 import type { NotificationService } from './core/NotificationService.js';
@@ -27,8 +27,9 @@ export interface AppOptions {
   /**
    * SWML for the parked-caller inbound flow. Mounted outside the API-token
    * guard: SignalWire fetches these, and it has no way to present that secret.
-   * They authorise on their own terms — /bridge spends a single-use token
-   * scoped to one subscriber.
+   * They authorise on their own terms — SignalWire's request signature when a
+   * signing key is configured, and a single-use bridge token scoped to one
+   * subscriber. See routes/swml.ts.
    */
   swmlRoutes?: Router;
 }
@@ -60,7 +61,9 @@ export function createApp({
 }: AppOptions): Express {
   const app = express();
 
-  app.use(express.json({ limit: '64kb' }));
+  // The raw body is kept for SignalWire signature checks, which cover the
+  // bytes as sent rather than the parsed JSON.
+  app.use(express.json({ limit: '64kb', verify: captureRawBody }));
 
   app.get('/health', (_req, res) => {
     res.json({ ok: true });

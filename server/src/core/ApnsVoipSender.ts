@@ -20,6 +20,27 @@ export interface ApnsConfig {
   bundleId: string;
 }
 
+type Connect = (authority: string) => http2.ClientHttp2Session;
+
+/** What one request came back with. */
+interface Exchange {
+  status: number;
+  body: string;
+}
+
+/** Apple's `reason` field from an error body, or the raw body. */
+function reasonOf(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { reason?: unknown };
+    if (typeof parsed.reason === 'string') {
+      return parsed.reason;
+    }
+  } catch {
+    // Not JSON; use it as is.
+  }
+  return body;
+}
+
 /**
  * Sends iOS VoIP pushes through PushKit.
  *
@@ -28,14 +49,33 @@ export interface ApnsConfig {
  * - `apns-push-type: voip` is mandatory.
  * - Sandbox and production tokens are not interchangeable, so the host is
  *   chosen per-device from `device.environment`.
+ *
+ * One HTTP/2 connection per host is opened on first use and reused. Apple asks
+ * for exactly that ("reuse a connection as long as possible ... many hours to
+ * days"), and a fresh TLS + HTTP/2 handshake per push sat on the critical path
+ * of every incoming call. A connection that errors, closes or receives GOAWAY
+ * is dropped and the next push opens a new one.
  */
 export class ApnsVoipSender implements PushSender {
   readonly platform = 'ios' as const;
 
   private cachedToken: string | null = null;
   private cachedAt = 0;
+  private readonly sessions = new Map<string, http2.ClientHttp2Session>();
+  private readonly inFlight = new Map<http2.ClientHttp2Session, number>();
+  /**
+   * Requests waiting on each session, failed together if it errors. One
+   * session-level listener for all of them, not one per request: a
+   * connection carries many concurrent pushes, and a listener each would
+   * trip EventEmitter's leak warning past ten.
+   */
+  private readonly waiters = new Map<http2.ClientHttp2Session, Set<(error: Error) => void>>();
 
-  constructor(private readonly config: ApnsConfig) {}
+  constructor(
+    private readonly config: ApnsConfig,
+    /** Injected for tests. */
+    private readonly connect: Connect = (authority) => http2.connect(authority)
+  ) {}
 
   private bearer(): string {
     const now = Date.now();
@@ -51,31 +91,84 @@ export class ApnsVoipSender implements PushSender {
     return this.cachedToken;
   }
 
-  async send(device: Device, payload: PushPayload): Promise<void> {
-    const host = device.environment === 'sandbox' ? SANDBOX_HOST : PRODUCTION_HOST;
-    const client = http2.connect(host);
-    const body = JSON.stringify(payload);
+  /** Forgets a provider token APNs refused, unless another send replaced it. */
+  private invalidate(token: string): void {
+    if (this.cachedToken === token) {
+      this.cachedToken = null;
+    }
+  }
 
-    // A session that never connects — APNs unreachable, IPv6 with no route,
-    // a captive network — emits `error` on the session, not on the request.
-    // Without a listener here Node rethrows it as an uncaught exception and
-    // takes the whole server down, which is how one flaky moment reaching
-    // Apple ended a device-test session. Capture it and let the request-level
-    // promise reject instead.
+  private session(host: string): http2.ClientHttp2Session {
+    const existing = this.sessions.get(host);
+    if (existing && !existing.closed && !existing.destroyed) {
+      return existing;
+    }
+
+    const session = this.connect(host);
+    const waiting = new Set<(error: Error) => void>();
+    this.waiters.set(session, waiting);
+    const forget = (): void => {
+      if (this.sessions.get(host) === session) {
+        this.sessions.delete(host);
+      }
+    };
+    // A session that fails — APNs unreachable, IPv6 with no route, a captive
+    // network — emits `error` on the session, not on a request. Without a
+    // listener Node rethrows it as an uncaught exception and takes the whole
+    // server down, which is how one flaky moment reaching Apple ended a
+    // device-test session. Forget the session and fail whatever was waiting.
+    session.on('error', (error: Error) => {
+      forget();
+      for (const fail of waiting) {
+        fail(error);
+      }
+    });
+    session.on('close', forget);
+    session.on('goaway', () => {
+      forget();
+      session.close();
+    });
+    // Idle, the connection must not keep the process alive.
+    session.unref();
+    this.sessions.set(host, session);
+    return session;
+  }
+
+  private hold(session: http2.ClientHttp2Session, delta: 1 | -1): void {
+    const count = (this.inFlight.get(session) ?? 0) + delta;
+    if (count > 0) {
+      this.inFlight.set(session, count);
+      if (delta === 1 && count === 1) {
+        session.ref();
+      }
+      return;
+    }
+    this.inFlight.delete(session);
+    if (!session.destroyed) {
+      session.unref();
+    }
+  }
+
+  private async exchange(host: string, device: Device, body: string, token: string): Promise<Exchange> {
+    const session = this.session(host);
+    this.hold(session, 1);
+
+    const waiting = this.waiters.get(session);
+    let onSessionError: ((error: Error) => void) | undefined;
     const sessionFailure = new Promise<never>((_resolve, reject) => {
-      client.on('error', reject);
+      onSessionError = reject;
+      waiting?.add(reject);
     });
     // The race below is the only consumer, and it may already have settled by
     // the time the session gives up. Mark the rejection handled so a late one
-    // is not an unhandled rejection — which is fatal in Node, i.e. the exact
-    // crash this whole block exists to prevent.
+    // is not an unhandled rejection — which is fatal in Node.
     void sessionFailure.catch(() => {});
 
     try {
-      const request = client.request({
+      const request = session.request({
         ':method': 'POST',
         ':path': `/3/device/${device.token}`,
-        authorization: `bearer ${this.bearer()}`,
+        authorization: `bearer ${token}`,
         'apns-topic': `${this.config.bundleId}.voip`,
         'apns-push-type': 'voip',
         'apns-priority': '10',
@@ -88,7 +181,7 @@ export class ApnsVoipSender implements PushSender {
       request.setTimeout(10_000, () => request.destroy(new Error('APNs request timed out')));
       request.end(body);
 
-      const exchange = new Promise<void>((resolve, reject) => {
+      const exchange = new Promise<Exchange>((resolve, reject) => {
         let status = 0;
         let data = '';
 
@@ -98,25 +191,57 @@ export class ApnsVoipSender implements PushSender {
         request.on('data', (chunk: Buffer) => {
           data += chunk.toString();
         });
-        request.on('end', () => {
-          if (status === 200) {
-            resolve();
-            return;
-          }
-          // 410 Gone, or 400 BadDeviceToken — the device is no longer reachable
-          // and the token should be pruned rather than retried.
-          if (status === 410 || data.includes('BadDeviceToken') || data.includes('Unregistered')) {
-            reject(new TokenExpiredError(device.token));
-            return;
-          }
-          reject(new Error(`APNs ${status}: ${data || '(no body)'}`));
-        });
+        request.on('end', () => resolve({ status, body: data }));
         request.on('error', reject);
       });
 
-      await Promise.race([exchange, sessionFailure]);
+      return await Promise.race([exchange, sessionFailure]);
     } finally {
-      client.close();
+      if (onSessionError) {
+        waiting?.delete(onSessionError);
+      }
+      this.hold(session, -1);
     }
+  }
+
+  async send(device: Device, payload: PushPayload): Promise<void> {
+    const host = device.environment === 'sandbox' ? SANDBOX_HOST : PRODUCTION_HOST;
+    const body = JSON.stringify(payload);
+
+    let token = this.bearer();
+    let result = await this.exchange(host, device, body, token);
+
+    // Apple: ExpiredProviderToken means "generate a new token". Keeping the
+    // cached one would fail every iOS push until the cache lapsed. Re-mint
+    // once and retry this push; a second refusal is a clock or key problem
+    // and is reported, not looped on.
+    if (result.status === 403 && reasonOf(result.body) === 'ExpiredProviderToken') {
+      this.invalidate(token);
+      token = this.bearer();
+      result = await this.exchange(host, device, body, token);
+    }
+
+    if (result.status === 200) {
+      return;
+    }
+
+    const reason = reasonOf(result.body);
+    // 410: the app is gone from the device, or the token rotated.
+    if (result.status === 410 || reason === 'Unregistered') {
+      throw new TokenExpiredError(device.token, reason || 'Unregistered');
+    }
+    // 400 BadDeviceToken: Apple's "invalid, or doesn't match the environment".
+    // Pruning is right (Apple: don't retry), but the usual cause is a token
+    // registered under the wrong environment — a release build registered as
+    // sandbox — not a dead device, so the reason says which one to check.
+    if (reason === 'BadDeviceToken') {
+      throw new TokenExpiredError(
+        device.token,
+        `BadDeviceToken: invalid, or not a ${device.environment} token. ` +
+          'Check the environment the device registered with: development builds are sandbox, ' +
+          'TestFlight and App Store builds are production'
+      );
+    }
+    throw new Error(`APNs ${result.status}: ${result.body || '(no body)'}`);
   }
 }

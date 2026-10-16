@@ -50,3 +50,30 @@ export function createSendersFromEnv(env: NodeJS.ProcessEnv = process.env): {
 
   return { senders, missing };
 }
+
+/**
+ * `PARK_ROUTES` maps dialled destinations to subscribers, e.g.
+ * `+15551234567:rn-example`. Needed the moment a phone number points at the
+ * park resource: nothing in an E.164 number names a user.
+ *
+ * Split on the last colon, so a destination that has its own (a SIP URI)
+ * survives.
+ */
+export function parseParkRoutes(raw: string | undefined): Record<string, string> {
+  if (!raw) {
+    return {};
+  }
+  const routes: Record<string, string> = {};
+  for (const pair of raw.split(',')) {
+    const colon = pair.lastIndexOf(':');
+    if (colon < 0) {
+      continue;
+    }
+    const destination = pair.slice(0, colon).trim();
+    const subscriber = pair.slice(colon + 1).trim();
+    if (destination && subscriber) {
+      routes[destination] = subscriber;
+    }
+  }
+  return routes;
+}
