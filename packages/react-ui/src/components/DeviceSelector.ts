@@ -5,7 +5,11 @@
 // DOM at module scope — so this is a browser-only, client-side module.
 'use client';
 
-import { SwDeviceSelector } from '@signalwire/web-components/sw-device-selector';
+// @signalwire/web-components/sw-device-selector points at
+// dist/components/sw-device-selector/index.js, which no 4.0.0 RC ships, so that
+// subpath cannot be imported. The package root exports the class and registers
+// every element, including the ones this selector renders.
+import { SwDeviceSelector } from '@signalwire/web-components';
 
 import { createSwComponent } from '../createSwComponent';
 

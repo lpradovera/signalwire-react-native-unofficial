@@ -35,7 +35,8 @@
     "build": "tsup",
     "test": "jest",
     "type-check": "tsc --noEmit",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "lint:package": "publint && attw --pack ."
   },
   "keywords": [
     "signalwire",

@@ -5,6 +5,7 @@
 // DOM at module scope — so this is a browser-only, client-side module.
 'use client';
 
+import '@signalwire/web-components/sw-ui-icon';
 import { SwLocalCamera } from '@signalwire/web-components/sw-local-camera';
 
 import { createSwComponent } from '../createSwComponent';
