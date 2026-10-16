@@ -2,10 +2,12 @@ import { Platform } from 'react-native';
 import RNCallKeep, { CONSTANTS } from 'react-native-callkeep';
 import {
   BehaviorSubject,
+  distinctUntilChanged,
   EMPTY,
   filter,
   finalize,
   firstValueFrom,
+  map,
   of,
   Subject,
   switchMap,
@@ -14,6 +16,7 @@ import {
 } from 'rxjs';
 
 import { getAudioRouteController } from '../audio/AudioRouteController';
+import type { AudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
 import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
@@ -128,6 +131,8 @@ export class CallKeepBridge {
   private readonly holdTimeoutMs: number;
   /** The clients whose inbound calls are mirrored; see {@link bindClient}. */
   private readonly boundClients = new Map<SignalWire, { subscription: Subscription; binders: number }>();
+  /** Whether the audio controller was last told a live call will start its session. */
+  private expectingAudio = false;
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
   /**
@@ -252,14 +257,21 @@ export class CallKeepBridge {
     this.adoptingLaunchPush = true;
     this.registerNativeListeners();
     this.isSetup = true;
-    // From now on calls start and stop the audio session, so a route chosen
-    // while a call rings waits for its session instead of reaching
-    // incall-manager outside one.
-    try {
-      getAudioRouteController().holdChoicesUntilStart();
-    } catch (error) {
-      logger.debug('Audio routing unavailable:', error);
-    }
+    // A live entry's call gets its audio session from this bridge, so while
+    // one exists a route chosen with no session (a tap while an outbound
+    // call rings) waits for it; when the last one ends without a session the
+    // choice is dropped. Keyed on the entries, not on audio start/stop: a
+    // call that never starts audio ends with neither.
+    this.registry.entries$
+      .pipe(
+        map((entries) => entries.some((entry) => entry.state !== 'ended')),
+        distinctUntilChanged(),
+        takeUntil(this.destroyed$)
+      )
+      .subscribe((live) => {
+        this.expectingAudio = live;
+        this.withAudioRoutes('debug', (audio) => audio.expectSession(live));
+      });
     try {
       await this.adoptPendingNativeCall();
     } finally {
@@ -499,6 +511,10 @@ export class CallKeepBridge {
   }
 
   destroy(): void {
+    if (this.expectingAudio) {
+      this.expectingAudio = false;
+      this.withAudioRoutes('debug', (audio) => audio.expectSession(false));
+    }
     this.destroyed$.next();
     this.destroyed$.complete();
     this.stopTicking();
@@ -956,17 +972,14 @@ export class CallKeepBridge {
     const heldFor = this.audioUuid;
     this.clearHandoverTimer();
     this.audioUuid = uuid;
-    try {
-      const controller = getAudioRouteController();
+    this.withAudioRoutes('warn', (controller) => {
       if (heldFor !== null && heldFor !== uuid && this.audioMedia !== media) {
         logger.debug(`Session of ${heldFor} was started for ${String(this.audioMedia)}; restarting it for ${uuid} (${media})`);
         controller.stop();
       }
       controller.start(media);
       this.audioMedia = media;
-    } catch (error) {
-      logger.warn('Audio routing unavailable:', error);
-    }
+    });
   }
 
   /** `uuid` is taking the session; see {@link audioClaims}. */
@@ -1050,10 +1063,19 @@ export class CallKeepBridge {
     // call waits for its own (or the fallback).
     this.setAudioSessionActive(false);
     this.audioMedia = null;
+    this.withAudioRoutes('debug', (audio) => audio.stop());
+  }
+
+  /**
+   * Runs `action` on the audio route controller. incall-manager is an
+   * optional peer: when it isn't linked the controller can't be built
+   * (`MissingPeerDependencyError`), and the call goes on without routing.
+   */
+  private withAudioRoutes(level: 'warn' | 'debug', action: (audio: AudioRouteController) => void): void {
     try {
-      getAudioRouteController().stop();
+      action(getAudioRouteController());
     } catch (error) {
-      logger.debug('Audio routing unavailable on stop:', error);
+      logger[level]('Audio routing unavailable:', error);
     }
   }
 

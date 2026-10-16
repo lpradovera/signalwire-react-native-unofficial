@@ -18,6 +18,12 @@ import {
 
 const wrapper = InCallManager as unknown as { addListener: jest.Mock; getAudioDeviceStatus: jest.Mock };
 
+async function flush(): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    await Promise.resolve();
+  }
+}
+
 afterEach(() => {
   // restoreAllMocks puts back a replaced Platform.OS even when a test failed.
   jest.restoreAllMocks();
@@ -98,22 +104,74 @@ describe('audioDevices$', () => {
     second.unsubscribe();
   });
 
-  it('keeps the native subscription across a subscribe-unsubscribe-subscribe, then drops it', async () => {
-    // A hook's first render reads the current value with a subscribe that
-    // ends at once, and subscribes again from its effect.
-    jest.useFakeTimers();
+  it('drops the native subscription as soon as the last subscriber leaves', async () => {
+    // useAudioDevices subscribes once per mount (no render-time peek), so
+    // nothing needs the subscription kept past its last subscriber.
     installIncallIosRoutes(deviceStatus('EARPIECE'));
-    audioDevices$.subscribe(() => undefined).unsubscribe();
-    const held = audioDevices$.subscribe(() => undefined);
-    await jest.advanceTimersByTimeAsync(5000);
+    const first = audioDevices$.subscribe(() => undefined);
+    const second = audioDevices$.subscribe(() => undefined);
+    await flush();
+    expect(wrapper.addListener).toHaveBeenCalledTimes(1);
+    const remove = jest.spyOn(wrapper.addListener.mock.results[0]!.value as { remove(): void }, 'remove');
+
+    first.unsubscribe();
+    expect(remove).not.toHaveBeenCalled();
+    second.unsubscribe();
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one native subscription and one read between two bundle copies of the package', async () => {
+    // tsup builds each subpath entry as its own bundle; an app importing
+    // dist/audio.mjs and, through a dependency, dist/audio.js loads two
+    // copies of this module. Two isolated module registries stand for them.
+    installIncallIosRoutes(deviceStatus('EARPIECE'));
+    const load = (): typeof import('./nativeAudioRoutes') => {
+      let copy: typeof import('./nativeAudioRoutes') | undefined;
+      jest.isolateModules(() => {
+        // Each registry has its own incall-manager wrapper; give it the routes.
+        const own = jest.requireActual<{ default: Record<string, unknown> }>('react-native-incall-manager').default;
+        own.addListener = wrapper.addListener;
+        own.getAudioDeviceStatus = wrapper.getAudioDeviceStatus;
+        copy = jest.requireActual<typeof import('./nativeAudioRoutes')>('./nativeAudioRoutes');
+      });
+      return copy!;
+    };
+    const one = load();
+    const two = load();
+    const a: (string | null)[] = [];
+    const b: (string | null)[] = [];
+    const first = one.audioDevices$.subscribe((status) => a.push(status.selected));
+    const second = two.audioDevices$.subscribe((status) => b.push(status.selected));
+    await flush();
+    reportDevice('BLUETOOTH');
+
     expect(wrapper.addListener).toHaveBeenCalledTimes(1);
     expect(incallIosRoutes.getAudioDeviceStatus).toHaveBeenCalledTimes(1);
+    expect(a).toEqual(['EARPIECE', 'BLUETOOTH']);
+    expect(b).toEqual(['EARPIECE', 'BLUETOOTH']);
+    first.unsubscribe();
+    second.unsubscribe();
+  });
 
-    const remove = jest.spyOn(wrapper.addListener.mock.results[0]!.value as { remove(): void }, 'remove');
-    held.unsubscribe();
-    expect(remove).not.toHaveBeenCalled();
+  it('keeps a read made while one connection lived out of the next one', async () => {
+    jest.useFakeTimers();
+    installIncallIosRoutes(deviceStatus('EARPIECE'));
+    const first = audioDevices$.subscribe(() => undefined);
+    await jest.advanceTimersByTimeAsync(0);
+    let resolve: (status: unknown) => void = () => undefined;
+    incallIosRoutes.getAudioDeviceStatus.mockImplementationOnce(() => new Promise((done) => (resolve = done)) as never);
+    const late = getAudioDeviceStatus();
+    first.unsubscribe();
     await jest.advanceTimersByTimeAsync(5000);
-    expect(remove).toHaveBeenCalledTimes(1);
+
+    const seen: (string | null)[] = [];
+    const next = audioDevices$.subscribe((status) => seen.push(status.selected));
+    await jest.advanceTimersByTimeAsync(0);
+    resolve(deviceStatus('BLUETOOTH'));
+    await expect(late).resolves.toMatchObject({ selected: 'BLUETOOTH' });
+
+    expect(seen).toEqual(['EARPIECE']);
+    next.unsubscribe();
   });
 
   it('hands a later subscriber nothing stale once it has disconnected', async () => {

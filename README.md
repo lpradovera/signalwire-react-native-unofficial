@@ -427,10 +427,20 @@ connected headset or car. A toggle written as
 
 A route chosen before the call's audio session starts (a speaker tap while an
 outbound CallKit call still rings) shows at once and is applied when the
-session starts. A video call starts on the speaker only when nothing else is
+session starts; if the call ends first, it is dropped. The CallKit bridge
+starts and stops the session for the calls it tracks. Without CallKit (or
+for a call it doesn't track), call `getAudioRouteController().start(media)`
+when the call connects and `stop()` when it ends; with no session only the
+speaker setting can be written, and only on iOS (speaker on and off;
+`'headset'` and `'bluetooth'` are ignored with a warning), because on
+Android incall-manager refuses every route before its `start()`. A video call starts on the speaker only when nothing else is
 connected: incall-manager's own start decides, and this package doesn't force
-the speaker over a headset or car. A route that can't be chosen (no such
-device) goes back to where it was, on Android too.
+the speaker over a headset or car. `route` shows the media's default (`'speaker'`
+for video) until the session's first status replaces it: on Android
+incall-manager reports its devices, and with iOS routes the session reads
+them; a choice made before that status is held and then applied to the
+reported route. A route that can't be chosen (no such device) goes back to
+where it was, on Android too.
 
 #### Audio routes on iOS
 
@@ -445,7 +455,7 @@ and what you get depends on which you have:
 | `setRoute('earpiece')` | Speaker off; a connected headset or car keeps the call | The receiver |
 | `setRoute('headset')` | Speaker off; a plugged-in headset takes the call | The wired or USB-C headset |
 | `setRoute('bluetooth')` | Ignored, with one warning | A connected Bluetooth headset or car |
-| `route` | What was asked for | What iOS reports: the starting device, a headset or car connecting or dropping, a choice in the system route menu or CallKit |
+| `route` | What was asked for; at start the media's default (`'speaker'` for video), even when iOS kept the call on a headset or car | What iOS reports: the starting device, a headset or car connecting or dropping, a choice in the system route menu or CallKit |
 | `useAudioDevices()` | Empty | The devices, by name, kept current during a call |
 
 iOS routes come from a change to incall-manager that is proposed upstream
@@ -453,9 +463,10 @@ iOS routes come from a change to incall-manager that is proposed upstream
 incall-manager following route changes it didn't make). To use it now, apply
 [`docs/patches/react-native-incall-manager+4.3.0.patch`](docs/patches/react-native-incall-manager+4.3.0.patch)
 with [patch-package](https://github.com/ds300/patch-package): pin
-`react-native-incall-manager` to `4.3.0`, copy the file into your app's
-`patches/`, add `"postinstall": "patch-package"`, and rebuild the app (native
-code). A vendored copy of incall-manager with the same change works the same
+`react-native-incall-manager` to `4.3.0`, install patch-package
+(`npm install --save-dev patch-package`), copy the file into your app's
+`patches/`, add `"postinstall": "patch-package"` to its scripts, run
+`npm install` (which applies it), and rebuild the app (native code). A vendored copy of incall-manager with the same change works the same
 way. This package detects the iOS routes at run time, so nothing else
 changes; without them it falls back as in the first column.
 
@@ -471,7 +482,10 @@ would report its choice, and 4.3.0 re-applies the speaker on the next audio
 category change, undoing it. There `CallControls` offers speaker on/off
 only; for full routing, apply the incall-manager patch above
 (`docs/patches/`) or wait for the upstream change. VoiceOver reads the button as
-"Audio output" (`accessibilityLabel`). Its `activeTintColor` is AVKit's
+a button, "Audio output" (`accessibilityRole`, `accessibilityLabel`). Its
+`style` (background, border, radius, padding) is drawn once, on the view around
+the native picker, the padding insets the icon, and a tap anywhere in that view
+opens the menu. Its `activeTintColor` is AVKit's
 colour for AirPlay being active; a headset or car is not AirPlay.
 
 `useDevices()` has no `refresh`-free auto-update: React Native emits no
