@@ -53,6 +53,10 @@ export interface AppOptions {
   swmlRoutes?: Router;
 }
 
+const defaultLog = (message: string, meta?: Record<string, unknown>): void => {
+  console.error(JSON.stringify({ at: new Date().toISOString(), message, ...meta }));
+};
+
 /**
  * Compares two secrets in time that depends on neither. Both are hashed
  * first, so the comparison is always of 32 bytes and reveals no length.
@@ -144,8 +148,18 @@ export function createApp({
   });
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
-    res.status(500).json({ error: error.message });
+  app.use((error: Error & { status?: number; expose?: boolean }, req: Request, res: Response, _next: NextFunction) => {
+    // body-parser marks its own errors (malformed JSON 400, too large 413,
+    // bad charset 415) with a status and `expose`: those are the client's
+    // mistake and say so. Anything else is ours: log it, and do not hand
+    // internal details (paths, upstream bodies) to whoever sent the request.
+    const status = typeof error.status === 'number' && error.status >= 400 && error.status < 500 ? error.status : 500;
+    if (status < 500 && error.expose) {
+      res.status(status).json({ error: error.message });
+      return;
+    }
+    (log ?? defaultLog)('Request failed', { method: req.method, path: req.path, error: error.message });
+    res.status(status).json({ error: status < 500 ? 'Bad request' : 'Internal server error' });
   });
 
   return app;
