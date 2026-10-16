@@ -537,7 +537,11 @@ export class AudioRouteController {
     const back = base ? base.beforeSpeaker : this.beforeSpeaker;
     const target = present(DEVICE_FOR_ROUTE[back.route]) ? back : DEFAULT_ROUTE;
     // A device that turns out to be gone when asked for: speaker off anyway.
-    this.select(target.route, target.chosen, () => this.select(DEFAULT_ROUTE.route, false), base);
+    // When the default itself is refused (Telecom offering only the speaker),
+    // there is nothing else to try.
+    const isDefault = target.route === DEFAULT_ROUTE.route && !target.chosen;
+    const fallback = isDefault ? undefined : (): void => this.select(DEFAULT_ROUTE.route, false);
+    this.select(target.route, target.chosen, fallback, base);
   }
 
   /**
