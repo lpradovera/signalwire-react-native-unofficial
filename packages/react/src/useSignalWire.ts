@@ -14,6 +14,15 @@ export interface UseSignalWireResult {
   readonly directory: Directory | undefined;
   readonly error: Error | null;
   dial(destination: string, options?: DialOptions): Promise<Call>;
+  /**
+   * Connects the client again after {@link disconnect}, and registers it for
+   * inbound calls, as its startup does. The SDK does not reconnect after an
+   * explicit disconnect, and the provider rebuilds the client only for a new
+   * credentialProvider. (With the `skipRegister` option, call
+   * `client.connect()` instead.)
+   */
+  connect(): Promise<void>;
+  /** Closes the connection; the client stays disconnected until {@link connect}. */
   disconnect(): Promise<void>;
 }
 
@@ -51,6 +60,14 @@ export function useSignalWire(): UseSignalWireResult {
     [client, observer]
   );
 
+  const connect = useCallback(async (): Promise<void> => {
+    if (!client) {
+      return;
+    }
+    await client.connect();
+    await client.register();
+  }, [client]);
+
   const disconnect = useCallback((): Promise<void> => {
     if (!client) {
       return Promise.resolve();
@@ -58,5 +75,5 @@ export function useSignalWire(): UseSignalWireResult {
     return client.disconnect();
   }, [client]);
 
-  return { client, isConnected, isRegistered, user, directory, error, dial, disconnect };
+  return { client, isConnected, isRegistered, user, directory, error, dial, connect, disconnect };
 }

@@ -10,11 +10,14 @@ import type { Address, Call } from '@signalwire/js';
 let autoDialConsumed = false;
 
 export function HomeScreen({
-  onCallStarted
+  onCallStarted,
+  onDisconnect
 }: {
   onCallStarted: (call: Call) => void;
+  /** The Disconnect button: the shell disconnects and offers Connect. */
+  onDisconnect: () => void;
 }): React.JSX.Element {
-  const { user, directory, dial, disconnect, error } = useSignalWire();
+  const { user, directory, dial, error } = useSignalWire();
   const [dialError, setDialError] = useState<string | null>(null);
   // Seed from the synchronous getter, not a literal: `addresses$` is deferred
   // through asapScheduler like every SDK observable, so a `[]` here would show
@@ -67,7 +70,7 @@ export function HomeScreen({
     <View style={styles.root}>
       <View style={styles.header}>
         <Text style={styles.name}>{user?.displayName ?? user?.email ?? 'Connected'}</Text>
-        <Pressable onPress={() => void disconnect()}>
+        <Pressable onPress={onDisconnect}>
           <Text style={styles.link}>Disconnect</Text>
         </Pressable>
       </View>
