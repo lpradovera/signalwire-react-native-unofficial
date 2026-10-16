@@ -36,14 +36,14 @@
   ],
   "peerDependencies": {
     "@lit/react": "^1.0.7",
-    "@signalwire/js": "^4.0.0-rc.2",
-    "@signalwire/web-components": "^4.0.0-rc.2",
+    "@signalwire/js": "^4.0.0-rc.5",
+    "@signalwire/web-components": "^4.0.0-rc.5",
     "react": ">=18.2.0"
   },
   "devDependencies": {
     "@lit/react": "^1.0.8",
-    "@signalwire/js": "^4.0.0-rc.2",
-    "@signalwire/web-components": "^4.0.0-rc.2",
+    "@signalwire/js": "^4.0.0-rc.5",
+    "@signalwire/web-components": "^4.0.0-rc.5",
     "@testing-library/react": "^16.1.0",
     "@types/jest": "^29.5.14",
     "@types/react": "~19.1.10",

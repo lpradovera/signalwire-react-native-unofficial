@@ -45,12 +45,12 @@
     "hooks"
   ],
   "peerDependencies": {
-    "@signalwire/js": "^4.0.0-rc.2",
+    "@signalwire/js": "^4.0.0-rc.5",
     "react": ">=18.2.0",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
-    "@signalwire/js": "^4.0.0-rc.2",
+    "@signalwire/js": "^4.0.0-rc.5",
     "@testing-library/react": "^16.1.0",
     "@types/jest": "^29.5.14",
     "@types/react": "~19.1.10",

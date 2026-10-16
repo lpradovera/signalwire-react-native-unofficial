@@ -10,7 +10,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@signalwire/js": "^4.0.0-rc.2",
+    "@signalwire/js": "^4.0.0-rc.5",
     "@signalwire/react": "^2.0.0-alpha.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
