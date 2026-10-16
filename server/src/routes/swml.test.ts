@@ -416,3 +416,31 @@ describe('GET /swml/ringback', () => {
     assert.equal(buffer.length, 44 + 6 * 8000 * 2);
   });
 });
+
+describe('SWML route logs', () => {
+  it('timestamps every line, so scripts/trace.sh can place it on the timeline', async () => {
+    // The failure lines — a hang-up for a missing SID or token, a rejected
+    // token — are the ones a device test needs most, and they were the ones
+    // logged without `at`.
+    const lines: string[] = [];
+    const { log, warn } = console;
+    console.log = (line: unknown) => lines.push(String(line));
+    console.warn = (line: unknown) => lines.push(String(line));
+    try {
+      await post('/swml/park', { params: { call: { to: '/private/rn-example' } } });
+      await post('/swml/bridge', { params: { call: {} } });
+      await post('/swml/bridge', { params: { vars: { bridgeToken: 'never-minted' }, call: {} } });
+      await post('/swml/bridge/status', { params: { connect_state: 'disconnected' } });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      console.log = log;
+      console.warn = warn;
+    }
+
+    assert.ok(lines.length >= 4, `expected the failure lines, got ${lines.length}`);
+    for (const line of lines) {
+      const parsed = JSON.parse(line) as { at?: string; message?: string };
+      assert.match(parsed.at ?? '', /^\d{4}-\d\d-\d\dT/, `no timestamp on "${parsed.message}"`);
+    }
+  });
+});
