@@ -105,7 +105,7 @@ export class CallKeepBridge {
    */
   private readonly deferredReplay = new Map<string, Array<'answer' | 'end'>>();
   /** The clients whose inbound calls are mirrored; see {@link bindClient}. */
-  private readonly boundClients = new Map<SignalWire, Subscription>();
+  private readonly boundClients = new Map<SignalWire, { subscription: Subscription; binders: number }>();
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
   /**
@@ -256,14 +256,16 @@ export class CallKeepBridge {
    * A client with no `isConnected$` (older SDKs, and the mocks in this
    * package's tests) is treated as already connected.
    *
-   * Binding a client that is already bound does nothing. Returns the unbind:
-   * after it, the client's inbound calls no longer reach CallKit (the
-   * provider calls it when `callKit` is turned off).
+   * A client is subscribed to once however often it is bound. Returns this
+   * binder's unbind (the provider calls it when `callKit` is turned off):
+   * once every binder of the client has unbound it, its inbound calls no
+   * longer reach CallKit.
    */
   bindClient(client: SignalWire): () => void {
     const existing = this.boundClients.get(client);
     if (existing) {
-      return () => existing.unsubscribe();
+      existing.binders += 1;
+      return this.unbinderFor(client, existing);
     }
     const connected$ = client.isConnected$ ?? of(true);
 
@@ -283,10 +285,35 @@ export class CallKeepBridge {
           }
         }
       });
-    if (!subscription.closed) {
-      this.boundClients.set(client, subscription);
+    if (subscription.closed) {
+      return () => undefined;
     }
-    return () => subscription.unsubscribe();
+    const binding = { subscription, binders: 1 };
+    this.boundClients.set(client, binding);
+    return this.unbinderFor(client, binding);
+  }
+
+  /**
+   * One binder's unbind. The client stays bound until its last binder
+   * unbinds: two providers, or a provider and the app's own call, can bind
+   * the same client, and one of them unmounting must not stop the other's
+   * calls reaching CallKit. Calling it twice counts once.
+   */
+  private unbinderFor(
+    client: SignalWire,
+    binding: { subscription: Subscription; binders: number }
+  ): () => void {
+    let unbound = false;
+    return () => {
+      if (unbound) {
+        return;
+      }
+      unbound = true;
+      binding.binders -= 1;
+      if (binding.binders === 0) {
+        binding.subscription.unsubscribe();
+      }
+    };
   }
 
   /**

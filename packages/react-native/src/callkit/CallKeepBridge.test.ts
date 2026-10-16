@@ -382,6 +382,36 @@ describe('CallKeepBridge', () => {
     expect(InCallManager.setForceSpeakerphoneOn).toHaveBeenLastCalledWith(true);
   });
 
+  it("keeps a client bound until every binder has unbound it", async () => {
+    // Two providers, or a provider and the app's own getCallKit().bindClient.
+    await bridge.setup({ appName: 'Demo' });
+    const incoming$ = new Subject<unknown[]>();
+    const client = createClient(incoming$) as never;
+    const unbindA = bridge.bindClient(client);
+    const unbindB = bridge.bindClient(client);
+
+    unbindA();
+    unbindA();
+    incoming$.next([createCall('c1')]);
+    expect(RNCallKeep.displayIncomingCall).toHaveBeenCalledTimes(1);
+
+    unbindB();
+    incoming$.next([createCall('c2')]);
+    expect(RNCallKeep.displayIncomingCall).toHaveBeenCalledTimes(1);
+  });
+
+  it('binds a client afresh after its last binder unbound it', async () => {
+    await bridge.setup({ appName: 'Demo' });
+    const incoming$ = new Subject<unknown[]>();
+    const client = createClient(incoming$) as never;
+    bridge.bindClient(client)();
+
+    bridge.bindClient(client);
+    incoming$.next([createCall('c1')]);
+
+    expect(RNCallKeep.displayIncomingCall).toHaveBeenCalledTimes(1);
+  });
+
   it('starts the audio session when an outbound call connects', async () => {
     // Outbound calls never reach the native answer handler, which was the only
     // caller of startAudio — so InCallManager never ran for a call the user
