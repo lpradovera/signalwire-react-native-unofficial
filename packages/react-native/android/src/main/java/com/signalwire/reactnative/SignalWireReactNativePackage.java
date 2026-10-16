@@ -7,6 +7,7 @@ import com.facebook.react.bridge.NativeModule;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.uimanager.ViewManager;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -15,7 +16,8 @@ public class SignalWireReactNativePackage implements ReactPackage {
   @NonNull
   @Override
   public List<NativeModule> createNativeModules(@NonNull ReactApplicationContext context) {
-    return Collections.singletonList(new IncomingCallNotificationModule(context));
+    return Arrays.<NativeModule>asList(
+        new IncomingCallNotificationModule(context), new CallAudioStateModule(context));
   }
 
   @NonNull
