@@ -1,14 +1,14 @@
 # `@signalwire/react-native-ui`
 
-> **Unofficial.** This is a community project, not a SignalWire product, and is
-> not affiliated with or endorsed by SignalWire.
+> **Alpha.** On its way to becoming SignalWire's supported React Native SDK;
+> APIs may change between alpha releases.
 
 React Native call UI for the SignalWire SDK. The native counterpart to
 [`@signalwire/react-ui`](../react-ui), which wraps the SDK's Lit components for
 the browser — there is nothing to wrap on native, so these are built.
 
 ```bash
-npm install @signalwire/react-native-ui @signalwire/react-native
+npm install @signalwire/react-native-ui@alpha @signalwire/react-native@alpha
 ```
 
 ```tsx

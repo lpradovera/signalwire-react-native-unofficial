@@ -1,7 +1,7 @@
 # `@signalwire/react`
 
-> **Unofficial.** This is a community project, not a SignalWire product, and is
-> not affiliated with or endorsed by SignalWire.
+> **Alpha.** On its way to becoming SignalWire's supported React Native SDK;
+> APIs may change between alpha releases.
 
 Universal React bindings for [`@signalwire/js`](https://www.npmjs.com/package/@signalwire/js) v4.
 
@@ -11,7 +11,7 @@ platform-specific code. React Native users should install
 and re-exports everything here.
 
 ```bash
-npm install @signalwire/react @signalwire/js rxjs
+npm install @signalwire/react@alpha @signalwire/js rxjs
 ```
 
 ```tsx

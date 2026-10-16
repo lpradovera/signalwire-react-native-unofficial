@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@signalwire/js": "^4.0.0-rc.2",
-    "@signalwire/react": "^0.1.0",
+    "@signalwire/react": "^2.0.0-alpha.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "rxjs": "^7.8.2"
