@@ -1,0 +1,18 @@
+{
+  "//": "Stand-in for a Firebase project file, used by scripts/verify-prebuild.mjs only. Not a real project: no app built from it can receive pushes.",
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "verify-prebuild-fixture",
+    "storage_bucket": "verify-prebuild-fixture.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+        "android_client_info": { "package_name": "com.example.swrnexample" }
+      },
+      "api_key": [{ "current_key": "not-a-key" }]
+    }
+  ],
+  "configuration_version": "1"
+}

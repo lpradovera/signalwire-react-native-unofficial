@@ -1,48 +1,92 @@
-import { TokenFetchError } from '@signalwire/react-native';
+/** What the support server's `POST /token` answers. */
+export interface ServerToken {
+  token: string;
+  /** The subscriber the token was minted for, which the server decides. */
+  reference: string;
+  /** When the token expires (Unix seconds), as the server reports it. */
+  expiresAt?: number;
+}
 
-import { TOKEN_URL } from './endpoints';
-import { SUBSCRIBER_REFERENCE } from './subscriber';
+/** A refusal from the token server, with its HTTP status. */
+export class ServerTokenError extends Error {
+  readonly status: number;
 
-import type { FetchedToken } from '@signalwire/react-native';
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ServerTokenError';
+    this.status = status;
+  }
+}
+
+type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+
+const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
- * The provider's `fetchToken`: a subscriber token from the support server.
+ * Requests a subscriber token from the support server.
  *
- * Set `EXPO_PUBLIC_SW_TOKEN_URL` to the server's `/token` endpoint — the
- * `EXPO_PUBLIC_` prefix is what makes Expo inline the value into the bundle, so
- * renaming it breaks this silently. Unset, the app falls back to the paste-a-
- * token screen, which is still the quickest path when you have a token to hand.
+ * The status is checked before the body is parsed: a tunnel or proxy in front
+ * of a stopped server answers with an HTML error page, and parsing that first
+ * reported a JSON syntax error instead of the status that says the server is
+ * down. The request has a timeout of its own because React Native's Android
+ * client has none, and an unreachable address otherwise waits for the OS's TCP
+ * connect timeout.
  *
- * The provider calls this to connect, again before each token's `expires_at`,
- * and on foreground or a call push when it is due; it retries failures itself.
- * A 401 or 403 is thrown with its status, so it shows as 'unauthorized'
- * instead of being retried. Module scope: a new function identity would
- * rebuild the client.
- *
- * Real deployments send their own session credential here; the server maps it
- * to a subscriber. See `server/src/routes/token.ts`.
+ * The reference comes back from the server, not from the request: it is the
+ * server that decides whose token this is, and the device must register for
+ * push under exactly that subscriber.
  */
-const url = TOKEN_URL;
+export async function requestServerToken(
+  url: string,
+  reference: string,
+  { fetch = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS }: { fetch?: FetchLike; timeoutMs?: number } = {}
+): Promise<ServerToken> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
 
-export const fetchServerToken = url
-  ? async (): Promise<FetchedToken> => {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        // Named explicitly, so the token and the device registration
-        // agree on who this device is.
-        body: JSON.stringify({ reference: SUBSCRIBER_REFERENCE })
-      });
-      const body = (await response.json().catch(() => ({}))) as {
-        token?: string;
-        expires_at?: number;
-        error?: string;
-      };
-      if (!response.ok || !body.token) {
-        throw new TokenFetchError(body.error ?? `Token server returned ${response.status}`, {
-          status: response.status
-        });
-      }
-      return { token: body.token, expiresAt: body.expires_at };
+  let response: Response;
+  let text: string;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reference }),
+      signal: controller.signal
+    });
+    text = await response.text();
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(`Token server did not answer within ${timeoutMs / 1000} s`);
     }
-  : undefined;
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const body = parseObject(text);
+  if (!response.ok) {
+    const detail = typeof body?.error === 'string' ? `: ${body.error}` : '';
+    throw new ServerTokenError(`Token server returned ${response.status}${detail}`, response.status);
+  }
+  if (typeof body?.token !== 'string' || body.token.length === 0) {
+    throw new Error('Token server returned no token');
+  }
+  return {
+    token: body.token,
+    reference: typeof body.reference === 'string' && body.reference ? body.reference : reference,
+    ...(typeof body.expires_at === 'number' ? { expiresAt: body.expires_at } : {})
+  };
+}
+
+function parseObject(text: string): Record<string, unknown> | undefined {
+  try {
+    const value: unknown = JSON.parse(text);
+    return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
