@@ -64,7 +64,10 @@ and the second to attach CallKit. Browser apps need neither.
 
 When `bindClient` returns a function, the provider calls it when the client or
 the observer changes, or the provider unmounts, so the observer stops acting on
-that client.
+that client. `bindClient` runs again for each new observer object, so memoize
+such an observer. One whose `bindClient` returns nothing can't be unbound: it is
+bound once per client, as in 0.1.0, and an observer passed for the same client
+after it is not bound.
 
 This boundary is enforced by lint: an import of `react-native`, `react-native-*`
 or `@react-native-*` inside this package fails the build.
