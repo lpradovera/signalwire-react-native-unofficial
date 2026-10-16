@@ -24,6 +24,8 @@ import { SignalWireContext } from '@signalwire/react';
 import { IncomingCallSheet } from './IncomingCallSheet';
 
 jest.mock('@signalwire/react-native/ringing', () => ({
+  // The real name formatting; only the native ringing list is faked.
+  displayableName: jest.requireActual('@signalwire/react-native/ringing').displayableName,
   useRingingPushes: () => ({ ringing: [], answer: jest.fn(), reject: jest.fn() })
 }));
 
