@@ -106,6 +106,25 @@ if (!signingKey) {
   process.exit(1);
 }
 
+let swmlRoutes;
+try {
+  swmlRoutes = createSwmlRoutes({
+    tokens: bridgeTokens,
+    service,
+    publicUrl,
+    signingKey,
+    routes: parseParkRoutes(process.env.PARK_ROUTES),
+    ringback: process.env.PARK_RINGBACK_URL,
+    ringbackSeconds: process.env.PARK_RINGBACK_SECONDS
+      ? Number(process.env.PARK_RINGBACK_SECONDS)
+      : undefined,
+    callEnder: createCallEnderFromEnv()
+  });
+} catch (error) {
+  log(`${(error as Error).message} Exiting.`);
+  process.exit(1);
+}
+
 const app = createApp({
   store,
   service,
@@ -115,15 +134,7 @@ const app = createApp({
     signingKey && publicUrl ? requireSignalWireSignature({ signingKey, publicUrl }) : undefined,
   log,
   tokenRoutes,
-  swmlRoutes: createSwmlRoutes({
-    tokens: bridgeTokens,
-    service,
-    publicUrl,
-    signingKey,
-    routes: parseParkRoutes(process.env.PARK_ROUTES),
-    ringback: process.env.PARK_RINGBACK_URL,
-    callEnder: createCallEnderFromEnv()
-  })
+  swmlRoutes
 });
 
 // Express 5 passes a listen failure (EADDRINUSE, EACCES) to this callback
