@@ -153,21 +153,28 @@ on it exactly.
 
 ```
 src/
-├── core/          ← generic. Knows nothing about SignalWire.
+├── core/          ← generic push service. Knows nothing about SignalWire,
+│   │                except BridgeTokenStore (below).
 │   ├── types.ts              Device, CallNotification, PushSender
 │   ├── DeviceStore.ts        interface + in-memory + JSON file
 │   ├── ApnsVoipSender.ts     PushKit
 │   ├── FcmSender.ts          data-only, high priority
 │   ├── NotificationService.ts  fan-out, results, token pruning
+│   ├── BridgeTokenStore.ts   bridge tokens for parked SignalWire calls
 │   └── jwt.ts                ES256/RS256 on node:crypto
-├── routes/        ← generic HTTP surface
-├── signalwire/    ← the ONLY SignalWire-aware file
-└── app.ts         ← wiring, no `listen`
+├── routes/        ← HTTP surface. devices, notify and token are generic;
+│                    swml.ts is SignalWire's parked-caller flow (SWML in and out)
+├── signalwire/    ← SignalWire adapters: the webhook mapping, subscriber
+│                    tokens, calling.end, request signatures
+├── app.ts         ← wiring, no `listen`
+└── index.ts       ← reads the environment, listens
 ```
 
-The `core` / `signalwire` split is deliberate. Everything under `core/` is a
-standalone VoIP push service; the adapter is the only thing tying it to
-SignalWire. Also: `externalUserId` is not called `subscriberId` for the same
+The `core` / `signalwire` split is deliberate. Apart from
+`BridgeTokenStore` (which holds parked SignalWire call ids, and moves with the
+parked-caller flow), everything under `core/` is a standalone VoIP push
+service, and the SignalWire-specific code sits in `signalwire/` and
+`routes/swml.ts`. Also: `externalUserId` is not called `subscriberId` for the same
 reason — one column's worth of discipline now is the difference between
 multi-tenant later and a migration.
 
