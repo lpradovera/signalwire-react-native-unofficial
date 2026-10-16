@@ -26,18 +26,26 @@ dev client. That is what `expo-dev-client` is for.
 
 ```bash
 npm install @signalwire/react-native@alpha @signalwire/js rxjs \
-  react-native-webrtc \
+  react-native-webrtc @config-plugins/react-native-webrtc \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
   react-native-url-polyfill \
   react-native-callkeep react-native-incall-manager \
-  @react-native-community/netinfo
+  @react-native-community/netinfo \
+  @signalwire/react-native-ui@alpha react-native-safe-area-context
 ```
 
-The last three are native call UI, audio routing and network-loss detection.
-`@signalwire/react-native`'s main entry imports all three, so the app does not
-bundle without them. `@alpha` matters: without it npm installs `latest`, which
-is still SignalWire's unrelated 1.x SDK (see "Install" in the README).
+The callkeep, incall-manager and netinfo lines are native call UI, audio
+routing and network-loss detection. `@signalwire/react-native`'s main entry
+imports all three, so the app does not bundle without them. `@alpha` matters:
+without it npm installs `latest`, which is still SignalWire's unrelated 1.x SDK
+(see "Install" in the README). `@signalwire/react-native-ui` supplies the
+incoming-call sheet in step 6 (with `react-native-safe-area-context`, its
+peer). `@config-plugins/react-native-webrtc` is the webrtc config plugin that
+the `app.json` below lists; without it prebuild stops with `PLUGIN_NOT_FOUND`.
+Its major version follows the Expo SDK (13.x is the one for SDK 54; its `expo`
+peer names the SDK), so if npm picks one for a different SDK, install the
+matching major.
 
 Add the config plugin to `app.json`:
 
@@ -118,10 +126,11 @@ import { Button, Text, View } from 'react-native';
 import type { CredentialProvider } from '@signalwire/js';
 
 function Dialer() {
-  const { isConnected, user, dial } = useSignalWire();
+  const { isConnected, user, error, dial } = useSignalWire();
   return (
     <View>
       <Text>{isConnected ? `Online as ${user?.displayName}` : 'Connecting…'}</Text>
+      {error && <Text>{error.message}</Text>}
       <Button title="Call" onPress={() => void dial('/public/your-resource', {
         audio: true,
         video: false
@@ -140,7 +149,7 @@ export default function App() {
   }, []);
 
   const credentials = useMemo<CredentialProvider | null>(
-    () => (token ? { getToken: async () => token } : null),
+    () => (token ? { authenticate: async () => ({ token }) } : null),
     [token]
   );
 
@@ -154,6 +163,12 @@ export default function App() {
 }
 ```
 
+A `CredentialProvider` is an object with `authenticate()`, which resolves
+`{ token }`; the SDK calls it once while the client starts. This one returns
+the token with no `expiry_at` and has no `refresh()`, so the SDK never renews
+it. For sessions that outlive the token, return `expiry_at` and supply
+`refresh()` (the `CredentialProvider` type in `@signalwire/js` documents both).
+
 `credentialProvider` is memoised deliberately: the provider rebuilds its client
 whenever that value changes, and an inline object literal is a new value on
 every render. A rebuild destroys the old client, and with it hangs up any call
@@ -161,10 +176,12 @@ in progress, so do not rotate a token by changing this value during a call:
 return `expiry_at` from `authenticate()` and implement `refresh()`, which the
 SDK calls before the credential expires while the session carries on.
 
-**Checkpoint:** the app says "Online as …". If it says "Connecting…" forever,
-your token endpoint is the first thing to check — on Android an emulator cannot
-resolve your Mac's hostname, so use `adb reverse tcp:3000 tcp:3000` and
-`http://localhost:3000`.
+**Checkpoint:** the app says "Online as …". If it stays on "Loading…", the
+token fetch failed, and your token endpoint is the first thing to check — on
+Android an emulator cannot resolve your Mac's hostname, so use
+`adb reverse tcp:3000 tcp:3000` and `http://localhost:3000`. If an error shows
+under "Connecting…", the app has a token and the client failed with it; the
+message says how.
 
 ## 5. Place a call, with audio
 
