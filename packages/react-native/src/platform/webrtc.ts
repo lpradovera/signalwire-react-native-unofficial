@@ -123,6 +123,53 @@ export function withGetConfiguration<T extends PeerConnectionClass>(Base: T): T 
   return PeerConnectionWithConfiguration as unknown as T;
 }
 
+/**
+ * The SDK constructs the bare global `MediaStream` on several paths: a dial
+ * with `inputAudioStream`/`inputVideoStream`, a track added to a call that
+ * started receive-only (unmute after a granted permission), a remote track
+ * that arrives without a stream. React Native defines no `MediaStream`, and
+ * react-native-webrtc installs its own only through `registerGlobals()`,
+ * which also replaces `navigator.mediaDevices` and the RTC globals; this
+ * package hands those to the SDK through the provider instead. So only the
+ * one missing constructor is installed, and only when there is none.
+ */
+function installGlobalMediaStream(RNMediaStream: unknown): void {
+  const root = globalThis as { MediaStream?: unknown };
+  if (typeof root.MediaStream === 'undefined') {
+    root.MediaStream = RNMediaStream;
+  }
+}
+
+/**
+ * react-native-webrtc rejects getUserMedia with a `MediaStreamError`, which is
+ * not an `Error`: a denied microphone or camera is
+ * `{ name: 'SecurityError', message: 'Permission denied.' }`. The SDK's
+ * MediaAccessError recognises a denial (`denied`, its 'denied' message,
+ * `cause`) only on an `Error`, so the rejection is re-thrown as one with the
+ * same name and message, and the original as its cause.
+ */
+function toError(reason: unknown): unknown {
+  if (reason instanceof Error || typeof reason !== 'object' || reason === null) {
+    return reason;
+  }
+  const { name, message, constraintName } = reason as {
+    name?: unknown;
+    message?: unknown;
+    constraintName?: unknown;
+  };
+  const error = new Error(
+    typeof message === 'string' ? message : String(name ?? 'getUserMedia failed')
+  ) as Error & { cause?: unknown; constraintName?: unknown };
+  error.cause = reason;
+  if (typeof name === 'string') {
+    error.name = name;
+  }
+  if (constraintName !== undefined) {
+    error.constraintName = constraintName;
+  }
+  return error;
+}
+
 let warnedAboutDeviceEvents = false;
 
 function warnOnceAboutDeviceEvents(): void {
@@ -145,15 +192,21 @@ function warnOnceAboutDeviceEvents(): void {
 export function createWebRTCApiProvider(): WebRTCApiProvider {
   const {
     mediaDevices: rnMediaDevices,
+    MediaStream: RNMediaStream,
     RTCPeerConnection: RNPeerConnection,
     RTCRtpSender: RNRtpSender
   } = loadReactNativeWebRTC('WebRTC support');
 
   installSenderSetStreamsShim(RNRtpSender);
+  installGlobalMediaStream(RNMediaStream);
 
   const mediaDevices: WebRTCMediaDevices = {
     getUserMedia: (constraints) =>
-      rnMediaDevices.getUserMedia(constraints as never) as unknown as Promise<MediaStream>,
+      (rnMediaDevices.getUserMedia(constraints as never) as unknown as Promise<MediaStream>).catch(
+        (reason: unknown) => {
+          throw toError(reason);
+        }
+      ),
     enumerateDevices: () =>
       rnMediaDevices.enumerateDevices() as unknown as Promise<MediaDeviceInfo[]>,
     addEventListener: () => warnOnceAboutDeviceEvents(),

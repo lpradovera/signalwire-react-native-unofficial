@@ -307,8 +307,15 @@ Four things break without it:
   throws `values().map is not a function`. This one is lazy rather than
   import-time, which makes it easy to miss in a quick smoke test.
 
-`createReactNativePlatform()` verifies the polyfills ran and throws
-`PolyfillNotInstalledError` naming the fix if they did not.
+Without the import (or with it after another import that loads the SDK), the
+app fails before this package's own checks can run: importing
+`@signalwire/react-native` loads `@signalwire/js`, and Hermes stops with
+`ReferenceError: Property 'CustomEvent' doesn't exist`. `createReactNativePlatform()`
+also checks the random-values and URL polyfills and throws
+`PolyfillNotInstalledError` naming the fix, but that check is reached only
+when something else in the app already supplies `CustomEvent` and
+`window.dispatchEvent`. Nothing checks the iterator helpers; their absence
+shows only as `values().map is not a function`.
 
 ## Two build-config requirements — Expo SDK 52 only
 
@@ -621,6 +628,7 @@ FCM, and a link-by-link verification ladder.
 
 ## Troubleshooting
 
+**`ReferenceError: Property 'CustomEvent' doesn't exist`** at startup, or
 **`PolyfillNotInstalledError`** — `@signalwire/react-native/polyfills` is missing
 or not first in your entry file. See the import-order rule above.
 

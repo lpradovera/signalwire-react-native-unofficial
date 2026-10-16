@@ -472,8 +472,8 @@ real Hermes runtime in one shot. If it red-screens on startup, capture the stack
 | CallKit Accept connects the call but the app UI does not react | Nothing surfaced the native answer to React | Subscribe to `getCallKit().registry.answered$` |
 | A bridge reports `setup=false` while its registry knows the call | Two copies of the module (subpath entry bundles) each held a `let singleton` | Fixed — singletons live on `globalThis`. If you add another, do the same |
 | ICE gathering times out; candidate list includes `100.x`/`fd7a:` addresses | A VPN (e.g. Tailscale) adds interfaces that slow gathering | Disable the VPN on the device, or accept slower setup |
-| `PolyfillNotInstalledError` | `@signalwire/react-native/polyfills` missing or not first | Make it line 1 of `index.js` |
-| Red screen: `CustomEvent is not defined` | Polyfills entry did not run before `@signalwire/js` | Same as above |
+| Red screen at startup: `ReferenceError: Property 'CustomEvent' doesn't exist` | Polyfills entry did not run before `@signalwire/js` (the usual symptom of a missing or late polyfills import) | Make it line 1 of `index.js` |
+| `PolyfillNotInstalledError` | The random-values or URL polyfill is missing, and another library already supplied `CustomEvent` (otherwise the row above happens first) | Same as above |
 | `Unable to resolve module @signalwire/react-native/polyfills` | Metro package exports off | `resolver.unstable_enablePackageExports = true` |
 | `Static class blocks are not enabled` | Babel plugin missing | Add `@babel/plugin-transform-class-static-block` |
 | `dial()` reaches the wrong address | `react-native-url-polyfill` missing | Check the polyfills import |
