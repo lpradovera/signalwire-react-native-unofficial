@@ -396,11 +396,25 @@ export default function App() {
 }
 ```
 
+A pasted token expires. For a real app, pass `fetchToken` instead: the
+provider fetches from your server to connect, renews ahead of expiry, on
+foreground and on a call push, retries failures, and reports a 401 or 403
+through `useSignalWire().tokenStatus`. See [docs/tokens.md](docs/tokens.md).
+
+```tsx
+const fetchToken = async () => {
+  const body = await (await fetch(TOKEN_URL, { method: 'POST' })).json();
+  return { token: body.token, expiresAt: body.expires_at };
+};
+
+<SignalWireProvider fetchToken={fetchToken}>
+```
+
 ## Hooks
 
 | Hook | Returns | Entry point |
 | --- | --- | --- |
-| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `dial`, `disconnect` | `@signalwire/react-native` |
+| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `tokenStatus`, `dial`, `disconnect` | `@signalwire/react-native` |
 | `useCall(call)` | `status`, `participants`, `self`, `localStream`, `remoteStream`, `isAudioMuted`, `isVideoMuted`, `error`, `hangup`, `toggleHold`, `setAudioMuted`, `setVideoMuted`, `sendDigits` | `@signalwire/react-native` |
 | `useIncomingCalls()` | `calls`, `answer`, `reject` | `@signalwire/react-native` |
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` | `@signalwire/react-native` |

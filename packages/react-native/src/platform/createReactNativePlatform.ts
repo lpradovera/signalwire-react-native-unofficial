@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState } from 'react-native';
 
 import { logger } from '@signalwire/react';
 import { assertPolyfillsInstalled } from './assertPolyfills';
@@ -25,6 +26,8 @@ export interface ReactNativePlatform {
   readonly options: SignalWireOptions;
   /** Releases the shims' subscriptions. Safe to call more than once. */
   dispose(): void;
+  /** Calls `listener` each time `AppState` becomes `'active'`; returns its unsubscribe. */
+  watchForeground(listener: () => void): () => void;
 }
 
 function installOptional(name: string, install: () => () => void): (() => void) | null {
@@ -74,6 +77,14 @@ export function createReactNativePlatform(
       webRTCApiProvider: options.webRTCApiProvider ?? createWebRTCApiProvider(),
       storageImplementation: options.storage ?? new ReactNativeStorage(AsyncStorage),
       skipDeviceMonitoring: true
+    },
+    watchForeground: (listener: () => void): (() => void) => {
+      const subscription = AppState.addEventListener('change', (state) => {
+        if (state === 'active') {
+          listener();
+        }
+      });
+      return () => subscription.remove();
     },
     dispose: (): void => {
       if (disposed) {

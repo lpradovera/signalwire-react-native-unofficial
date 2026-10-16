@@ -24,7 +24,11 @@ const createPlatform = createReactNativePlatform as jest.MockedFunction<
 const createObserver = createCallKitObserver as jest.MockedFunction<typeof createCallKitObserver>;
 
 const credentialProvider = { authenticate: jest.fn(async () => ({ token: 't' })) };
-const platform = { options: { skipDeviceMonitoring: true }, dispose: jest.fn() };
+const platform = {
+  options: { skipDeviceMonitoring: true },
+  dispose: jest.fn(),
+  watchForeground: jest.fn(() => jest.fn())
+};
 const observer = { bindClient: jest.fn(), onOutgoingCall: jest.fn() };
 
 beforeEach(() => {
@@ -117,5 +121,17 @@ describe('React Native SignalWireProvider', () => {
     );
     // A fresh platform identity would tear down and rebuild the client.
     expect(createPlatform).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes fetchToken through in place of a credentialProvider', async () => {
+    const fetchToken = jest.fn(async () => ({ token: 't' }));
+    await render(
+      <SignalWireProvider fetchToken={fetchToken}>
+        <Text>child</Text>
+      </SignalWireProvider>
+    );
+    const props = core.mock.calls[0]?.[0];
+    expect(props.fetchToken).toBe(fetchToken);
+    expect(props.credentialProvider).toBeUndefined();
   });
 });
