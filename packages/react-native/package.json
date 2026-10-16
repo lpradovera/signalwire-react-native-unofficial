@@ -123,19 +123,10 @@
     "expo": {
       "optional": true
     },
-    "@react-native-community/netinfo": {
-      "optional": true
-    },
     "@react-native-firebase/app": {
       "optional": true
     },
     "@react-native-firebase/messaging": {
-      "optional": true
-    },
-    "react-native-callkeep": {
-      "optional": true
-    },
-    "react-native-incall-manager": {
       "optional": true
     }
   },

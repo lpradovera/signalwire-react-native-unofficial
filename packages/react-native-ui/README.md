@@ -8,8 +8,14 @@ React Native call UI for the SignalWire SDK. The native counterpart to
 the browser — there is nothing to wrap on native, so these are built.
 
 ```bash
-npm install @signalwire/react-native-ui @signalwire/react-native
+npm install @signalwire/react-native-ui @signalwire/react-native react-native-incall-manager
 ```
+
+`CallControls` drives the speaker through `@signalwire/react-native/audio`,
+which imports `react-native-incall-manager`, and the package's entry exports
+it, so the kit does not bundle without incall-manager even if you use only
+`Dialpad` or `IncomingCallSheet`. `@signalwire/react-native`'s own peers are
+listed in its README.
 
 ```tsx
 import { SignalWireVideoView } from '@signalwire/react-native';
