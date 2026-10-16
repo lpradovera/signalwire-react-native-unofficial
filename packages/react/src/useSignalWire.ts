@@ -46,7 +46,7 @@ function useSignalWireContext(): SignalWireContextValue {
 
 /** Client-level state and actions. */
 export function useSignalWire(): UseSignalWireResult {
-  const { client, error, observer, tokenStatus = null } = useSignalWireContext();
+  const { client, error, observer, tokenStatus = null, clearCallError } = useSignalWireContext();
 
   const isConnected = useObservable(client?.isConnected$, client?.isConnected ?? false);
   const isRegistered = useObservable(client?.isRegistered$, client?.isRegistered ?? false);
@@ -65,9 +65,11 @@ export function useSignalWire(): UseSignalWireResult {
       // The core does not know what an observer does with this — on React
       // Native it registers the call with CallKit; on the web nobody listens.
       observer?.onOutgoingCall?.(call, destination);
+      // A call is up: an earlier failed dial's error no longer says anything.
+      clearCallError?.();
       return call;
     },
-    [client, observer]
+    [client, observer, clearCallError]
   );
 
   const connect = useCallback(async (): Promise<void> => {

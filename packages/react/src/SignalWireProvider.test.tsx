@@ -468,3 +468,81 @@ describe('SignalWireProvider error after a reconnect', () => {
     expect(screen.getByTestId('state').textContent).toBe('error:Call creation failed');
   });
 });
+
+/*
+ * A failed dial reports a CallCreateError ("Call creation failed") on
+ * errors$ as well as throwing it, and the provider kept it as `error` for the
+ * rest of the session: the example's Home screen still said "Call creation
+ * failed" after the next call had connected.
+ */
+describe('SignalWireProvider error after a failed dial', () => {
+  function callCreateError(): Error {
+    const error = new Error('Call creation failed');
+    error.name = 'CallCreateError';
+    return error;
+  }
+
+  let dialFromProbe: ((to: string) => Promise<unknown>) | undefined;
+
+  function DialProbe(): React.JSX.Element {
+    const { dial, error } = useSignalWire();
+    dialFromProbe = dial;
+    return <span data-testid="state">{error ? `error:${error.message}` : 'none'}</span>;
+  }
+
+  async function renderConnected(): Promise<void> {
+    render(
+      <SignalWireProvider credentialProvider={credentialProvider as never}>
+        <DialProbe />
+      </SignalWireProvider>
+    );
+    await act(async () => {
+      harness.isConnected$.next(true);
+      harness.isRegistered$.next(true);
+    });
+  }
+
+  it('clears it when the next dial succeeds', async () => {
+    await renderConnected();
+    await act(async () => harness.errors$.next(callCreateError()));
+    expect(screen.getByTestId('state').textContent).toBe('error:Call creation failed');
+
+    await act(async () => {
+      await dialFromProbe?.('/public/room');
+    });
+
+    expect(screen.getByTestId('state').textContent).toBe('none');
+  });
+
+  it('keeps it while the next dial fails too', async () => {
+    await renderConnected();
+    await act(async () => harness.errors$.next(callCreateError()));
+    harness.dial.mockRejectedValueOnce(callCreateError());
+
+    await act(async () => {
+      await dialFromProbe?.('/public/room').catch(() => undefined);
+    });
+
+    expect(screen.getByTestId('state').textContent).toBe('error:Call creation failed');
+  });
+
+  it('clears it once the client registers again (a connect)', async () => {
+    await renderConnected();
+    await act(async () => harness.errors$.next(callCreateError()));
+
+    await act(async () => harness.isRegistered$.next(true));
+
+    expect(screen.getByTestId('state').textContent).toBe('none');
+  });
+
+  it('keeps an error that is not a call error when a dial succeeds', async () => {
+    await renderConnected();
+    await act(async () => harness.errors$.next(new Error('Device token refresh failed')));
+
+    await act(async () => {
+      await dialFromProbe?.('/public/room');
+    });
+
+    expect(screen.getByTestId('state').textContent).toBe('error:Device token refresh failed');
+  });
+});
