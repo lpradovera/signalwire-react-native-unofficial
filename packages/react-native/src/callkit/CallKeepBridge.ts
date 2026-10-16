@@ -6,6 +6,7 @@ import { getAudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
 import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
+import { CALLKIT_BRIDGE_KEY } from './bridgeKey';
 import { CallRegistry } from './CallRegistry';
 
 import type { CallEndReason, CallRegistryHost, PushPayload } from './types';
@@ -792,7 +793,7 @@ function generateUuid(): string {
  * device as `uuid=<valid>, setup=false`. `globalThis` is the one scope every
  * copy shares.
  */
-const CALLKIT_GLOBAL = '__signalwireRNCallKitBridge';
+const CALLKIT_GLOBAL = CALLKIT_BRIDGE_KEY;
 
 type CallKitHolder = { [CALLKIT_GLOBAL]?: CallKeepBridge };
 
