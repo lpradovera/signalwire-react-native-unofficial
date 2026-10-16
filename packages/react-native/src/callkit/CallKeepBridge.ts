@@ -430,6 +430,13 @@ export class CallKeepBridge {
         // callkeep requests no permissions in self-managed mode, so
         // `additionalPermissions` would do nothing; see requestAndroidPermissions.
         selfManaged: true,
+        // The activity closing mid-call (Back on the root screen) ends the
+        // call: callkeep disconnects each connection and sends endCall, which
+        // hangs up the SDK call (handleEndCall). Stock callkeep 4.3.10+ killed
+        // the process right after, before that endCall reached JavaScript, and
+        // the call stayed up on SignalWire; the fork doesn't (and reads this
+        // option; false would keep the call running without the activity).
+        endCallsOnHostDestroy: true,
         foregroundService: {
           channelId: options.androidChannelId ?? 'signalwire-calls',
           channelName: options.androidChannelName ?? 'Ongoing calls',

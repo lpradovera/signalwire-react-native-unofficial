@@ -129,6 +129,27 @@ describe('CallKeepBridge on Android', () => {
     });
   });
 
+  describe('the activity closing mid-call (Back on the root screen)', () => {
+    it('asks callkeep to end the calls when the activity is destroyed, not to keep them', async () => {
+      await bridge.setup({ appName: 'Demo' });
+      const options = (RNCallKeep.setup as jest.Mock).mock.calls[0][0];
+      expect(options.android.endCallsOnHostDestroy).toBe(true);
+    });
+
+    it('hangs up the SDK call when Telecom disconnects it', async () => {
+      await bridge.setup({ appName: 'Demo' });
+      const call = createCall('out-1');
+      const uuid = bridge.trackCall(call as never, '+15550001', 'Bob');
+      call.status$.next('connected');
+
+      // callkeep's onHostDestroy disconnects the connection, which sends endCall.
+      callkeep.__emit('endCall', { callUUID: uuid });
+
+      expect(call.hangup).toHaveBeenCalledTimes(1);
+      expect(bridge.registry.isLive(uuid)).toBe(false);
+    });
+  });
+
   describe('runtime permissions', () => {
     it('asks for what the ConnectionService and the call need', async () => {
       await bridge.setup({ appName: 'Demo' });
