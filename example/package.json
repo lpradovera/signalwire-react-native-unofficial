@@ -9,7 +9,7 @@
     "android": "expo run:android",
     "bundle-check": "expo export --platform ios --platform android --output-dir ./.expo-export-check",
     "type-check": "tsc --noEmit",
-    "test": "node --test plugins/withPodDeploymentTarget.test.js"
+    "test": "node --test plugins/withPodDeploymentTarget.test.js plugins/withSceneLifecycle.test.js plugins/withSceneLifecycle.swift.test.js"
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^13.0.0",
