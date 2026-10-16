@@ -119,10 +119,9 @@ describe('POST /swml/park', () => {
     // With a phone number pointed at this resource, this is what shows on the
     // lock screen. Reading it from the request root instead showed "Unknown".
     sent.length = 0;
-    await post('/swml/park', {
+    await post('/swml/park?subscriber=rn-example', {
       params: {
-        call: { call_id: 'a-leg-sid', to: '/public/rn-example-park', from: '+15551234567' },
-        vars: { subscriber: 'rn-example' }
+        call: { call_id: 'a-leg-sid', to: '/public/rn-example-park', from: '+15551234567' }
       }
     });
 
@@ -164,11 +163,12 @@ describe('POST /swml/park', () => {
     // Callers dial the park resource; its name says nothing about who to ring.
     // Resolving from it pushed to "rn-example-park" — a user that does not
     // exist — and reported delivered: 0 with no error anywhere.
+    // The handler URL names the subscriber (`?subscriber=`, set on the
+    // SignalWire resource); the dialled address does not.
     sent.length = 0;
-    await post('/swml/park', {
+    await post('/swml/park?subscriber=rn-example', {
       params: {
-        call: { call_id: 'a-leg-sid', to: '/public/rn-example-park' },
-        vars: { subscriber: 'rn-example' }
+        call: { call_id: 'a-leg-sid', to: '/public/rn-example-park' }
       }
     });
 
@@ -332,7 +332,9 @@ describe('POST /swml/bridge/status', () => {
     const addr = srv.address();
     const base2 = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
 
+    // The status_url is handed out by a bridge, so the token is redeemed.
     const { token } = tokens.mint('caller-leg-sid', 'rn-example');
+    tokens.redeem(token, 'rn-example');
     await fetch(`${base2}/swml/bridge/status?token=${token}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
