@@ -51,4 +51,4 @@ export { SignalWireVideoView } from './components/SignalWireVideoView';
 export type { SignalWireVideoViewProps } from './components/SignalWireVideoView';
 
 // Errors
-export { MissingPeerDependencyError, PolyfillNotInstalledError } from './errors';
+export { CallInProgressError, MissingPeerDependencyError, PolyfillNotInstalledError } from './errors';

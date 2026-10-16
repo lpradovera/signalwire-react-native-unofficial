@@ -31,6 +31,8 @@ export function createCallKitObserver(
 ): CallObserver {
   return {
     bindClient: (client) => getCallKit().bindClient(client),
+    // Before the SDK places anything: no media, no invite, no second native call.
+    beforeOutgoingCall: () => getCallKit().assertCanDial(),
     onOutgoingCall: (call, destination) =>
       void getCallKit().trackCall(call, destination, nameFor(destination, getOptions())),
     onIncomingAnswer: (call) => getCallKit().answerIncomingFromApp(call),

@@ -536,6 +536,8 @@ describe('CallKeepBridge — the fusion tick timer', () => {
     const uuid = bridge.reportIncomingPush({ callId: 'c1' });
     bridge.beginBridgeDial(uuid);
     bridge.endBridgeDial();
+    // Over, so the next dial is not a second call (that one is refused).
+    bridge.registry.endCall(uuid);
     (RNCallKeep.startCall as jest.Mock).mockClear();
 
     bridge.trackCall(createCall('normal-call') as never, '+15559998888', 'Someone');
