@@ -1,6 +1,6 @@
 /**
  * react-native-callkeep comes from the SignalWire fork (github
- * mjerris/react-native-callkeep, branch signalwire/main), pinned to one
+ * signalwire/react-native-callkeep, branch signalwire/main), pinned to one
  * commit, instead of npm's 4.3.16 plus a patch-package patch.
  *
  * Stock 4.3.16 exports two @ReactMethods named displayIncomingCall (and
@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const json = (path) => JSON.parse(readFileSync(join(root, path), 'utf8'));
-const FORK = /^github:mjerris\/react-native-callkeep#([0-9a-f]{40})$/;
+const FORK = /^github:signalwire\/react-native-callkeep#([0-9a-f]{40})$/;
 
 test('the example and the package pin the same fork commit', () => {
   const example = json('example/package.json').dependencies['react-native-callkeep'];
@@ -30,7 +30,7 @@ test('the lockfile resolves callkeep to that commit of the fork', () => {
   const sha = json('example/package.json').dependencies['react-native-callkeep'].match(FORK)[1];
   const locked = json('package-lock.json').packages['node_modules/react-native-callkeep'];
   assert.ok(locked, 'react-native-callkeep is in the lockfile');
-  assert.match(locked.resolved, new RegExp(`github\\.com/mjerris/react-native-callkeep\\.git#${sha}$`));
+  assert.match(locked.resolved, new RegExp(`github\\.com/signalwire/react-native-callkeep\\.git#${sha}$`));
   assert.match(locked.version, /-signalwire\./);
 });
 
