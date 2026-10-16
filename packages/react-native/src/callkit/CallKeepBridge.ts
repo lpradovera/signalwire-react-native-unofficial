@@ -976,8 +976,11 @@ export class CallKeepBridge {
       return;
     }
     this.audioUuid = uuid;
-    // 'video' defaults the route to the speaker; a voice call starts on the receiver.
-    this.withAudioRoutes('warn', (audio) => audio.start(media));
+    // 'video' defaults the route to the speaker; a voice call starts on the
+    // receiver. On Android the call's Telecom connection routes it, unless
+    // Telecom refused the call and there is none.
+    const telecomCall = this.refused.has(uuid) ? undefined : uuid;
+    this.withAudioRoutes('warn', (audio) => audio.start(media, telecomCall));
   }
 
   /**

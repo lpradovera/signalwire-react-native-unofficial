@@ -384,6 +384,38 @@ them; a choice made before that status is held and then applied to the
 reported route. A route that can't be chosen (no such device) goes back to
 where it was, on Android too.
 
+#### Audio routes on Android
+
+A call the CallKit bridge tracks runs in react-native-callkeep's self-managed
+ConnectionService, and Telecom routes its audio. The package then asks
+Telecom for every route (`Connection.setAudioRoute`, through callkeep's
+`setAudioRoute`) and `route` follows Telecom's reports (callkeep's
+`didChangeAudioRoute`): a choice in the system's output switcher, a
+Bluetooth headset or car connecting or dropping, a wired headset plugged in.
+Speaker off returns to the route the call had before: the receiver, the
+wired headset, or the Bluetooth device. A route Telecom doesn't offer the
+call, or doesn't move it to, goes back to where Telecom has it. A video call
+Telecom starts on the receiver is moved to the speaker; one on a headset or
+car stays there.
+
+incall-manager's session isn't started for such a call: its `start()` routes
+the call through AudioManager behind Telecom (the two then disagree, Telecom
+on the receiver while incall-manager forces the speaker). Telecom sets the
+audio mode and takes audio focus for the call. The package still uses
+incall-manager to keep the screen on during the call and to blank it while
+the phone is at the ear on the receiver (its proximity sensor).
+
+The routes Telecom offers are read from the call's `CallAudioState` by the
+package's Android library (callkeep reports only the route), so rebuild the
+app after upgrading. Before the rebuild, the route still follows Telecom and
+every route can be asked for. Choosing between two Bluetooth devices isn't
+possible yet: callkeep asks Telecom for "Bluetooth", which uses the active
+device.
+
+A call the bridge doesn't track (an app that calls
+`getAudioRouteController().start(media)` itself), or one Telecom refused, is
+routed by incall-manager as before.
+
 #### Audio routes on iOS
 
 This package never writes the iOS audio session itself: incall-manager does,
