@@ -20,7 +20,10 @@ import { createSwComponent } from '../createSwComponent';
 export const CallDialpad = createSwComponent({
   tagName: 'sw-call-dialpad',
   elementClass: SwCallDialpad,
-  events: {}
+  events: {
+    onDigitPress: 'sw-digit-press',
+    onDial: 'sw-dial'
+  }
 });
 
 export type { SwCallDialpad };
