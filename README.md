@@ -364,6 +364,21 @@ void getCallKit().setup({ appName: 'My App', supportsVideo: true });
 <SignalWireProvider credentialProvider={credentials} callKit>
 ```
 
+The native call UI and Recents show an outbound call by its destination, which
+for a Fabric address reads like `/private/support-agent`. To show a name instead,
+pass options in place of `true`:
+
+```tsx
+<SignalWireProvider credentialProvider={credentials} callKit={{ displayName: (to) => contacts[to] ?? to }}>
+```
+
+The observer is built when `callKit` turns on and dropped when it turns off,
+which also stops CallKit from showing the client's inbound calls; changing
+only the options doesn't rebuild it. Each call reads the latest
+`displayName`, so it can close over data that loads later. If it
+throws or returns an empty string, the call is named by its destination: the
+call has already been placed by then, so it is still tracked.
+
 Then, from your own push handler:
 
 ```ts

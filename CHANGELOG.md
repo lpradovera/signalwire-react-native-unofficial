@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### CallKit outbound call names
+
+- New `callKit={{ displayName: (destination) => string }}` on
+  `SignalWireProvider` (React Native): the name CallKit and Recents show for an
+  outbound call. The default is still the destination. Each call reads the
+  latest prop. A `displayName` that throws or returns an empty string falls
+  back to the destination, so the call placed by `dial()` is still tracked.
+- `CallKitObserverOptions` is exported from `@signalwire/react-native/callkit`.
+- `@signalwire/react`'s `SignalWireProvider` now binds an observer that
+  arrives after the client was built (turning `callKit` on after mount), so it
+  mirrors inbound calls too, and unbinds one that is replaced or removed.
+  `CallObserver.bindClient` may return a function that undoes the binding;
+  the provider calls it when the observer changes or goes away, the client is
+  replaced, or the provider unmounts.
+- Turning `callKit` off stops CallKit from showing the client's inbound
+  calls (`CallKeepBridge.bindClient` returns its unbind). A client is
+  subscribed to once however often it is bound, and stays bound until every
+  binder has unbound it: two providers, or a provider and the app's own
+  `getCallKit().bindClient(client)`, no longer unbind each other.
+
 ## 0.1.0
 
 First release. React Native support for `@signalwire/js` v4 — platform

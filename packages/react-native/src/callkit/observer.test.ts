@@ -1,0 +1,43 @@
+jest.mock('./CallKeepBridge', () => {
+  const bridge = { trackCall: jest.fn(), bindClient: jest.fn() };
+  return { getCallKit: () => bridge };
+});
+
+import { getCallKit } from './CallKeepBridge';
+import { createCallKitObserver } from './observer';
+
+const bridge = getCallKit() as unknown as { trackCall: jest.Mock };
+
+beforeEach(() => jest.clearAllMocks());
+
+describe('createCallKitObserver', () => {
+  it('names an outbound call by its destination by default', () => {
+    createCallKitObserver().onOutgoingCall?.({ id: 'c1' } as never, '/private/agent');
+    // call, handle, display name; later arguments are not this test's concern.
+    expect(bridge.trackCall.mock.calls[0]?.slice(0, 3)).toEqual([{ id: 'c1' }, '/private/agent', '/private/agent']);
+  });
+
+  it('uses the display name it was given, keeping the destination as the handle', () => {
+    const displayName = jest.fn(() => 'Support');
+    createCallKitObserver(() => ({ displayName })).onOutgoingCall?.({ id: 'c2' } as never, '/private/agent');
+    expect(displayName).toHaveBeenCalledWith('/private/agent');
+    expect(bridge.trackCall.mock.calls[0]?.slice(0, 3)).toEqual([{ id: 'c2' }, '/private/agent', 'Support']);
+  });
+
+  it('names the call by its destination when displayName throws, so the placed call is still tracked', () => {
+    // dial() has already placed the call when this runs: a throw here would
+    // reject dial(), and the app would never get the live call to hang up.
+    const displayName = (to: string): string => {
+      throw new Error(`no contact for ${to}`);
+    };
+    const observer = createCallKitObserver(() => ({ displayName }));
+
+    expect(() => observer.onOutgoingCall?.({ id: 'c3' } as never, '/private/agent')).not.toThrow();
+    expect(bridge.trackCall.mock.calls[0]?.slice(0, 3)).toEqual([{ id: 'c3' }, '/private/agent', '/private/agent']);
+  });
+
+  it('names the call by its destination when displayName returns an empty name', () => {
+    createCallKitObserver(() => ({ displayName: () => '' })).onOutgoingCall?.({ id: 'c4' } as never, '/private/agent');
+    expect(bridge.trackCall.mock.calls[0]?.[2]).toBe('/private/agent');
+  });
+});

@@ -58,8 +58,6 @@ export function SignalWireProvider({
     setClient(instance);
     setError(null);
 
-    observer?.bindClient?.(instance);
-
     const subscription = instance.errors$.subscribe((next) => {
       logger.warn('SDK error:', next);
       setError(next);
@@ -81,6 +79,19 @@ export function SignalWireProvider({
     // be catastrophic. Change `credentialProvider` to force a rebuild.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [credentialProvider]);
+
+  // Bound here, not where the client is built: the observer can arrive or
+  // change later (React Native builds its CallKit observer only once callKit
+  // is turned on, and drops it when callKit is turned off). The unbind it
+  // returns runs when it changes or goes away, or the client is replaced, so
+  // a dropped observer stops handling the client's calls.
+  useEffect(() => {
+    if (!client) {
+      return undefined;
+    }
+    const unbind = observer?.bindClient?.(client);
+    return typeof unbind === 'function' ? unbind : undefined;
+  }, [client, observer]);
 
   const value = useMemo<SignalWireContextValue>(
     () => ({ client, error, observer }),
