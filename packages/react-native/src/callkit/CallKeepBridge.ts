@@ -108,7 +108,14 @@ export class CallKeepBridge {
       now: () => Date.now()
     };
 
-    this.registry = new CallRegistry({ host, fusionTimeoutMs: options.fusionTimeoutMs });
+    this.registry = new CallRegistry({
+      host,
+      fusionTimeoutMs: options.fusionTimeoutMs,
+      // One call at a time on Android: a second incoming call was held
+      // RINGING by Telecom with nothing on screen. iOS keeps CallKit's
+      // waiting-call screen (End & Accept).
+      refuseIncomingWhileBusy: Platform.OS === 'android'
+    });
 
     // A call can end in the native UI, from the SDK, or in the registry
     // itself: the app's endCall (a failed bridge dial), or tick() expiring an
@@ -227,8 +234,7 @@ export class CallKeepBridge {
       )
       .subscribe((calls) => {
         for (const call of calls) {
-          if (!this.registry.uuidForCall(call)) {
-            this.registry.attachIncomingCall(call);
+          if (!this.registry.uuidForCall(call) && this.registry.attachIncomingCall(call)) {
             this.watchCallStatus(call);
           }
         }
@@ -746,8 +752,13 @@ export class CallKeepBridge {
     }
   }
 
-  private endReasonFor(reason: 'missed' | 'remote' | 'local'): number {
+  private endReasonFor(reason: 'missed' | 'remote' | 'local' | 'busy'): number {
     const reasons = CONSTANTS.END_CALL_REASONS;
+    if (reason === 'busy') {
+      // UNANSWERED: iOS shows it as a call nobody answered; on Android the
+      // same value (3) is DisconnectCause BUSY.
+      return reasons.UNANSWERED;
+    }
     return reason === 'missed' ? reasons.MISSED : reasons.REMOTE_ENDED;
   }
 }

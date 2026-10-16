@@ -1,5 +1,5 @@
 import RNCallKeep from 'react-native-callkeep';
-import { BehaviorSubject } from 'rxjs';
+import { BehaviorSubject, Subject } from 'rxjs';
 
 import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
 import { CallInProgressError } from '../errors';
@@ -8,7 +8,10 @@ import { createCallKitObserver } from './observer';
 
 jest.mock('react-native', () => ({ Platform: { OS: 'ios' } }));
 
-const callkeep = RNCallKeep as unknown as typeof RNCallKeep & { __reset: () => void };
+const callkeep = RNCallKeep as unknown as typeof RNCallKeep & {
+  __reset: () => void;
+  __emit: (event: string, payload: unknown) => void;
+};
 
 function createCall(id: string) {
   const status$ = new BehaviorSubject('new');
@@ -97,6 +100,27 @@ describe('a second outbound call while one is live', () => {
     expect(RNCallKeep.startCall).not.toHaveBeenCalled();
   });
 
+});
+
+describe('a second incoming call on iOS', () => {
+  afterEach(() => resetAudioRouteControllerForTesting());
+
+  it('is still shown in CallKit, which offers End & Accept and Decline itself', async () => {
+    jest.clearAllMocks();
+    callkeep.__reset();
+    const bridge = new CallKeepBridge();
+    await bridge.setup({ appName: 'Demo' });
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient({ session: { incomingCalls$: incoming$, incomingCalls: [] } } as never);
+    bridge.trackCall(createCall('a') as never, '/private/alice', 'Alice');
+
+    const second = Object.assign(createCall('b'), { from: '+15550001111', fromName: 'Second' });
+    incoming$.next([second]);
+
+    expect(second.reject).not.toHaveBeenCalled();
+    expect(RNCallKeep.displayIncomingCall).toHaveBeenCalledTimes(1);
+    bridge.destroy();
+  });
 });
 
 describe('the CallKit observer', () => {
