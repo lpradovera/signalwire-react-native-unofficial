@@ -56,10 +56,18 @@ const MODULE_NOTES = {
 
 function componentSource(component) {
   const { tag, className, name, events } = component;
-  const eventEntries = Object.entries(events);
+  // An event is its DOM name, or { event, from } when only the dispatch by
+  // element `from` counts (see createSwComponent's eventOrigins).
+  const eventEntries = Object.entries(events).map(([prop, spec]) =>
+    typeof spec === 'string' ? [prop, spec, undefined] : [prop, spec.event, spec.from]
+  );
   const eventsLiteral = eventEntries.length
     ? `{\n${eventEntries.map(([prop, dom]) => `    ${prop}: '${dom}'`).join(',\n')}\n  }`
     : '{}';
+  const origins = eventEntries.filter(([, , from]) => from);
+  const originsLiteral = origins.length
+    ? `,\n  eventOrigins: {\n${origins.map(([prop, , from]) => `    ${prop}: '${from}'`).join(',\n')}\n  }`
+    : '';
 
   return `${BANNER}
 // Lit elements register themselves with customElements on import, and touch the
@@ -79,7 +87,7 @@ import { createSwComponent } from '../createSwComponent';
 export const ${name} = createSwComponent({
   tagName: '${tag}',
   elementClass: ${className},
-  events: ${eventsLiteral}
+  events: ${eventsLiteral}${originsLiteral}
 });
 
 export type { ${className} };

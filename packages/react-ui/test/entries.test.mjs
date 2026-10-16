@@ -102,6 +102,19 @@ function load(spec, how = 'import') {
   return JSON.parse(out.trim().split('\n').pop());
 }
 
+/** The source of every module reachable from what `tag` renders. */
+function reachableSource(tag) {
+  const seen = new Set();
+  for (const t of closure(tag)) renderedTags(MODULES.get(t), seen);
+  return [...seen].map((file) => readFileSync(file, 'utf8')).join('\n');
+}
+
+/** Event names the element's own declaration documents with @fires. */
+function documentedEvents(tag) {
+  const dts = MODULES.get(tag).replace(/\.js$/, '.d.ts');
+  return [...readFileSync(dts, 'utf8').matchAll(/@fires\s+(\S+)/g)].map((m) => m[1]);
+}
+
 const subpath = (tag) => `@signalwire/react-ui/${tag.replace(/^sw-/, '')}`;
 
 test('the barrel loads and registers every wrapped element and everything they render', () => {
@@ -173,4 +186,24 @@ test("theme.css is the installed @signalwire/web-components' theme.css", () => {
     readFileSync(join(root, 'theme.css')).equals(readFileSync(upstream)),
     `theme.css differs from ${upstream}; copy that file over packages/react-ui/theme.css`
   );
+});
+
+test('every event an element documents has a prop, and every prop listens for an event the element tree fires', () => {
+  const problems = [];
+  for (const component of COMPONENTS) {
+    const specs = Object.entries(component.events).map(([prop, spec]) =>
+      typeof spec === 'string' ? { prop, event: spec } : { prop, ...spec }
+    );
+    const mapped = new Set(specs.map((s) => s.event));
+    for (const event of documentedEvents(component.tag)) {
+      if (!mapped.has(event)) problems.push(`<${component.tag}> documents ${event}, which no ${component.name} prop receives`);
+    }
+    const source = reachableSource(component.tag);
+    const tree = closure(component.tag);
+    for (const { prop, event, from } of specs) {
+      if (!source.includes(`"${event}"`)) problems.push(`${component.name}.${prop}: nothing under <${component.tag}> fires ${event}`);
+      if (from && !tree.has(from)) problems.push(`${component.name}.${prop}: <${from}> is not rendered under <${component.tag}>`);
+    }
+  }
+  assert.deepEqual(problems, []);
 });

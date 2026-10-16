@@ -24,6 +24,9 @@ export const CallControls = createSwComponent({
   elementClass: SwCallControls,
   events: {
     onCallHangup: 'sw-call-hangup'
+  },
+  eventOrigins: {
+    onCallHangup: 'sw-call-controls'
   }
 });
 
