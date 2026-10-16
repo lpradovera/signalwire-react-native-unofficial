@@ -18,7 +18,7 @@ import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
 import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
 import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
-import { CallRegistry, INBOUND_ANSWER } from './CallRegistry';
+import { CallRegistry, DEFAULT_FUSION_TIMEOUT_MS, INBOUND_ANSWER } from './CallRegistry';
 
 import type { CallRegistryHost, PushPayload } from './types';
 
@@ -95,17 +95,29 @@ export class CallKeepBridge {
    */
   private readonly audioSessionActive$ = new BehaviorSubject(false);
   /**
-   * What each addEventListener returned. destroy() removes these, and only
-   * these: callkeep's removeEventListener(type) with no handler removes every
-   * handler of that type in the process, the app's own included.
+   * What removes each of the bridge's callkeep handlers (see {@link listen}).
+   * destroy() removes these, and only these: callkeep's
+   * removeEventListener(type) with no handler removes every handler of that
+   * type in the process (on 4.3.0-4.3.8, whichever was added last), the app's
+   * own included.
    */
   private readonly nativeListeners: Array<{ remove(): void }> = [];
   /**
-   * Replayed answers and ends for a uuid the registry doesn't know yet. The
-   * replay can reach JS before setup() adopts the cached launch push (see
-   * handleLoadedEvents); they are applied when that entry is adopted.
+   * Answers and ends for a uuid the registry doesn't know yet: replayed ones
+   * (the replay can reach JS before setup() adopts the cached launch push; see
+   * handleLoadedEvents) and live ones that arrive while setup() is still
+   * fetching that push. They are applied when the entry is adopted. One whose
+   * entry never comes (the cache keeps only the last of several cold-start
+   * pushes) expires after the fusion timeout, and an answered call is then
+   * ended natively, as an unanswered push would be.
    */
-  private readonly deferredReplay = new Map<string, Array<'answer' | 'end'>>();
+  private readonly heldActions = new Map<
+    string,
+    { actions: Array<'answer' | 'end'>; deadline: number }
+  >();
+  /** True while setup() is fetching the cached launch push. */
+  private adoptingLaunchPush = false;
+  private readonly holdTimeoutMs: number;
   /** The clients whose inbound calls are mirrored; see {@link bindClient}. */
   private readonly boundClients = new Map<SignalWire, { subscription: Subscription; binders: number }>();
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
@@ -125,6 +137,7 @@ export class CallKeepBridge {
   private audioUuid: string | null = null;
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
+    this.holdTimeoutMs = options.fusionTimeoutMs ?? DEFAULT_FUSION_TIMEOUT_MS;
     const host: CallRegistryHost = {
       // The registry writes the entry before it calls the host, so the call (if
       // there is one yet) is there to read its media from.
@@ -161,11 +174,7 @@ export class CallKeepBridge {
     // — before setup() has had a chance to assert it is installed. An app that
     // only wants the SDK, with no native call UI, must not crash on import.
     if (typeof RNCallKeep?.addEventListener === 'function') {
-      this.keep(
-        RNCallKeep.addEventListener('didLoadWithEvents', (events) =>
-          this.handleLoadedEvents(events as LoadedEvent[])
-        )
-      );
+      this.listen<LoadedEvent[]>('didLoadWithEvents', (events) => this.handleLoadedEvents(events));
     }
   }
 
@@ -222,6 +231,7 @@ export class CallKeepBridge {
     } as never);
 
     RNCallKeep.setAvailable(true);
+    this.adoptingLaunchPush = true;
     this.registerNativeListeners();
     this.isSetup = true;
     // From now on calls start and stop the audio session, so a route chosen
@@ -232,7 +242,11 @@ export class CallKeepBridge {
     } catch (error) {
       logger.debug('Audio routing unavailable:', error);
     }
-    await this.adoptPendingNativeCall();
+    try {
+      await this.adoptPendingNativeCall();
+    } finally {
+      this.adoptingLaunchPush = false;
+    }
     logger.debug('CallKit ready');
   }
 
@@ -475,17 +489,32 @@ export class CallKeepBridge {
     for (const listener of this.nativeListeners.splice(0)) {
       listener.remove();
     }
-    this.deferredReplay.clear();
+    this.heldActions.clear();
     this.registry.destroy();
     this.isSetup = false;
   }
 
   // ---------------------------------------------------------------- internals
 
-  /** Keeps an addEventListener result for destroy(); see {@link nativeListeners}. */
-  private keep(listener: unknown): void {
-    if (typeof (listener as { remove?: unknown } | undefined)?.remove === 'function') {
-      this.nativeListeners.push(listener as { remove(): void });
+  /**
+   * Adds a callkeep handler and keeps what removes it for destroy(); see
+   * {@link nativeListeners}. callkeep 4.3.9+ returns that from
+   * addEventListener. 4.3.0-4.3.8 return nothing: they put the subscription in
+   * `_callkeepEventHandlers` under its type, which a later handler of the same
+   * type overwrites, so it is read back right away, while it is still this
+   * handler's.
+   */
+  private listen<T>(type: string, handler: (event: T) => void): void {
+    const added: unknown = (
+      RNCallKeep.addEventListener as unknown as (type: string, handler: (event: T) => void) => unknown
+    )(type, handler);
+    const legacy = (RNCallKeep as unknown as { _callkeepEventHandlers?: Map<string, unknown> })
+      ._callkeepEventHandlers;
+    const listener = isRemovable(added) ? added : legacy?.get(type);
+    if (isRemovable(listener)) {
+      this.nativeListeners.push(listener);
+    } else {
+      logger.warn(`callkeep gave no way to remove the bridge's ${type} handler`);
     }
   }
 
@@ -494,19 +523,12 @@ export class CallKeepBridge {
     // This is how the registry learns about a call that is already ringing:
     // without it the entry is created only when the app happens to be running,
     // and a cold-start answer has nothing to apply an intent to.
-    this.keep(
-      RNCallKeep.addEventListener(
-        'didDisplayIncomingCall',
-        // callkeep types `payload` as bare `object`, so it is narrowed below
-        // rather than in the parameter list.
-        (event) => this.handleDidDisplayIncomingCall(event as DisplayEvent)
-      )
+    this.listen<DisplayEvent>('didDisplayIncomingCall', (event) =>
+      this.handleDidDisplayIncomingCall(event)
     );
 
-    this.keep(
-      RNCallKeep.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) =>
-        this.handleAnswerCall(callUUID)
-      )
+    this.listen<{ callUUID: string }>('answerCall', ({ callUUID }) =>
+      this.handleAnswerCall(callUUID)
     );
 
     this.registerRemainingListeners();
@@ -547,7 +569,7 @@ export class CallKeepBridge {
       data: Object.keys(data).length > 0 ? data : undefined
     });
     this.ensureTicking();
-    this.applyDeferredReplay(uuid);
+    this.applyHeldActions(uuid);
     await clearPendingVoipCall();
   }
 
@@ -596,25 +618,66 @@ export class CallKeepBridge {
    */
   private replayAction(uuid: string, action: 'answer' | 'end'): void {
     if (this.registry.entryForUuid(uuid)) {
-      this.runReplayed(uuid, action);
+      this.runAction(uuid, action);
       return;
     }
-    logger.debug(`Holding the replayed ${action} for ${uuid} until its entry is adopted`);
-    this.deferredReplay.set(uuid, [...(this.deferredReplay.get(uuid) ?? []), action]);
+    this.holdAction(uuid, action, 'replayed');
   }
 
-  private applyDeferredReplay(uuid: string): void {
-    const actions = this.deferredReplay.get(uuid);
-    if (!actions) {
+  /**
+   * A live answer or end, held the same way when it arrives while setup() is
+   * still fetching the launch push it belongs to: the listeners are up by
+   * then, and the entry is not.
+   */
+  private liveAction(uuid: string, action: 'answer' | 'end'): boolean {
+    if (!this.adoptingLaunchPush || this.registry.entryForUuid(uuid)) {
+      return false;
+    }
+    this.holdAction(uuid, action, 'live');
+    return true;
+  }
+
+  private holdAction(uuid: string, action: 'answer' | 'end', kind: 'replayed' | 'live'): void {
+    logger.debug(`Holding the ${kind} ${action} for ${uuid} until its entry is adopted`);
+    const held = this.heldActions.get(uuid);
+    this.heldActions.set(uuid, {
+      actions: [...(held?.actions ?? []), action],
+      deadline: held?.deadline ?? Date.now() + this.holdTimeoutMs
+    });
+    this.ensureTicking();
+  }
+
+  private applyHeldActions(uuid: string): void {
+    const held = this.heldActions.get(uuid);
+    if (!held) {
       return;
     }
-    this.deferredReplay.delete(uuid);
-    for (const action of actions) {
-      this.runReplayed(uuid, action);
+    this.heldActions.delete(uuid);
+    for (const action of held.actions) {
+      this.runAction(uuid, action);
     }
   }
 
-  private runReplayed(uuid: string, action: 'answer' | 'end'): void {
+  /**
+   * Drops held actions whose entry never came. CallKit still shows an
+   * answered call for one, with nothing behind it, so it is ended as missed;
+   * one the user already ended needs nothing more.
+   */
+  private expireHeldActions(): void {
+    const now = Date.now();
+    for (const [uuid, held] of [...this.heldActions]) {
+      if (now <= held.deadline) {
+        continue;
+      }
+      this.heldActions.delete(uuid);
+      if (!held.actions.includes('end')) {
+        logger.warn(`The push for ${uuid} was never adopted; ending its answered call.`);
+        RNCallKeep.reportEndCallWithUUID(uuid, this.endReasonFor('missed'));
+      }
+    }
+  }
+
+  private runAction(uuid: string, action: 'answer' | 'end'): void {
     if (action === 'answer') {
       this.handleAnswerCall(uuid);
     } else {
@@ -624,6 +687,9 @@ export class CallKeepBridge {
 
   private handleAnswerCall(callUUID: string): void {
     logger.debug(`Native answer for ${callUUID}`);
+    if (this.liveAction(callUUID, 'answer')) {
+      return;
+    }
     // Applied synchronously — the registry buffers it when the SDK call has
     // not arrived yet. Only the audio start waits for the audio session.
     this.registry.applyIntent(callUUID, 'answer');
@@ -633,6 +699,9 @@ export class CallKeepBridge {
   /** Audio, if this call owns it, is released by {@link releaseAudioIfOwnerEnded}. */
   private handleEndCall(callUUID: string): void {
     logger.debug(`Native end for ${callUUID}`);
+    if (this.liveAction(callUUID, 'end')) {
+      return;
+    }
     const entry = this.registry.entryForUuid(callUUID);
     if (entry?.state === 'pending-push') {
       this.registry.applyIntent(callUUID, 'reject');
@@ -664,65 +733,49 @@ export class CallKeepBridge {
           data: Object.keys(data).length > 0 ? data : undefined
         });
         this.ensureTicking();
-        this.applyDeferredReplay(callUUID);
+        this.applyHeldActions(callUUID);
     }
   }
 
   private registerRemainingListeners(): void {
-    this.keep(
-      RNCallKeep.addEventListener('endCall', ({ callUUID }: { callUUID: string }) =>
-        this.handleEndCall(callUUID)
-      )
+    this.listen<{ callUUID: string }>('endCall', ({ callUUID }) => this.handleEndCall(callUUID));
+
+    this.listen<{ callUUID: string; digits: string }>(
+      'didPerformDTMFAction',
+      ({ callUUID, digits }) => {
+        void this.registry.entryForUuid(callUUID)?.call?.sendDigits(digits);
+      }
     );
 
-    this.keep(
-      RNCallKeep.addEventListener(
-        'didPerformDTMFAction',
-        ({ callUUID, digits }: { callUUID: string; digits: string }) => {
-          void this.registry.entryForUuid(callUUID)?.call?.sendDigits(digits);
+    this.listen<{ callUUID: string }>('didToggleHoldCallAction', ({ callUUID }) => {
+      void this.registry.entryForUuid(callUUID)?.call?.toggleHold();
+    });
+
+    this.listen<{ callUUID: string; muted: boolean }>(
+      'didPerformSetMutedCallAction',
+      ({ callUUID, muted }) => {
+        const participant = this.registry.entryForUuid(callUUID)?.call?.self;
+        if (!participant) {
+          return;
         }
-      )
-    );
-
-    this.keep(
-      RNCallKeep.addEventListener('didToggleHoldCallAction', ({ callUUID }: { callUUID: string }) => {
-        void this.registry.entryForUuid(callUUID)?.call?.toggleHold();
-      })
-    );
-
-    this.keep(
-      RNCallKeep.addEventListener(
-        'didPerformSetMutedCallAction',
-        ({ callUUID, muted }: { callUUID: string; muted: boolean }) => {
-          const participant = this.registry.entryForUuid(callUUID)?.call?.self;
-          if (!participant) {
-            return;
-          }
-          void (muted ? participant.mute() : participant.unmute());
-        }
-      )
+        void (muted ? participant.mute() : participant.unmute());
+      }
     );
 
     // iOS only. Starting media before this fires yields a silent call.
-    this.keep(
-      RNCallKeep.addEventListener('didActivateAudioSession', () => {
-        logger.debug('Audio session activated');
-        this.setAudioSessionActive(true);
-      })
-    );
+    this.listen('didActivateAudioSession', () => {
+      logger.debug('Audio session activated');
+      this.setAudioSessionActive(true);
+    });
 
-    this.keep(
-      RNCallKeep.addEventListener('didDeactivateAudioSession', () => {
-        logger.debug('Audio session deactivated');
-        this.setAudioSessionActive(false);
-      })
-    );
+    this.listen('didDeactivateAudioSession', () => {
+      logger.debug('Audio session deactivated');
+      this.setAudioSessionActive(false);
+    });
 
     // A provider reset ends every call and its session, with no deactivation
     // event of its own.
-    this.keep(
-      RNCallKeep.addEventListener('didResetProvider', () => this.handleProviderReset())
-    );
+    this.listen('didResetProvider', () => this.handleProviderReset());
   }
 
   /**
@@ -953,8 +1006,9 @@ export class CallKeepBridge {
     }
     this.tickTimer = setInterval(() => {
       this.registry.tick();
+      this.expireHeldActions();
       const pending = this.registry.entries.some((entry) => entry.state === 'pending-push');
-      if (!pending) {
+      if (!pending && this.heldActions.size === 0) {
         this.stopTicking();
       }
     }, TICK_INTERVAL_MS);
@@ -971,6 +1025,10 @@ export class CallKeepBridge {
     const reasons = CONSTANTS.END_CALL_REASONS;
     return reason === 'missed' ? reasons.MISSED : reasons.REMOTE_ENDED;
   }
+}
+
+function isRemovable(value: unknown): value is { remove(): void } {
+  return typeof (value as { remove?: unknown } | null | undefined)?.remove === 'function';
 }
 
 /** RFC 4122 v4 UUID. `crypto.getRandomValues` comes from the polyfills entry. */

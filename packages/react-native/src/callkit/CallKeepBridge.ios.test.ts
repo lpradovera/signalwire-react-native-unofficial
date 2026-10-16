@@ -666,6 +666,66 @@ describe('CallKeepBridge — the fusion tick timer', () => {
     delete nativeModules.SignalWireVoipPush;
   });
 
+  it('holds a live answer that arrives before setup() has adopted the launch push', async () => {
+    // setup() registers its listeners, then waits for the cached push; an
+    // answer delivered in that wait found no entry and was lost, and the entry
+    // was adopted with no intent: answered on screen, nothing dialled.
+    nativeModules.SignalWireVoipPush = {
+      getToken: async () => 'tok',
+      getPendingCall: async () => {
+        callkeep.__emit('answerCall', { callUUID: 'launch-3' });
+        return { uuid: 'launch-3', callId: 'c-launch-3', handle: '+15551234567', callerName: 'Ada' };
+      },
+      clearPendingCall: async () => undefined
+    };
+    const fresh = new CallKeepBridge();
+    const answered: string[] = [];
+    fresh.registry.answerRequested$.subscribe((entry) => answered.push(entry.uuid));
+
+    await fresh.setup({ appName: 'Demo' });
+
+    expect(answered).toEqual(['launch-3']);
+    expect(fresh.registry.entryForUuid('launch-3')?.intent).toBe('answer');
+    fresh.destroy();
+    delete nativeModules.SignalWireVoipPush;
+  });
+
+  it('ends the native call of a held answer whose push is never adopted', async () => {
+    // Two pushes before JavaScript runs: the cache keeps only the last, so the
+    // first one's replayed answer waited for an adoption that never came, with
+    // no entry, no tick and CallKit showing a call answered with nobody on it.
+    callkeep.__emit('didLoadWithEvents', [
+      { name: 'RNCallKeepPerformAnswerCallAction', data: { callUUID: 'never-adopted' } }
+    ]);
+
+    jest.advanceTimersByTime(4000);
+    expect(RNCallKeep.reportEndCallWithUUID).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(2100);
+
+    expect(RNCallKeep.reportEndCallWithUUID).toHaveBeenCalledWith('never-adopted', 6);
+    expect(jest.getTimerCount()).toBe(0);
+    // Expired, the hold no longer applies to a late display of that uuid.
+    callkeep.__emit('didDisplayIncomingCall', {
+      callUUID: 'never-adopted',
+      handle: '+15551234567',
+      localizedCallerName: 'Ada',
+      fromPushKit: '1'
+    });
+    expect(bridge.registry.entryForUuid('never-adopted')?.intent).toBeNull();
+  });
+
+  it('drops a held end whose push is never adopted, without a second native end', () => {
+    callkeep.__emit('didLoadWithEvents', [
+      { name: 'RNCallKeepPerformAnswerCallAction', data: { callUUID: 'ended-early' } },
+      { name: 'RNCallKeepPerformEndCallAction', data: { callUUID: 'ended-early' } }
+    ]);
+
+    jest.advanceTimersByTime(6100);
+
+    expect(RNCallKeep.reportEndCallWithUUID).not.toHaveBeenCalled();
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
   it('adopts the launch push, which is the only record of a cold-start call', async () => {
     // On a cold start CallKit is already showing the call before any
     // JavaScript runs. callkeep's didDisplayIncomingCall went to listeners
