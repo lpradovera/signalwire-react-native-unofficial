@@ -111,8 +111,16 @@ a client component; with a classic SSR setup, render them behind a mounted check
 import '@signalwire/react-ui/theme.css';
 ```
 
-Re-exported from `@signalwire/web-components` so apps do not reach into another
-package's internals. Override the CSS custom properties it defines to restyle.
+A copy of `@signalwire/web-components`' own `theme.css` export, from the
+version this package is built and tested against (a test fails when the two
+differ). An app that installs a different `@signalwire/web-components` version
+can import that package's copy instead, which always matches its elements:
+
+```ts
+import '@signalwire/web-components/theme.css';
+```
+
+Override the CSS custom properties it defines to restyle.
 
 ## Adding a component
 
