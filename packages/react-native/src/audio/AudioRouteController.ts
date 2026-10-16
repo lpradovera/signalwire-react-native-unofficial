@@ -6,10 +6,10 @@ import { logger } from '@signalwire/react';
 import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
 import { assertPeerModule } from '../platform/peers';
 import {
-  audioDevices$,
   getAudioDeviceStatus,
   hasIosAudioRoutes,
-  parseAudioDeviceStatus
+  parseAudioDeviceStatus,
+  sessionAudioDevices$
 } from './nativeAudioRoutes';
 
 import type { Observable, Subscription } from 'rxjs';
@@ -79,8 +79,8 @@ interface Session {
   devices: Subscription | null;
   /**
    * Whether the status read queued after incall-manager's `start()` has
-   * come back. Reports before it describe the session before this call (the
-   * previous call's last device, or an idle read), so they are ignored.
+   * come back (the device feed drops the reports before it, which describe
+   * the session before this call).
    */
   ready: boolean;
   /** What is connected, as last reported or answered. */
@@ -201,19 +201,14 @@ export class AudioRouteController {
       this._route$.next(media === 'video' ? 'speaker' : 'earpiece');
     }
     if (session.iosRoutes) {
-      session.devices = audioDevices$.subscribe((status) => this.mirror(session, status));
-      getAudioDeviceStatus().then(
-        (status) => {
-          if (this.session === session && status) {
-            session.ready = true;
-            this.mirror(session, status);
-          }
-        },
-        (error: unknown) => {
-          logger.warn('Failed to read the audio devices:', error);
-          session.ready = true;
+      // Its first value is a status read after incall-manager's start (or
+      // null if that read failed), so it describes this call's session.
+      session.devices = sessionAudioDevices$().subscribe((status) => {
+        session.ready = true;
+        if (status) {
+          this.mirror(session, status);
         }
-      );
+      });
     }
     if (early) {
       this.select(early.route, early.chosen);

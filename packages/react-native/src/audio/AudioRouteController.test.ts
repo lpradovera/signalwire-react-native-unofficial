@@ -727,6 +727,24 @@ describe('AudioRouteController', () => {
       expect(controller.route).toBe('earpiece');
     });
 
+    it('reads the status once per call when nothing else follows the devices', async () => {
+      // The feed's connect read comes after incall-manager's start: it is the
+      // call's own status, so no second read is needed.
+      controller.start('audio');
+      await flush();
+      expect(incallIosRoutes.getAudioDeviceStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads the status once per call when a mounted hook already follows the devices', async () => {
+      const held = audioDevices$.subscribe(() => undefined);
+      await flush();
+      incallIosRoutes.getAudioDeviceStatus.mockClear();
+      controller.start('audio');
+      await flush();
+      expect(incallIosRoutes.getAudioDeviceStatus).toHaveBeenCalledTimes(1);
+      held.unsubscribe();
+    });
+
     it("takes the call's status read over a report that reached it first", async () => {
       // incall-manager answers the read on the queue it reports from, so a
       // report delivered before the answer was sent before it.
