@@ -17,8 +17,10 @@
   the provider calls it when the observer changes or goes away, the client is
   replaced, or the provider unmounts.
 - Turning `callKit` off stops CallKit from showing the client's inbound
-  calls (`CallKeepBridge.bindClient` returns its unbind). Binding a client
-  that is already bound does nothing.
+  calls (`CallKeepBridge.bindClient` returns its unbind). A client is
+  subscribed to once however often it is bound, and stays bound until every
+  binder has unbound it: two providers, or a provider and the app's own
+  `getCallKit().bindClient(client)`, no longer unbind each other.
 
 ## 0.1.0
 
