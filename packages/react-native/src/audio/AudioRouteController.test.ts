@@ -297,6 +297,72 @@ describe('AudioRouteController', () => {
       }
     });
 
+    it("a media restart (stop, then start) takes the new call's default, not the ended session's route", () => {
+      // End & Accept: the bridge stops call A's session and starts B's.
+      controller.expectSession(true);
+      controller.start('video');
+      controller.setSpeakerOn(false);
+      expect(controller.route).toBe('earpiece');
+      controller.stop();
+      flag.mockClear();
+
+      controller.start('video');
+
+      expect(controller.route).toBe('speaker');
+      expect(flag).not.toHaveBeenCalled();
+    });
+
+    it('a media restart does not carry a speaker choice from the ended session', () => {
+      controller.expectSession(true);
+      controller.start('audio');
+      controller.setSpeakerOn(true);
+      controller.stop();
+      flag.mockClear();
+
+      controller.start('audio');
+
+      expect(controller.route).toBe('earpiece');
+      expect(flag).not.toHaveBeenCalled();
+    });
+
+    it("keeps a choice held for a ringing call through another call's stop(), for that call's start()", async () => {
+      // The other call's session hadn't reported yet when the tap was made,
+      // so the tap is held, not applied; that session then ends while the
+      // ringing call is still live.
+      installIncallIosRoutes();
+      incallIosRoutes.getAudioDeviceStatus.mockImplementationOnce(() => new Promise(() => undefined) as never);
+      controller.expectSession(true);
+      controller.start('audio');
+      controller.setSpeakerOn(true);
+      controller.stop();
+      expect(controller.route).toBe('speaker');
+
+      controller.start('audio');
+      await flush();
+
+      expect(choose).toHaveBeenCalledWith('SPEAKER_PHONE');
+      expect(controller.route).toBe('speaker');
+    });
+
+    it('keeps a held choice through a stop() with no session while a call that will start one is live', () => {
+      controller.expectSession(true);
+      controller.setSpeakerOn(true);
+      controller.stop();
+      expect(controller.route).toBe('speaker');
+      controller.start('audio');
+      expect(flag.mock.calls).toEqual([[true]]);
+    });
+
+    it('drops a held choice at stop() once no call that will start a session is left', () => {
+      controller.expectSession(true);
+      controller.setSpeakerOn(true);
+      controller.expectSession(false);
+      controller.stop();
+      controller.start('audio');
+      expect(flag).not.toHaveBeenCalled();
+      expect(controller.route).toBe('earpiece');
+    });
+
     it('still turns the speaker on and off in an app that starts no session', () => {
       // Without CallKit nothing calls start(); speaker on/off is all
       // incall-manager does outside a session, and it works there.

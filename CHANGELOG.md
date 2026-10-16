@@ -77,7 +77,10 @@
   call nobody answered, a push that never got its call) the choice is
   dropped and `route` goes back to `'earpiece'`, so the next call doesn't
   start with it, and a call the bridge doesn't track (the provider's
-  `callKit` off) is treated as having no session.
+  `callKit` off) is treated as having no session. A held choice survives
+  the `stop()` of another call's session while a call that will start one
+  is still live; nothing else of an ended session carries into the next
+  `start()`.
 - With no session (an app without CallKit that doesn't call
   `AudioRouteController.start()`, or an untracked call), only what
   incall-manager can do without one is written and shown: on iOS speaker on

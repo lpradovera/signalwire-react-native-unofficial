@@ -339,11 +339,17 @@ export class AudioRouteController {
     }
   }
 
-  /** Ends the native audio session and resets to the earpiece. */
+  /**
+   * Ends the native audio session and resets to the earpiece. A choice held
+   * for a call whose session hasn't started (see {@link expectSession}) is
+   * kept for that call's `start()`, and stays shown; nothing else of the
+   * ended session carries over.
+   */
   stop(): void {
     const session = this.session;
     this.session = null;
-    this.early = null;
+    const held = this.expecting && !this.destroyed ? this.early : null;
+    this.early = held;
     this.writes += 1;
     this.unconfirmed = null;
     session?.devices?.unsubscribe();
@@ -364,10 +370,10 @@ export class AudioRouteController {
     // its start() resets it for the next call (4.3.0 and Android also reset
     // it in stop(); the iOS-routes change doesn't, and nothing reads it
     // between calls).
-    this.chosen = false;
+    this.chosen = held?.chosen ?? false;
     this.beforeSpeaker = DEFAULT_ROUTE;
     if (!this.destroyed) {
-      this._route$.next('earpiece');
+      this._route$.next(held?.route ?? 'earpiece');
     }
   }
 
