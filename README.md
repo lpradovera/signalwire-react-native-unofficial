@@ -102,8 +102,8 @@ so the two UI packages are siblings by name only and share no code.
 
 `./ringing` is deliberately separate from `./callkit`: the latter imports
 `react-native-callkeep`, which constructs a `NativeEventEmitter` at import
-time. A component library that only wants to *draw* ringing calls should not be
-forced to install native call UI.
+time, and `./ringing` loads none of it. The main entry still imports
+callkeep (see [Install](#install)), so an app needs it installed either way.
 
 ## Repository layout
 
@@ -195,19 +195,30 @@ npm install @signalwire/react-native @signalwire/js rxjs \
   react-native-webrtc \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
-  react-native-url-polyfill
+  react-native-url-polyfill \
+  react-native-callkeep \
+  react-native-incall-manager \
+  @react-native-community/netinfo
 ```
 
-Optional, each unlocking one feature:
+All of these are needed, the last three included: the main entry imports
+them. `SignalWireProvider` loads the native call bridge, which imports
+`react-native-callkeep` and, for audio routing, `react-native-incall-manager`;
+`createReactNativePlatform()` imports `@react-native-community/netinfo` for
+network-loss detection. Without one of them installed, Metro cannot bundle the
+app: `Unable to resolve module react-native-callkeep` (or the other two).
+They are native modules, so rebuild the app after installing them.
 
-| Package | Unlocks |
+| Package | What uses it |
 | --- | --- |
-| `react-native-callkeep` | `@signalwire/react-native/callkit` — native call UI |
-| `react-native-incall-manager` | `@signalwire/react-native/audio` — speaker/earpiece/Bluetooth routing |
+| `react-native-callkeep` | Native call UI (CallKit, ConnectionService); `@signalwire/react-native/callkit` |
+| `react-native-incall-manager` | Speaker/earpiece/Bluetooth routing; `@signalwire/react-native/audio` |
 | `@react-native-community/netinfo` | Network-loss detection and SDK reconnection |
 
-Importing a subpath without its peer throws `MissingPeerDependencyError`, which
-names the package and the install command.
+`MissingPeerDependencyError`, which names the package and the fix, is for a
+peer that is installed but not linked, such as a dev client not rebuilt since
+the package was added. A peer that is not installed fails the bundle, as
+above.
 
 ## The import-order rule
 
@@ -417,8 +428,12 @@ not natively linked. Install it and rebuild the native app (`npx expo prebuild
 the audio session. The bridge gates on `didActivateAudioSession`; if you start
 media yourself, wait for that event too.
 
-**Network loss is not detected** — `@react-native-community/netinfo` is not
-installed. The platform logs a warning and continues with reduced resilience.
+**Network loss is not detected** — check for `Network monitoring unavailable,
+continuing with reduced resilience` in the log: the NetInfo shim could not
+start, and the line carries the reason. Also check the app did not pass
+`platform={{ netInfo: false }}` to the provider (or `netInfo: false` to
+`createReactNativePlatform()`). (`@react-native-community/netinfo`
+itself must be installed, or the app does not bundle; see [Install](#install).)
 
 ## Development
 

@@ -30,11 +30,13 @@ npm install @signalwire/react-native @signalwire/js rxjs \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
   react-native-url-polyfill \
-  react-native-callkeep react-native-incall-manager
+  react-native-callkeep react-native-incall-manager \
+  @react-native-community/netinfo
 ```
 
-The last two are optional peers, but you want native call UI and audio routing,
-so install them now.
+The last three are native call UI, audio routing and network-loss detection.
+`@signalwire/react-native`'s main entry imports all three, so the app does not
+bundle without them.
 
 Add the config plugin to `app.json`:
 

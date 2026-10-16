@@ -45,9 +45,11 @@
     "@signalwire/react": "^0.1.0",
     "@signalwire/react-native": "^0.1.0",
     "react": ">=18.2.0",
-    "react-native": ">=0.76.0"
+    "react-native": ">=0.76.0",
+    "react-native-incall-manager": ">=4.2.0"
   },
   "devDependencies": {
+    "@react-native/babel-preset": "0.81.5",
     "@signalwire/js": "^4.0.0-rc.2",
     "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^29.5.14",

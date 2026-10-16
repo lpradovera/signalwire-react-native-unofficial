@@ -112,8 +112,9 @@ Expect: audio continues. Failure means the `audio` background mode is missing.
 **10. Network loss and recovery.**
 Enable airplane mode for 10 seconds mid-call, then disable it.
 Expect: the SDK notices the drop and reconnects. If nothing happens, the NetInfo
-shim is not installed — check that `@react-native-community/netinfo` is present
-and `platform={{ netInfo: true }}`.
+shim did not start — look for `Network monitoring unavailable` in the log (it
+carries the reason) and check the provider is not given
+`platform={{ netInfo: false }}`.
 
 **11. Mute and DTMF from the native UI.**
 Use the CallKit keypad and the mute button rather than the in-app controls.

@@ -1,6 +1,6 @@
-import { AndroidConfig, withAndroidManifest } from '@expo/config-plugins';
+import { AndroidConfig, withAndroidManifest } from 'expo/config-plugins';
 
-import type { ConfigPlugin } from '@expo/config-plugins';
+import type { ConfigPlugin } from 'expo/config-plugins';
 
 export interface AndroidOptions {
   enableCallKit: boolean;

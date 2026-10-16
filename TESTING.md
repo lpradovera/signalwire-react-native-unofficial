@@ -431,10 +431,10 @@ real Hermes runtime in one shot. If it red-screens on startup, capture the stack
 | `Unable to resolve module @signalwire/react-native/polyfills` | Metro package exports off | `resolver.unstable_enablePackageExports = true` |
 | `Static class blocks are not enabled` | Babel plugin missing | Add `@babel/plugin-transform-class-static-block` |
 | `dial()` reaches the wrong address | `react-native-url-polyfill` missing | Check the polyfills import |
-| `MissingPeerDependencyError` | Optional peer absent **or installed but not linked** | Install, then `expo prebuild --clean` / fresh pod install |
+| `MissingPeerDependencyError` | A peer installed but not linked (a dev client not rebuilt since it was added). A peer that is not installed at all fails the Metro bundle instead: `Unable to resolve module` | Install, then `expo prebuild --clean` / fresh pod install |
 | Call connects but is silent (iOS) | Audio started before `didActivateAudioSession` | The bridge gates on it; if you start media yourself, wait for it too |
 | Stuck entry in the iOS call log | Push never fused and `tick()` did not run | Check `CallKeepBridge` tick timer; covered by `CallKeepBridge.ios.test.ts` |
-| Network loss not detected | `@react-native-community/netinfo` absent | Install it; pass `platform={{ netInfo: true }}` |
+| Network loss not detected | The NetInfo shim did not start (log: `Network monitoring unavailable`, with the reason), or the platform was built with `netInfo: false` | Read the logged reason; leave `netInfo` at its default `true`. netinfo itself must be installed, or the app does not bundle |
 | Gradle `Could not get unknown property 'release'` | Expo/AGP mismatch, **not this package** | Section 2c |
 
 ---
