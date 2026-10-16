@@ -1,12 +1,15 @@
 import { createApp } from './app.js';
-import { createSendersFromEnv } from './config.js';
+import { createSendersFromEnv, parseParkRoutes } from './config.js';
 import { JsonFileDeviceStore } from './core/DeviceStore.js';
 import { NotificationService } from './core/NotificationService.js';
 import { BridgeTokenStore } from './core/BridgeTokenStore.js';
 import { createDevAuthenticateCaller, createTokenRoutes } from './routes/token.js';
+import { requireSignalWireSignature } from './signalwire/signature.js';
 import { createCallEnderFromEnv } from './signalwire/endCall.js';
 import { createSwmlRoutes } from './routes/swml.js';
 import { createMinterFromEnv } from './signalwire/subscriberTokens.js';
+
+import type { AuthenticateCaller } from './routes/token.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
 const STORE_PATH = process.env.DEVICE_STORE_PATH ?? './.data/devices.json';
@@ -27,75 +30,109 @@ if (senders.length === 0) {
 }
 
 if (!process.env.API_TOKEN) {
-  log('API_TOKEN is unset — every endpoint is unauthenticated. Development only.');
+  log(
+    'API_TOKEN is unset — /notify is unauthenticated (and /devices too, unless DEVICE_AUTH=caller): ' +
+      'anyone can push to anyone, register a device under any user, and list every token. ' +
+      'Development only.'
+  );
 }
 
 const minted = createMinterFromEnv();
+const allowAnyCaller = process.env.ALLOW_UNAUTHENTICATED_TOKENS === '1';
+const devReference = process.env.DEV_SUBSCRIBER_REFERENCE ?? 'rn-example';
+
+// Who the caller is, for /token and (with DEVICE_AUTH=caller) /devices.
+// Replace this with your own user auth: see AuthenticateCaller in routes/token.ts.
+const authenticateCaller: AuthenticateCaller = allowAnyCaller
+  ? createDevAuthenticateCaller(devReference)
+  : () => null;
+
 let tokenRoutes;
 
 if ('missing' in minted) {
   log('Subscriber tokens not configured', { needs: minted.missing });
-} else if (process.env.ALLOW_UNAUTHENTICATED_TOKENS === '1') {
-  const reference = process.env.DEV_SUBSCRIBER_REFERENCE ?? 'rn-example';
-  log(
-    'ALLOW_UNAUTHENTICATED_TOKENS=1 — /token will mint a subscriber token for ANY caller. ' +
-      'Development only: replace authenticateCaller with your own user auth before deploying.',
-    { defaultReference: reference }
-  );
-  tokenRoutes = createTokenRoutes({
-    minter: minted.minter,
-    authenticateCaller: createDevAuthenticateCaller(reference)
-  });
 } else {
-  log(
-    '/token is configured but has no authenticateCaller — every request will be rejected. ' +
-      'Wire your own user auth in src/index.ts, or set ALLOW_UNAUTHENTICATED_TOKENS=1 for local testing.'
-  );
-  tokenRoutes = createTokenRoutes({ minter: minted.minter, authenticateCaller: () => null });
+  if (allowAnyCaller) {
+    log(
+      'ALLOW_UNAUTHENTICATED_TOKENS=1 — /token will mint a subscriber token for ANY caller. ' +
+        'Development only: replace authenticateCaller with your own user auth before deploying.',
+      { defaultReference: devReference }
+    );
+  } else {
+    log(
+      '/token is configured but has no authenticateCaller — every request will be rejected. ' +
+        'Wire your own user auth in src/index.ts, or set ALLOW_UNAUTHENTICATED_TOKENS=1 for local testing.'
+    );
+  }
+  tokenRoutes = createTokenRoutes({ minter: minted.minter, authenticateCaller });
 }
 
-/**
- * `PARK_ROUTES` maps dialled destinations to subscribers, e.g.
- * `+15551234567:rn-example`. Needed the moment a phone number points at the
- * park resource: nothing in an E.164 number names a user.
- */
-function parseParkRoutes(raw: string | undefined): Record<string, string> {
-  if (!raw) {
-    return {};
-  }
-  const routes: Record<string, string> = {};
-  for (const pair of raw.split(',')) {
-    const [destination, subscriber] = pair.split(':').map((part) => part.trim());
-    if (destination && subscriber) {
-      routes[destination] = subscriber;
-    }
-  }
-  return routes;
+const deviceAuthMode = process.env.DEVICE_AUTH ?? 'api-token';
+if (deviceAuthMode !== 'api-token' && deviceAuthMode !== 'caller') {
+  log('DEVICE_AUTH must be "api-token" (the default) or "caller". Exiting.', { DEVICE_AUTH: deviceAuthMode });
+  process.exit(1);
+}
+if (deviceAuthMode === 'caller') {
+  log(
+    allowAnyCaller
+      ? 'DEVICE_AUTH=caller with ALLOW_UNAUTHENTICATED_TOKENS=1 — /devices trusts whoever the ' +
+          'development stub says the caller is, which is anyone. Development only.'
+      : 'DEVICE_AUTH=caller — /devices authenticates each request with authenticateCaller and ' +
+          'scopes it to that user.'
+  );
 }
 
 const service = new NotificationService({ store, senders, log });
 const bridgeTokens = new BridgeTokenStore();
 
-if (!process.env.PUBLIC_URL) {
+const publicUrl = process.env.PUBLIC_URL;
+const signingKey = process.env.SIGNALWIRE_SIGNING_KEY;
+
+if (!publicUrl) {
   log(
-    'PUBLIC_URL is unset — the park script falls back to SignalWire-generated ringback. ' +
-      'Set it to your tunnel to serve your own audio.'
+    'PUBLIC_URL is unset — /swml/bridge cannot give SignalWire a status_url, so a parked ' +
+      'caller is left up, in silence, when the device hangs up. Set it to your tunnel.'
   );
+}
+
+if (!signingKey) {
+  log(
+    'SIGNALWIRE_SIGNING_KEY is unset — /swml/park, /swml/bridge and /swml/bridge/status accept ' +
+      'requests from anyone who can reach this server, who can then ring any subscriber, and ' +
+      '/webhooks/signalwire stays behind API_TOKEN, which SignalWire cannot send. Development only.'
+  );
+} else if (!publicUrl) {
+  log('SIGNALWIRE_SIGNING_KEY is set but PUBLIC_URL is not; signatures cover the public URL. Exiting.');
+  process.exit(1);
 }
 
 const app = createApp({
   store,
   service,
   apiToken: process.env.API_TOKEN,
+  deviceAuth: deviceAuthMode === 'caller' ? authenticateCaller : undefined,
+  signalWireSignature:
+    signingKey && publicUrl ? requireSignalWireSignature({ signingKey, publicUrl }) : undefined,
+  log,
   tokenRoutes,
   swmlRoutes: createSwmlRoutes({
     tokens: bridgeTokens,
     service,
-    publicUrl: process.env.PUBLIC_URL,
+    publicUrl,
+    signingKey,
     routes: parseParkRoutes(process.env.PARK_ROUTES),
     ringback: process.env.PARK_RINGBACK_URL,
     callEnder: createCallEnderFromEnv()
   })
 });
 
-app.listen(PORT, () => log('Listening', { port: PORT, storePath: STORE_PATH }));
+// Express 5 passes a listen failure (EADDRINUSE, EACCES) to this callback
+// instead of throwing; without the check the server logged "Listening" and
+// exited 0.
+app.listen(PORT, (error?: Error) => {
+  if (error) {
+    log('Could not listen. Exiting.', { port: PORT, error: error.message });
+    process.exit(1);
+  }
+  log('Listening', { port: PORT, storePath: STORE_PATH });
+});

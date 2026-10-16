@@ -102,9 +102,10 @@ app.post('/token', async (req, res) => {
 });
 ```
 
-The important part is the first line: **you** decide who the caller is. The
-example server ships with `ALLOW_UNAUTHENTICATED_TOKENS=1` so it mints for
-anyone, which is fine on a laptop and a disaster in production.
+The important part is the first line: **you** decide who the caller is. For
+local testing, uncomment `ALLOW_UNAUTHENTICATED_TOKENS=1` in the example
+server's `.env` (copied from `server/.env.example`, where it is off) so it
+mints for anyone, which is fine on a laptop and a disaster in production.
 
 ## 4. Connect
 

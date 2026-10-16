@@ -17,9 +17,9 @@
 #   4. vite            :5173   the web tab used as the second subscriber
 #
 # It is idempotent: a service already listening is left alone. That matters —
-# starting a second `tsx --watch` produced two supervisors racing for port 3000,
-# and the loser exiting mid-push cancelled the APNs stream, which read exactly
-# like a broken push.
+# starting a second `node --import tsx --watch` supervisor produced two racing
+# for port 3000, and the loser exiting mid-push cancelled the APNs stream,
+# which read exactly like a broken push.
 #
 # Usage:
 #   scripts/dev.sh up        start whatever is not running, then verify
@@ -132,14 +132,30 @@ wait_for() {
   return 1
 }
 
+# The server's `node --import tsx --watch ... src/index.ts` supervisors that
+# belong to THIS checkout. Matched by command and then by working directory:
+# no process in the dev flow carries the package name (npm retitles itself to
+# `npm run dev`), and a bare command match would reach other checkouts.
+server_watchers() {
+  local pid cwd
+  for pid in $(pgrep -f -- '--watch.* src/index\.ts' 2>/dev/null); do
+    cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')"
+    [ "$cwd" = "$REPO/server" ] && echo "$pid"
+  done
+}
+
 start_server() {
   local who; who="$(holder "$SERVER_PORT" "$SERVER_DIR")"
   report_foreign server "$SERVER_PORT" "$who" && return 1
   if [ -n "$who" ]; then green "server  :3000  already up"; return; fi
-  # One supervisor only. A stray watcher from an earlier session restarts on
-  # every file save and fights for the port; see the header. Scoped to this
-  # package's own command line so no other project's watcher is touched.
-  pkill -f "rn-push-server" 2>/dev/null
+  # One supervisor only. A watcher whose child crashed holds no port, so the
+  # check above misses it, and it restarts on the next save to fight the new
+  # one for :3000; see the header. Found by its command and its cwd, so no
+  # other project's watcher is touched.
+  local stray
+  for stray in $(server_watchers); do
+    kill "$stray" 2>/dev/null && warn "stopped a stray server watcher (pid $stray)"
+  done
   (cd "$REPO" && nohup npm run dev -w @signalwire/rn-push-server >"$LOGS/server.log" 2>&1 &)
   wait_for "http://127.0.0.1:3000/health" 30 \
     && green "server  :3000  started" \
