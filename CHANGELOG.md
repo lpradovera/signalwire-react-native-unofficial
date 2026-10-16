@@ -120,8 +120,11 @@
 - A call is reported to CallKit as video only when the provider was set up
   with `supportsVideo: true`.
 - `CallKeepBridge.trackCall(call, handle, displayName)` keeps its signature;
-  it reads the media from the call, falling back to `supportsVideo` for a call
-  without `mediaDirections`.
+  it reads the media from the call. A call without `mediaDirections` (an
+  older SDK, a destroyed call) is a voice call: `supportsVideo` only lets
+  CallKit or Telecom show a video call as video, and never makes a call one,
+  so an app with `supportsVideo: true` no longer starts voice calls on the
+  loudspeaker or reports them to Telecom as video.
 
 ### Audio routes
 
