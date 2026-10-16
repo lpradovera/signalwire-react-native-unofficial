@@ -386,6 +386,34 @@ describe('CallKeepBridge', () => {
     expect(InCallManager.start).toHaveBeenCalled();
   });
 
+  it("hands the audio session its call's uuid, so an Android call is routed by Telecom", async () => {
+    resetAudioRouteControllerForTesting();
+    const start = jest.spyOn(getAudioRouteController(), 'start');
+    await bridge.setup({ appName: 'Demo' });
+    const call = createCall('telecom-1');
+    const uuid = bridge.trackCall(call as never, '/public/agent', 'Agent');
+    call.status$.next('connected');
+    await Promise.resolve();
+
+    expect(start).toHaveBeenCalledWith('audio', uuid);
+  });
+
+  it('leaves a call Telecom refused to incall-manager: it has no connection to route', async () => {
+    resetAudioRouteControllerForTesting();
+    const start = jest.spyOn(getAudioRouteController(), 'start');
+    await bridge.setup({ appName: 'Demo' });
+    const incoming$ = new Subject<unknown[]>();
+    bridge.bindClient(createClient(incoming$) as never);
+    const call = createCall('refused-1');
+    incoming$.next([call]);
+    const uuid = bridge.registry.uuidForCall(call as never)!;
+    callkeep.__emit('createIncomingConnectionFailed', { callUUID: uuid, handle: '+15551234', name: 'Ada' });
+    call.status$.next('connected');
+    await Promise.resolve();
+
+    expect(start).toHaveBeenCalledWith('audio', undefined);
+  });
+
   /** The SDK's own answer to "does this call carry video": WebRTCCall.mediaDirections. */
   const VOICE = { audio: 'sendrecv', video: 'inactive' };
   const VIDEO = { audio: 'sendrecv', video: 'sendrecv' };
