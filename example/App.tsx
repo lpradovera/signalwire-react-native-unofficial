@@ -71,6 +71,8 @@ export default function App(): React.JSX.Element {
         <SignalWireProvider fetchToken={fetchServerToken} callKit platform={{ netInfo: true }}>
           <Shell />
         </SignalWireProvider>
+        {/* Last in the root: the incoming-call sheet draws here, not in a Modal. */}
+        <CallOverlayHost />
       </SafeAreaView>
     );
   }
