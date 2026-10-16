@@ -239,6 +239,24 @@ describe('POST /swml/bridge', () => {
     assert.deepEqual(swml.sections.main[0].connect.to, 'call:parked-sid-sip');
   });
 
+  for (const [reference, from] of [
+    ['ada@example.com', 'sip:ada%40example.com@proj.call.signalwire.com;context=private'],
+    ['Ada Lovelace', 'sip:Ada%20Lovelace@proj.call.signalwire.com;context=private'],
+    ['ada@example.com', '/private/ada%40example.com']
+  ] as const) {
+    it(`unescapes the caller's reference before checking it: ${from} (server-37)`, async () => {
+      // SIP escapes what a user part cannot hold. Compared raw, the rightful
+      // device was refused as wrong-subscriber.
+      const { token } = tokens.mint(`parked-${from}`, reference);
+      const response = await post('/swml/bridge', {
+        params: { vars: { userVariables: { bridgeToken: token } }, call: { from } }
+      });
+      const swml = await swmlOf(response);
+
+      assert.deepEqual(swml.sections.main[0].connect?.to, `call:parked-${from}`);
+    });
+  }
+
   it('refuses a SIP caller who is not the token holder', async () => {
     const { token } = tokens.mint('parked-sid-sip2', 'rn-android');
     const response = await post('/swml/bridge', {
