@@ -13,9 +13,11 @@
   of the process. It used to write it, the cached SAT and the session-resume
   `authorization_state` included, to plaintext AsyncStorage until the next
   launch purged it. Session keys an earlier version wrote are still purged.
-- `useSignalWire().error` is cleared when the client is ready again (connected
-  and authenticated), so a transient socket error no longer shows as a current
-  failure for the rest of the session.
+- A connection error on `useSignalWire().error` (`WebSocketConnectionError`,
+  `WebSocketTimeoutError`, `TransportConnectionError`) is cleared each time the
+  client registers again, so a dropped socket the SDK reconnected no longer
+  shows as a current failure for the rest of the session. Any other error
+  stays until the next one replaces it. (The fix from fix/react-error-clears.)
 - `IncomingCallSheet` treats an empty caller name as no name and shows the
   number, then 'Unknown caller'.
 

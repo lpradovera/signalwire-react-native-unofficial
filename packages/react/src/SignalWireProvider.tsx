@@ -6,6 +6,13 @@ import { logger } from './logger';
 import type { CallObserver, SignalWirePlatform } from './types';
 import type { CredentialProvider, SignalWireOptions } from '@signalwire/js';
 
+/** The SDK's errors for a lost connection, by name: it exports none of the classes. */
+const CONNECTION_ERRORS = new Set([
+  'WebSocketConnectionError',
+  'WebSocketTimeoutError',
+  'TransportConnectionError'
+]);
+
 export interface SignalWireContextValue {
   readonly client: SignalWire | null;
   readonly error: Error | null;
@@ -65,23 +72,17 @@ export function SignalWireProvider({
       setError(next);
     });
 
-    // `error` is the last error since the client was last ready. The SDK
-    // reports transient failures on errors$ (each WebSocket 'error' event, a
-    // connect timeout, a register retry) and then reconnects by itself;
-    // isConnected$ stays true through that, so readiness (connected and
-    // authenticated again) is what says the failure is over. Kept, the first
-    // of them showed as a current failure for the rest of the session.
-    // Optional: a client double without ready$ just keeps its last error.
-    const ready$ = (instance as { ready$?: SignalWire['ready$'] }).ready$;
-    if (ready$) {
-      subscription.add(
-        ready$.subscribe((ready) => {
-          if (ready) {
-            setError(null);
-          }
-        })
-      );
-    }
+    // The SDK reconnects a dropped WebSocket by itself and registers again,
+    // but its connection error would stay up for the rest of the session, so
+    // a banner showing it said "disconnected" while calls worked. Cleared on
+    // each registration; any other error stays until the next one replaces it.
+    subscription.add(
+      instance.isRegistered$?.subscribe((isRegistered) => {
+        if (isRegistered) {
+          setError((current) => (current && CONNECTION_ERRORS.has(current.name) ? null : current));
+        }
+      })
+    );
 
     return () => {
       subscription.unsubscribe();
