@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### CallKit audio belongs to its call
+
+- The audio session belongs to the call it was started for. Another call
+  ending (a waiting call whose caller gives up, or one the user declines)
+  no longer stops the live call's session, and a call ended with End &
+  Accept no longer stops the next call's session when its own teardown
+  finishes late.
+- The session is released when its call ends by any path, including
+  `registry.endCall()` (the example calls it when a bridge dial fails) and an
+  answered push that never gets its call. Before, those left the session
+  running in the idle app and the next call's audio start was ignored.
+- A push the user answers and then ends in CallKit before its SDK call
+  exists gets no audio, or has its audio stopped, and `bindCall()` /
+  `bindBridgeCall()` refuse it, so a bridge call placed for it is hung up
+  instead of joining the caller. New `CallRegistry.isLive(uuid)` tells an
+  app's bridge hook whether to dial at all.
+- `CallKeepBridge.destroy()` releases the session it started.
+
 ## 0.1.0
 
 First release. React Native support for `@signalwire/js` v4 — platform
