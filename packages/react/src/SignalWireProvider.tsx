@@ -65,6 +65,24 @@ export function SignalWireProvider({
       setError(next);
     });
 
+    // `error` is the last error since the client was last ready. The SDK
+    // reports transient failures on errors$ (each WebSocket 'error' event, a
+    // connect timeout, a register retry) and then reconnects by itself;
+    // isConnected$ stays true through that, so readiness (connected and
+    // authenticated again) is what says the failure is over. Kept, the first
+    // of them showed as a current failure for the rest of the session.
+    // Optional: a client double without ready$ just keeps its last error.
+    const ready$ = (instance as { ready$?: SignalWire['ready$'] }).ready$;
+    if (ready$) {
+      subscription.add(
+        ready$.subscribe((ready) => {
+          if (ready) {
+            setError(null);
+          }
+        })
+      );
+    }
+
     return () => {
       subscription.unsubscribe();
       setClient(null);
