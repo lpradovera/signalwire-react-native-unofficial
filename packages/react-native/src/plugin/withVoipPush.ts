@@ -1,11 +1,11 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
-import { withDangerousMod, withXcodeProject } from '@expo/config-plugins';
+import { withDangerousMod, withXcodeProject } from 'expo/config-plugins';
 
 import { VOIP_PUSH_SOURCE } from './voipPushSource';
 
-import type { ConfigPlugin } from '@expo/config-plugins';
+import type { ConfigPlugin } from 'expo/config-plugins';
 
 const SOURCE_NAME = 'SignalWireVoipPush.m';
 

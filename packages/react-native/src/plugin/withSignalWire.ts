@@ -2,7 +2,7 @@ import { withAndroidCallKit } from './withAndroidCallKit';
 import { withIosCallKit } from './withIosCallKit';
 import { withVoipPush } from './withVoipPush';
 
-import type { ConfigPlugin } from '@expo/config-plugins';
+import type { ConfigPlugin } from 'expo/config-plugins';
 
 export interface SignalWirePluginOptions {
   /** iOS `NSMicrophoneUsageDescription`. */
