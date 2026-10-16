@@ -69,19 +69,6 @@ const RETRY_BASE_MS = 1_000;
 const RETRY_MAX_MS = 30_000;
 /** A renewed token closer than this to its own expiry is not handed out. */
 const MIN_REMAINING_MS = 10_000;
-/**
- * A reconnect is held while the token the SDK holds is past its expiry or
- * closer to it than this. The SDK's own refresh fires 5 s before expiry
- * (`CREDENTIAL_REFRESH_BUFFER_MS`), and on resume it refreshes a token past
- * that point: that refresh is what hands the SDK the new token.
- */
-const RECONNECT_MARGIN_MS = 5_000;
-/**
- * The longest a reconnect is held. Under the SDK's 10 s connection timeout, so
- * a held socket never times out; past it the SDK's own recovery (refused
- * connect, then a refresh) takes over.
- */
-const RECONNECT_HOLD_MAX_MS = 5_000;
 
 /** Unix seconds below this, epoch milliseconds above (this is the year 33658 in seconds). */
 const SECONDS_LIMIT = 1e12;
@@ -169,8 +156,6 @@ export class TokenSource {
   private renewalTimer: ReturnType<typeof setTimeout> | null = null;
   /** Ends the current backoff wait early. */
   private wake: (() => void) | null = null;
-  /** Reconnects held by {@link whenTokenFresh}. */
-  private readonly heldReconnects = new Set<() => void>();
   private disposed = false;
 
   constructor(
@@ -215,50 +200,10 @@ export class TokenSource {
     }
   }
 
-  /**
-   * Resolves once the token the SDK holds is good for a (re)connect: at once
-   * when it is (or nothing was handed out yet, or its expiry is unknown).
-   * Otherwise, when it is past its expiry or within 5 s of it, a new token is
-   * fetched (unless one is already being fetched, or was renewed ahead and not
-   * taken yet), and this resolves once the SDK has taken it through
-   * `refresh()`, or after 5 s at most.
-   *
-   * The provider holds the client's socket on this. A socket that died while
-   * the app was suspended is reconnected the moment the app runs again, with
-   * the token the SDK still holds; past its expiry the server refused it
-   * ("Authentication failed, expired token", or -32003 "Requester validation
-   * failed") before the SDK's resume refresh had fetched a new one.
-   */
-  whenTokenFresh(): Promise<void> {
-    if (this.disposed || this.handedOutIsFresh()) {
-      return Promise.resolve();
-    }
-    const latest = this.latest;
-    const renewedAhead =
-      latest !== null && latest !== this.handedOut && this.isGoodForReconnect(latest);
-    if (!this.inflight && !renewedAhead) {
-      logger.debug('Token past or near its expiry; fetching a new one before reconnecting');
-      this.renew();
-    }
-    return new Promise<void>((resolve) => {
-      const release = (): void => {
-        clearTimeout(timer);
-        this.heldReconnects.delete(release);
-        resolve();
-      };
-      const timer = setTimeout(() => {
-        logger.warn('The client did not take a fresh token within 5 s; reconnecting with the one it has');
-        release();
-      }, RECONNECT_HOLD_MAX_MS);
-      this.heldReconnects.add(release);
-    });
-  }
-
   dispose(): void {
     this.disposed = true;
     this.clearRenewal();
     this.wake?.();
-    this.releaseHeldReconnects();
     this._status$.complete();
   }
 
@@ -273,38 +218,12 @@ export class TokenSource {
       !this.inflight &&
       (latest.expiresAt === undefined || latest.expiresAt - Date.now() > MIN_REMAINING_MS)
     ) {
-      this.handOut(latest);
+      this.handedOut = latest;
       return latest.credential;
     }
     const held = await this.fetchShared();
-    this.handOut(held);
-    return held.credential;
-  }
-
-  /**
-   * Records what the SDK was given, and lets held reconnects go once it is
-   * fresh. After a macrotask: the SDK stores the credential when the
-   * `refresh()` promise resolves, a few microtasks after this returns.
-   */
-  private handOut(held: Held): void {
     this.handedOut = held;
-    if (this.heldReconnects.size > 0 && this.handedOutIsFresh()) {
-      setTimeout(() => this.releaseHeldReconnects(), 0);
-    }
-  }
-
-  private releaseHeldReconnects(): void {
-    for (const release of [...this.heldReconnects]) {
-      release();
-    }
-  }
-
-  private isGoodForReconnect(held: Held): boolean {
-    return held.expiresAt === undefined || held.expiresAt - Date.now() > RECONNECT_MARGIN_MS;
-  }
-
-  private handedOutIsFresh(): boolean {
-    return this.handedOut === null || this.isGoodForReconnect(this.handedOut);
+    return held.credential;
   }
 
   private renew(): void {
