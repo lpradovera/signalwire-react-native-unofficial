@@ -31,7 +31,7 @@
     "expo-keep-awake": "~15.0.8",
     "react": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-callkeep": "^4.3.16",
+    "react-native-callkeep": "github:mjerris/react-native-callkeep#adc30d417481a8e02f7885d619a8f7161cf793e3",
     "react-native-get-random-values": "~1.11.0",
     "react-native-incall-manager": "^4.2.0",
     "react-native-safe-area-context": "~5.6.0",
