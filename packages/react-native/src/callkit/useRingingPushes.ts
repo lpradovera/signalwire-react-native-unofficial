@@ -1,10 +1,12 @@
 import { useCallback, useRef, useSyncExternalStore } from 'react';
 
+import { CALLKIT_BRIDGE_KEY } from './bridgeKey';
+
 import type { CallKeepBridge } from './CallKeepBridge';
 import type { CallEntry } from './types';
 
 /**
- * Where the bridge singleton lives; see `getCallKit`.
+ * The bridge singleton, if one exists; see `getCallKit`.
  *
  * Read off `globalThis` rather than imported, deliberately. Importing
  * `CallKeepBridge` pulls in `react-native-callkeep`, which constructs a
@@ -13,10 +15,8 @@ import type { CallEntry } from './types';
  * kit without native call UI. If no bridge exists, nothing is ringing
  * natively, which is exactly the answer to give.
  */
-const CALLKIT_GLOBAL = '__signalwireRNCallKitBridge';
-
 function existingBridge(): CallKeepBridge | undefined {
-  return (globalThis as Record<string, unknown>)[CALLKIT_GLOBAL] as CallKeepBridge | undefined;
+  return (globalThis as Record<string, unknown>)[CALLKIT_BRIDGE_KEY] as CallKeepBridge | undefined;
 }
 
 /** A call that is ringing natively but has no SDK call yet. */
