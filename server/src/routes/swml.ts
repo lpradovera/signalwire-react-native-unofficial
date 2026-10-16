@@ -269,6 +269,7 @@ export function createSwmlRoutes({
       // something deliberate, and the log says exactly what was missing.
       console.warn(
         JSON.stringify({
+          at: new Date().toISOString(),
           message: 'Park request missing call SID or subscriber; hanging up',
           hasCallSid: Boolean(callSid),
           externalUserId,
@@ -459,6 +460,7 @@ export function createSwmlRoutes({
       // at all. The device only sees the leg end, with cause USER_BUSY.
       console.warn(
         JSON.stringify({
+          at: new Date().toISOString(),
           message: 'Bridge request missing its token',
           varKeys: Object.keys(vars),
           paramKeys: Object.keys(params),
@@ -482,6 +484,7 @@ export function createSwmlRoutes({
     if (!externalUserId) {
       console.warn(
         JSON.stringify({
+          at: new Date().toISOString(),
           message: 'Bridge redeemed without verifying the caller',
           from: callerFrom(body).from ?? null
         })
@@ -492,7 +495,12 @@ export function createSwmlRoutes({
       // device: a caller who hung up, a slow answer, and a replayed token all
       // look the same there.
       console.warn(
-        JSON.stringify({ message: 'Bridge token rejected', reason: redeemed.error, externalUserId })
+        JSON.stringify({
+          at: new Date().toISOString(),
+          message: 'Bridge token rejected',
+          reason: redeemed.error,
+          externalUserId
+        })
       );
       res.json({ version: '1.0.0', sections: { main: [{ hangup: {} }] } });
       return;
@@ -522,6 +530,7 @@ export function createSwmlRoutes({
     if (!statusUrl) {
       console.warn(
         JSON.stringify({
+          at: new Date().toISOString(),
           message: 'PUBLIC_URL unset; the caller leg will not be ended when the device hangs up',
           callSid: redeemed.callSid
         })
@@ -566,7 +575,13 @@ export function createSwmlRoutes({
       return;
     }
     if (!token) {
-      console.warn(JSON.stringify({ message: 'Bridge status callback carried no token', state }));
+      console.warn(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          message: 'Bridge status callback carried no token',
+          state
+        })
+      );
       return;
     }
 
@@ -575,6 +590,7 @@ export function createSwmlRoutes({
       if (paired.error !== 'already-ended') {
         console.warn(
           JSON.stringify({
+            at: new Date().toISOString(),
             message:
               paired.error === 'unknown'
                 ? 'Bridge status: unknown token'
@@ -589,6 +605,7 @@ export function createSwmlRoutes({
     if (!callEnder) {
       console.warn(
         JSON.stringify({
+          at: new Date().toISOString(),
           message: 'No call ender configured; the caller leg will be left up',
           callSid: paired.callSid
         })
