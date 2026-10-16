@@ -15,6 +15,30 @@ not supported. The native peers (react-native-webrtc, react-native-callkeep,
 react-native-incall-manager) run through React Native's interop layer for
 legacy modules and views.
 
+**Android with the New Architecture needs react-native-callkeep's unreleased
+fix.** callkeep 4.3.16 (npm's latest) exports `displayIncomingCall` and
+`startCall` twice on Android, as 3- and 4-argument overloads. The New
+Architecture's interop layer refuses such a module, and the app dies at its
+first use of callkeep with `Unable to parse @ReactMethod annotations from
+native module: RNCallKeep`. Upstream removed the 3-argument overloads in
+[a6573f1b](https://github.com/react-native-webrtc/react-native-callkeep/commit/a6573f1b07a3bedc725293dc25f88ccf3a84987c)
+but has not published a release with it. Until it does, this repository
+applies the same change with [patch-package](https://github.com/ds300/patch-package):
+[`patches/react-native-callkeep+4.3.16.patch`](patches/react-native-callkeep+4.3.16.patch),
+applied by the root `postinstall` and checked by
+`scripts/callkeep-patch.test.mjs` in `npm test`.
+
+An app that uses this library on the New Architecture needs the same patch:
+
+1. `npm install --save-dev patch-package`
+2. Add `"postinstall": "patch-package"` to the app's `scripts`.
+3. Copy `patches/react-native-callkeep+4.3.16.patch` into the app's `patches/`
+   directory, then run `npm install` and rebuild the Android app.
+
+callkeep's JavaScript always calls the 4-argument forms on Android, so
+nothing else changes. Drop the patch once a callkeep release contains
+a6573f1b. iOS is unaffected.
+
 ## What is verified
 
 Tested on hardware and an emulator, not just in unit tests.

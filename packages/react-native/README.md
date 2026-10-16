@@ -39,4 +39,10 @@ https://github.com/lpradovera/signalwire-react-native-unofficial
 | `@signalwire/react-native/callkit` | native call UI (needs `react-native-callkeep`) |
 | `@signalwire/react-native/audio` | audio routing (needs `react-native-incall-manager`) |
 
+**Android on the New Architecture:** react-native-callkeep 4.3.16 crashes the
+app at its first use of callkeep (`Unable to parse @ReactMethod annotations`) until callkeep
+releases its upstream fix (a6573f1b). Apply
+[the repository's patch](https://github.com/lpradovera/signalwire-react-native-unofficial/blob/main/patches/react-native-callkeep%2B4.3.16.patch)
+with patch-package; the full README says how.
+
 MIT
