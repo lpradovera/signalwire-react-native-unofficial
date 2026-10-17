@@ -15,7 +15,6 @@ import { ConnectScreen, DisconnectedScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { useBridgeAnswer } from './src/useBridgeAnswer';
 import { useCallBack } from './src/useCallBack';
-import { useBridgeDecline } from './src/useBridgeDecline';
 import { fetchServerToken, useServerReference } from './src/fetchServerToken';
 import { useDeviceRegistration } from './src/useDeviceRegistration';
 import { useDevStats } from './src/useDevStats';
@@ -58,11 +57,10 @@ function Shell({ reference }: { reference: string | null | undefined }): React.J
   // EXPO_PUBLIC_SW_DEV_STATS=1: per-call RTP counters in the log.
   useDevStats();
   // Answering a parked-caller push means dialling, not answering — see the hook.
+  // (Declining one is index.js's registerBridgeDecline: it must work with no React.)
   useBridgeAnswer(setActiveCall);
   // A tap in Recents, or "Hey Siri, call back": dial it.
   useCallBack(setActiveCall);
-  // Declining one means telling the server, which holds the caller.
-  useBridgeDecline();
 
   // A CallKit Accept answers the call — audio and all — without touching
   // React. Subscribe to the registry so a native answer also brings up the
