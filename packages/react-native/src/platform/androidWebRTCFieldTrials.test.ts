@@ -12,6 +12,9 @@
  * until it gives up. On the Android emulator 2 of 4 inbound answers failed so
  * (2026-10-17); with the trial, 5 of 5 connected.
  */
+// A module, not a script: its names stay out of the other test files' scope.
+export {};
+
 // Node built-ins, typed here: this package's tsconfig has no Node types
 // (the same pattern as reactNativeWebRTCSurface.test.ts).
 declare const __dirname: string;
