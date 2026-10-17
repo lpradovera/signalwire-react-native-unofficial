@@ -24,7 +24,8 @@ export interface SignalWirePluginOptions {
   /**
    * Generate the iOS PushKit hook and add the `voip` background mode and push
    * entitlement. Default: on when `enableCallKit` is on and
-   * `react-native-callkeep` is installed, since the hook reports every push
+   * callkeep (`@signalwire/react-native-callkeep` or stock `react-native-callkeep`)
+   * is installed, since the hook reports every push
    * to CallKit through it. `true` without callkeep fails prebuild.
    */
   enableVoipPush?: boolean;
@@ -130,8 +131,9 @@ function resolveVoipPush(
   if (requested === true) {
     if (!callKeep) {
       throw new Error(
-        '@signalwire/react-native: enableVoipPush needs react-native-callkeep, which the generated ' +
-          'PushKit hook reports calls through. Install it, or set enableVoipPush: false.'
+        '@signalwire/react-native: enableVoipPush needs callkeep, which the generated PushKit hook ' +
+          'reports calls through. Install @signalwire/react-native-callkeep (or stock ' +
+          'react-native-callkeep), or set enableVoipPush: false.'
       );
     }
     return true;
@@ -143,8 +145,9 @@ function resolveVoipPush(
   if (!callKeep) {
     WarningAggregator.addWarningIOS(
       '@signalwire/react-native',
-      'react-native-callkeep is not installed, so the VoIP push hook was not generated and the app ' +
-        'will not ring for pushed calls. Install it to enable VoIP push, or set enableVoipPush: false.'
+      'callkeep is not installed (neither @signalwire/react-native-callkeep nor react-native-callkeep), ' +
+        'so the VoIP push hook was not generated and the app will not ring for pushed calls. Install ' +
+        '@signalwire/react-native-callkeep to enable VoIP push, or set enableVoipPush: false.'
     );
     return false;
   }
