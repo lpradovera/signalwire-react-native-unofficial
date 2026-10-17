@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### One call at a time: a second dial is refused
+
+- With `callKit`, `dial()` rejects with the new `CallInProgressError`
+  (exported from `@signalwire/react-native` and `/callkit`, with the live
+  call's `liveCallUuid`) while another call is live, a ringing push
+  included, before the SDK places anything. CallKit is set up for one call
+  (`maximumCallGroups: 1`) and refuses a second start transaction, which
+  callkeep only logs, so the second call ran with no native UI and the
+  registry held an entry CallKit never had. A bridge dial for an answered
+  push is not refused.
+- New `CallKeepBridge.assertCanDial()`, and `trackCall()` hangs up and throws
+  `CallInProgressError` for a second call that gets past it (two dials
+  racing): the registry never holds a call CallKit refused.
+- New optional `CallObserver.beforeOutgoingCall(destination)` in
+  `@signalwire/react`: `dial()` calls it first, and a throw refuses the dial.
+- On Android, an incoming call while another call is live (a ringing one
+  included) is refused as busy and not shown: the SDK call is rejected
+  (`reject()`, a `verto.bye` with `USER_BUSY`, SIP 486), and a push for it is
+  not reported to Telecom, so its SDK call is rejected when it arrives.
+  Telecom held such a call RINGING with nothing on screen, so it rang where
+  nobody could see or answer it. iOS is unchanged: CallKit shows a second
+  call with its own End & Accept and Decline.
+- Example: `EXPO_PUBLIC_SW_DEV_DIAL_AGAIN=<address>` adds a dev-only
+  "Dial again" button to the call screen, which shows the second dial being
+  refused.
+
 ### CallKit audio belongs to its call
 
 - The audio session belongs to the call it was started for. Another call

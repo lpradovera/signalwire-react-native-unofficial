@@ -4,6 +4,7 @@ import { EMPTY, of, Subject, switchMap, takeUntil } from 'rxjs';
 
 import { getAudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
+import { CallInProgressError } from '../errors';
 import { assertPeerModule } from '../platform/peers';
 import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
 import { CallRegistry } from './CallRegistry';
@@ -107,7 +108,14 @@ export class CallKeepBridge {
       now: () => Date.now()
     };
 
-    this.registry = new CallRegistry({ host, fusionTimeoutMs: options.fusionTimeoutMs });
+    this.registry = new CallRegistry({
+      host,
+      fusionTimeoutMs: options.fusionTimeoutMs,
+      // One call at a time on Android: a second incoming call was held
+      // RINGING by Telecom with nothing on screen. iOS keeps CallKit's
+      // waiting-call screen (End & Accept).
+      refuseIncomingWhileBusy: Platform.OS === 'android'
+    });
 
     // A call can end in the native UI, from the SDK, or in the registry
     // itself: the app's endCall (a failed bridge dial), or tick() expiring an
@@ -226,8 +234,7 @@ export class CallKeepBridge {
       )
       .subscribe((calls) => {
         for (const call of calls) {
-          if (!this.registry.uuidForCall(call)) {
-            this.registry.attachIncomingCall(call);
+          if (!this.registry.uuidForCall(call) && this.registry.attachIncomingCall(call)) {
             this.watchCallStatus(call);
           }
         }
@@ -340,7 +347,33 @@ export class CallKeepBridge {
     }
   }
 
-  /** Registers an outbound call with the native UI. Returns its UUID. */
+  /**
+   * Throws {@link CallInProgressError} if starting an outbound call now would
+   * be a second call: any live entry counts, a ringing push included, because
+   * CallKit is set up for one call and refuses another start. A bridge dial
+   * for a live, claimed entry ({@link beginBridgeDial}) passes, since its call
+   * joins the entry already on screen. The CallKit observer calls this before
+   * `dial()` reaches the SDK.
+   */
+  assertCanDial(): void {
+    const claimed = this.pendingBridgeUuid;
+    if (claimed !== null && this.registry.isLive(claimed)) {
+      return;
+    }
+    const live = this.registry.entries.find((entry) => this.registry.isLive(entry.uuid));
+    if (live) {
+      throw new CallInProgressError(live.uuid);
+    }
+  }
+
+  /**
+   * Registers an outbound call with the native UI. Returns its UUID.
+   *
+   * A second call while another is live (one that got past
+   * {@link assertCanDial}, such as two dials racing) is hung up and refused
+   * with {@link CallInProgressError}: CallKit would refuse its start
+   * transaction, and the registry must not hold a call CallKit never took.
+   */
   trackCall(call: Call, handle: string, displayName: string): string {
     const claimed = this.pendingBridgeUuid;
     if (claimed !== null) {
@@ -362,6 +395,19 @@ export class CallKeepBridge {
       // normal outbound call, so the user is not left on a live call with no
       // native UI to end it.
       logger.debug(`Entry ${claimed} vanished during the bridge dial`);
+    }
+
+    const tracked = this.registry.uuidForCall(call);
+    if (tracked) {
+      return tracked;
+    }
+    const live = this.registry.entries.find((entry) => this.registry.isLive(entry.uuid));
+    if (live) {
+      logger.warn(`Refusing outbound call ${call.id}: ${live.uuid} is still live; hanging it up`);
+      void call.hangup().catch((error: unknown) => {
+        logger.debug('Hangup of the refused second call failed:', error);
+      });
+      throw new CallInProgressError(live.uuid);
     }
 
     const uuid = this.registry.attachOutgoingCall(call, handle, displayName);
@@ -706,8 +752,13 @@ export class CallKeepBridge {
     }
   }
 
-  private endReasonFor(reason: 'missed' | 'remote' | 'local'): number {
+  private endReasonFor(reason: 'missed' | 'remote' | 'local' | 'busy'): number {
     const reasons = CONSTANTS.END_CALL_REASONS;
+    if (reason === 'busy') {
+      // UNANSWERED: iOS shows it as a call nobody answered; on Android the
+      // same value (3) is DisconnectCause BUSY.
+      return reasons.UNANSWERED;
+    }
     return reason === 'missed' ? reasons.MISSED : reasons.REMOTE_ENDED;
   }
 }

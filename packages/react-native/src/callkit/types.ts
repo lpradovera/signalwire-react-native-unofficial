@@ -44,7 +44,8 @@ export interface CallRegistryHost {
   displayIncomingCall(uuid: string, handle: string, displayName: string): void;
   startOutgoingCall(uuid: string, handle: string, displayName: string): void;
   reportOutgoingConnected(uuid: string): void;
-  reportCallEnded(uuid: string, reason: 'missed' | 'remote' | 'local'): void;
+  /** `'busy'`: refused because another call is live (one call at a time). */
+  reportCallEnded(uuid: string, reason: 'missed' | 'remote' | 'local' | 'busy'): void;
   generateUuid(): string;
   now(): number;
 }
@@ -53,4 +54,12 @@ export interface CallRegistryOptions {
   host: CallRegistryHost;
   /** How long a push entry may wait for its SDK call. Default 20000. */
   fusionTimeoutMs?: number;
+  /**
+   * Refuse an incoming call as busy, without showing it, while another call
+   * is live. Default false. The CallKit bridge sets it on Android, where a
+   * second call held RINGING by a self-managed Telecom connection rang with
+   * nothing on screen. iOS keeps CallKit's own waiting-call screen (End &
+   * Accept / Decline).
+   */
+  refuseIncomingWhileBusy?: boolean;
 }

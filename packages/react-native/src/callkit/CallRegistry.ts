@@ -52,6 +52,7 @@ const UNKNOWN_NAME = 'Unknown caller';
 export class CallRegistry {
   private readonly host: CallRegistryHost;
   private readonly fusionTimeoutMs: number;
+  private readonly refuseIncomingWhileBusy: boolean;
   private readonly _entries$ = new BehaviorSubject<CallEntry[]>([]);
   private readonly _answered$ = new Subject<Call>();
   private readonly _answerRequested$ = new Subject<CallEntry>();
@@ -60,6 +61,7 @@ export class CallRegistry {
   constructor(options: CallRegistryOptions) {
     this.host = options.host;
     this.fusionTimeoutMs = options.fusionTimeoutMs ?? DEFAULT_FUSION_TIMEOUT_MS;
+    this.refuseIncomingWhileBusy = options.refuseIncomingWhileBusy ?? false;
   }
 
   get entries$(): Observable<CallEntry[]> {
@@ -170,6 +172,7 @@ export class CallRegistry {
     const uuid = this.host.generateUuid();
     const handle = payload.from ?? UNKNOWN_HANDLE;
     const displayName = payload.fromName ?? UNKNOWN_NAME;
+    const live = this.liveEntry();
 
     this.write({
       uuid,
@@ -178,11 +181,16 @@ export class CallRegistry {
       call: null,
       handle,
       displayName,
-      intent: null,
+      // Busy: held as a decline, so its SDK call is refused when it arrives.
+      intent: live ? 'reject' : null,
       data: payload.data,
       fuseDeadline: this.host.now() + this.fusionTimeoutMs
     });
 
+    if (live) {
+      logger.info(`Refusing pushed call ${String(payload.callId)} as busy: ${live.uuid} is live; not showing it`);
+      return uuid;
+    }
     this.host.displayIncomingCall(uuid, handle, displayName);
     return uuid;
   }
@@ -211,6 +219,7 @@ export class CallRegistry {
       return;
     }
 
+    const live = this.liveEntry();
     this.write({
       uuid: payload.uuid,
       state: 'pending-push',
@@ -218,23 +227,44 @@ export class CallRegistry {
       call: null,
       handle: payload.from ?? UNKNOWN_HANDLE,
       displayName: payload.fromName ?? UNKNOWN_NAME,
-      intent: null,
+      intent: live ? 'reject' : null,
       data: payload.data,
       fuseDeadline: this.host.now() + this.fusionTimeoutMs
     });
+    if (live) {
+      // iOS reports every VoIP push to CallKit before JavaScript sees it (an
+      // app that does not is terminated), so this one is on screen already:
+      // ended at once, and its SDK call refused when it arrives.
+      logger.info(`Refusing pushed call ${payload.uuid} as busy: ${live.uuid} is live; ending it`);
+      this.host.reportCallEnded(payload.uuid, 'busy');
+      return;
+    }
     logger.debug(`Adopted native push entry ${payload.uuid}`);
   }
 
-  /** Fuses an inbound SDK call with a pending push, or creates a new entry. */
-  attachIncomingCall(call: Call): void {
+  /**
+   * Fuses an inbound SDK call with a pending push, or creates a new entry.
+   *
+   * One call at a time (with `refuseIncomingWhileBusy`): while another call
+   * is live, a call with no push entry of its own is refused as busy
+   * (`reject()`, USER_BUSY) and nothing is shown. Returns whether the call
+   * has an entry.
+   */
+  attachIncomingCall(call: Call): boolean {
     if (this.uuidForCall(call)) {
-      return;
+      return true;
     }
 
     const pending = this.findFusionTarget(call.id);
     if (pending) {
       this.fuse(pending, call);
-      return;
+      return true;
+    }
+
+    const live = this.liveEntry();
+    if (live) {
+      this.refuseBusy(call, live);
+      return false;
     }
 
     const uuid = this.host.generateUuid();
@@ -253,6 +283,7 @@ export class CallRegistry {
     });
 
     this.host.displayIncomingCall(uuid, handle, displayName);
+    return true;
   }
 
   /** Registers an outbound call and starts the native outgoing call UI. */
@@ -408,6 +439,30 @@ export class CallRegistry {
   }
 
   // ---------------------------------------------------------------- internals
+
+  /**
+   * The call that makes the device busy for another incoming call: any live
+   * entry, when incoming calls are refused while busy (see
+   * `CallRegistryOptions.refuseIncomingWhileBusy`).
+   */
+  private liveEntry(): CallEntry | undefined {
+    if (!this.refuseIncomingWhileBusy) {
+      return undefined;
+    }
+    return this.entries.find((entry) => this.isLive(entry.uuid));
+  }
+
+  /** Calls already refused as busy: the SDK lists a call until it is gone. */
+  private readonly refusedBusy = new WeakSet<Call>();
+
+  private refuseBusy(call: Call, live: CallEntry): void {
+    if (this.refusedBusy.has(call)) {
+      return;
+    }
+    this.refusedBusy.add(call);
+    logger.info(`Refusing inbound call ${call.id} as busy: ${live.uuid} is live; not showing it`);
+    this.runIntent(call, 'reject');
+  }
 
   private findPending(predicate: (entry: CallEntry) => boolean): CallEntry | undefined {
     for (const entry of this.byUuid.values()) {
