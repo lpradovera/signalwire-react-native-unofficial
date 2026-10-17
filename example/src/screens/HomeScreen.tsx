@@ -1,6 +1,8 @@
 import { useObservable, useSignalWire } from '@signalwire/react-native';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+
+import { createDialGuard } from '../dialGuard';
 
 import type { Address, Call } from '@signalwire/js';
 
@@ -14,13 +16,21 @@ export function HomeScreen({
 }: {
   onCallStarted: (call: Call) => void;
 }): React.JSX.Element {
-  const { user, directory, dial, disconnect, error } = useSignalWire();
+  const { user, directory, dial, disconnect, error, isConnected } = useSignalWire();
   const [dialError, setDialError] = useState<string | null>(null);
   // Seed from the synchronous getter, not a literal: `addresses$` is deferred
   // through asapScheduler like every SDK observable, so a `[]` here would show
   // an empty directory for a frame even when addresses are already loaded.
   const addresses = useObservable<Address[]>(directory?.addresses$, directory?.addresses ?? []);
-  const [destination, setDestination] = useState('');
+  // The field is uncontrolled: this follows what the native input holds and is
+  // never written back. A `value` prop let any re-render (each keystroke's own,
+  // the directory loading, call state) put an older string back into the field
+  // while the user was still typing, and fast typing lost characters.
+  const destination = useRef('');
+  const [dialing, setDialing] = useState(false);
+  // One dial at a time: a double tap otherwise placed two calls, and the first
+  // stayed live with nothing in the app to end it. See dialGuard.
+  const guard = useRef(createDialGuard(setDialing)).current;
 
   // The directory starts empty and does not fetch on its own — `addresses$` is
   // a BehaviorSubject seeded with []. Without this the list is permanently
@@ -50,14 +60,19 @@ export function HomeScreen({
     if (!target.trim()) {
       return;
     }
+    if (guard.pending) {
+      return;
+    }
     setDialError(null);
     try {
       // Video is opt-in: offering a sendonly video m-line to an audio-only
       // destination makes the far end accept the invite and never answer.
       // EXPO_PUBLIC_SW_DIAL_VIDEO=1 restores it.
       const wantVideo = process.env.EXPO_PUBLIC_SW_DIAL_VIDEO === '1';
-      const call = await dial(target.trim(), { audio: true, video: wantVideo });
-      onCallStarted(call);
+      const call = await guard.run(() => dial(target.trim(), { audio: true, video: wantVideo }));
+      if (call) {
+        onCallStarted(call);
+      }
     } catch (dialFailure) {
       setDialError((dialFailure as Error).message);
     }
@@ -75,19 +90,36 @@ export function HomeScreen({
       {error ? <Text style={styles.error}>{error.message}</Text> : null}
       {dialError ? <Text style={styles.error}>Dial failed: {dialError}</Text> : null}
 
-      <TextInput
-        style={styles.input}
-        value={destination}
-        onChangeText={setDestination}
-        placeholder="/public/my-room"
-        placeholderTextColor="#64748b"
-        autoCapitalize="none"
-        autoCorrect={false}
-        onSubmitEditing={() => void start(destination)}
-      />
+      {/* Shown only once the client is connected: there is nothing to dial
+          before that, and a field that is on screen takes input. */}
+      {isConnected ? (
+        <TextInput
+          style={styles.input}
+          onChangeText={(text) => {
+            destination.current = text;
+          }}
+          placeholder="/public/my-room"
+          placeholderTextColor="#64748b"
+          autoCapitalize="none"
+          autoCorrect={false}
+          // An address is a path (/public/…, /private/…): the URL keyboard
+          // has "/" and "." on its first plane, and has no space bar. Smart
+          // insert/delete would add or remove spaces around a pasted address.
+          keyboardType="url"
+          smartInsertDelete={false}
+          onSubmitEditing={() => void start(destination.current)}
+          testID="sw-destination"
+        />
+      ) : (
+        <Text style={styles.empty}>Connecting…</Text>
+      )}
 
-      <Pressable style={styles.button} onPress={() => void start(destination)}>
-        <Text style={styles.buttonLabel}>Call</Text>
+      <Pressable
+        style={[styles.button, (dialing || !isConnected) && styles.disabled]}
+        disabled={dialing || !isConnected}
+        onPress={() => void start(destination.current)}
+      >
+        <Text style={styles.buttonLabel}>{dialing ? 'Calling…' : 'Call'}</Text>
       </Pressable>
 
       <Text style={styles.section}>Directory</Text>
@@ -96,7 +128,11 @@ export function HomeScreen({
         keyExtractor={(item) => item.id}
         ListEmptyComponent={<Text style={styles.empty}>No addresses yet.</Text>}
         renderItem={({ item }) => (
-          <Pressable style={styles.row} onPress={() => void start(item.id)}>
+          <Pressable
+            style={[styles.row, dialing && styles.disabled]}
+            disabled={dialing}
+            onPress={() => void start(item.id)}
+          >
             <Text style={styles.rowTitle}>{item.displayName ?? item.name ?? item.id}</Text>
           </Pressable>
         )}
@@ -114,6 +150,7 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#1e293b', borderRadius: 12, color: '#f8fafc', padding: 14 },
   button: { backgroundColor: '#2563eb', borderRadius: 12, padding: 14 },
   buttonLabel: { color: '#fff', fontWeight: '700', textAlign: 'center' },
+  disabled: { opacity: 0.5 },
   section: { color: '#94a3b8', fontSize: 13, marginTop: 8, textTransform: 'uppercase' },
   empty: { color: '#64748b', fontSize: 14 },
   row: { borderBottomColor: '#1e293b', borderBottomWidth: 1, paddingVertical: 14 },

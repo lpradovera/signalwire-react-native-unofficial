@@ -39,9 +39,10 @@ export function ConnectScreen({
       <Text style={styles.subtitle}>Paste a subscriber token to connect.</Text>
       {fetchError ? <Text style={styles.error}>Token server: {fetchError}</Text> : null}
 
+      {/* Uncontrolled: `token` follows the field and is never written back,
+          so a re-render while pasting or typing cannot replace the text. */}
       <TextInput
         style={styles.input}
-        value={token}
         onChangeText={setToken}
         placeholder="Subscriber access token"
         placeholderTextColor="#64748b"
