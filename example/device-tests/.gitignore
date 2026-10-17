@@ -1,0 +1,8 @@
+# Suite output, local settings and Gradle builds.
+.out/
+suite.env
+android/.gradle/
+android/build/
+android/suite/build/
+android/local.properties
+__pycache__/

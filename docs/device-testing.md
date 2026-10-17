@@ -293,6 +293,80 @@ camera captured, no CallKit UI confirmed, and no push delivered. The iPad
 session later the same day signed off rows 1, 3, 5 and 6 below; the remaining
 rows are still open.
 
+## The Android emulator suite (automated)
+
+`example/device-tests/` drives the example on an Android emulator with UI
+Automator and checks every call's audio, so the Android rows above can be
+re-run without a person. It does not replace the phone: the emulator has no
+earpiece, no Bluetooth, no real FCM and a stock lock screen (see "Not covered"
+below).
+
+**How it works.** `android/` is a self-instrumenting test APK
+(`com.signalwire.devicetests`, androidx UI Automator 2.3). The tests drive
+the example from outside its process: React Native's `testID` is the view's
+resource-id (`By.res("sw-hangup")`), system UI (the heads-up, the shade, the
+lock screen) is found by text or content description, and nothing is tapped
+by coordinates. They lock the screen, toggle the network and force-stop the
+app through the shell. `host/hostd.py` runs on the Mac (the emulator reaches
+it as `10.0.2.2`): it proxies the app's `/token` to the example server (and
+can answer 401), places inbound calls by REST, reads each leg's packet
+counts, runs emulator console commands (the proximity sensor), and ends any
+test call older than 55 s, polling every 2 s. `suite.sh` builds the example
+in each configuration (full, `endAndAccept`, `single`, end-on-Back,
+`EXPO_PUBLIC_SW_CALLKIT=0`, and a push build with a simulated FCM receiver),
+clearing Metro's cache before each, runs the groups and sweeps the calls.
+
+**Audio evidence.** The builds set `EXPO_PUBLIC_SW_DEV_STATS=1`. After every
+switch (answer, Hold & Accept, each Swap, End of the other call, End &
+Accept, resume, unlock, return from the notification) a test reads two
+`[DEVSTATS]` samples and requires at least 20 packets/s each way on the live
+call and none, with its sender `audio:paused`, on a held one. React Native
+pauses JS timers while the app is in the background or the screen is off,
+so across those windows the cumulative counters before and after give the
+rate. Each run directory has `legs.txt`: the samples between the test's
+markers, and each REST leg's packets from and to the app.
+
+**Running it.** Boot an API 35 emulator, copy
+`example/device-tests/suite.env.example` to `suite.env` and fill it in
+(credentials stay in the server's env file, which nothing prints), then:
+
+```bash
+npm ci
+example/device-tests/suite.sh                 # every group, about 23 calls
+example/device-tests/suite.sh calls cw        # some groups
+```
+
+Groups: `launch`, `calls`, `cw`, `back`, `connection`, `endonback`, `modes`,
+`nocallkit`, `push` (call counts in `suite.sh`). Output goes to
+`example/device-tests/.out/` (`runs/<test>-<build>-<time>/` with
+`logcat.txt`, `legs.txt`, screenshots and window dumps; `calls.txt` with
+every call and the minutes). On a Mac where adb's mDNS code crashes, export
+`ADB_MDNS=0` (the script does).
+
+**What it found (2026-10-17, API 35, react-native-webrtc 155).** Two defects,
+both fixed in the package's Android code:
+
+- Answering an inbound call could leave the caller ringing: libwebrtc's
+  Android network monitor restarts with the answer's ICE gathering session
+  and, until the platform's callbacks arrive, reports no network, so no
+  candidate was gathered and the SDK never sent its answer (2 of 4 answers
+  before, 5 of 5 after). The package now sets the
+  `WebRTC-AndroidNetworkMonitor-IsAdapterAvailable/Disabled/` field trial.
+- A pushed call's Answer did nothing with the app killed: the Answer intent
+  arrived as a new intent before React had an activity and was dropped.
+
+And one platform limit: about 5 s after the app goes to the background,
+Android cuts its sockets ("Destroyed live tcp sockets for uids=…"), so with
+push off a call placed minutes later never reaches the device. Calls to a
+backgrounded app need push; the `push` group covers that path.
+
+**Not covered** (the emulator can't): the earpiece route and proximity
+screen-off on it (the emulator offers only the speaker; the sensor reaches
+incall-manager, which correctly keeps the screen on for the speaker),
+Bluetooth, a real FCM delivery (the simulated receiver plus the temporary
+allowlist Google Play services grants stand in for it), and OEM lock
+screens.
+
 ## Sign-off
 
 The Android column is empty: Android has been exercised on an emulator during
