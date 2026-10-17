@@ -27,6 +27,7 @@ import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform
 import { forgetPendingVoipCall, getPendingVoipCalls } from '../push/voipToken';
 import { CALLKIT_BRIDGE_KEY } from './bridgeKey';
 import { getCallKeep, requireCallKeep } from './callkeepModule';
+import { donateCompletedCall } from './siri';
 import { WebRTCAudioSessionLink } from './webrtcAudioSession';
 import { CallRegistry, DEFAULT_FUSION_TIMEOUT_MS, INBOUND_ANSWER } from './CallRegistry';
 
@@ -234,6 +235,15 @@ export interface CallKitSetupOptions {
    * user can call back (see `startCallRequested$`). Default `true`.
    */
   includesCallsInRecents?: boolean;
+  /**
+   * iOS: tell Siri about each call that connected, once it ends (the remote
+   * party's name and handle, as an `INInteraction`), so that "call <name>
+   * with <app>" and "call back" can find the people the user calls through
+   * the app. Siri places those calls only with the config plugin's
+   * `enableSiri`; see docs/native-setup.md. Default: `includesCallsInRecents`,
+   * i.e. `true` unless the app keeps its calls out of Recents.
+   */
+  donateCallsToSiri?: boolean;
   /** Name of the channel incoming calls ring on. Default `'Incoming calls'`. */
   androidIncomingChannelName?: string;
   /**
@@ -363,6 +373,12 @@ export class CallKeepBridge {
    * answer) from being requested twice.
    */
   private readonly wantHeld = new Map<string, boolean>();
+  /** Whether calls are donated to Siri when they end; see `donateCallsToSiri`. */
+  private donateCallsToSiri = true;
+  /** Calls the user placed, as opposed to answered: the donation's direction. */
+  private readonly outgoingUuids = new Set<string>();
+  /** When each call connected: only a call that connected is donated, once, when it ends. */
+  private readonly connectedAt = new Map<string, number>();
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     this.holdTimeoutMs = options.fusionTimeoutMs ?? DEFAULT_FUSION_TIMEOUT_MS;
@@ -460,6 +476,7 @@ export class CallKeepBridge {
     this.supportsVideo = options.supportsVideo ?? false;
     this._callWaiting = options.callWaiting ?? 'full';
     this.endCallsOnHostDestroy = options.endCallsOnHostDestroy ?? false;
+    this.donateCallsToSiri = options.donateCallsToSiri ?? options.includesCallsInRecents ?? true;
     this.registry.setCallLimit(callLimitFor(this._callWaiting));
     this.incomingChannelName = options.androidIncomingChannelName ?? 'Incoming calls';
     // The registry was built before setup() by getCallKit(), with no options.
@@ -902,6 +919,7 @@ export class CallKeepBridge {
     }
 
     const uuid = this.registry.attachOutgoingCall(call, handle, displayName);
+    this.outgoingUuids.add(uuid);
     this.audioClaims.add(uuid);
     this.watchCallStatus(call);
     // Deliberate breadcrumb: RNCallKeep's own logs are NSLog-only, invisible in
@@ -934,6 +952,8 @@ export class CallKeepBridge {
     this.webrtcAudio.release();
     this.heldActions.clear();
     this.wantHeld.clear();
+    this.outgoingUuids.clear();
+    this.connectedAt.clear();
     this.registry.destroy();
     this._startCallRequested$.complete();
     this.heldStartRequests = [];
@@ -1945,6 +1965,9 @@ export class CallKeepBridge {
         return;
       }
       if (status === 'connected') {
+        if (!this.connectedAt.has(uuid)) {
+          this.connectedAt.set(uuid, Date.now());
+        }
         logger.debug(`Call ${uuid} connected; starting the audio session`);
         this.registry.reportConnected(uuid);
         this.claimAudio(uuid);
@@ -1960,8 +1983,35 @@ export class CallKeepBridge {
       if (TERMINAL_STATUSES.has(status)) {
         // Ends the entry, which releases its audio if it owns the session.
         this.pendingMute.delete(uuid);
+        this.donateIfCompleted(uuid);
         this.registry.reportRemoteEnded(uuid);
       }
+    });
+  }
+
+  /**
+   * Tells Siri about a call that connected, now that it has ended, so the
+   * remote party can be called by name or called back (callkit/siri.ts). Once
+   * per call: the SDK reports more than one terminal status.
+   */
+  private donateIfCompleted(uuid: string): void {
+    const startedAt = this.connectedAt.get(uuid);
+    const outgoing = this.outgoingUuids.delete(uuid);
+    if (startedAt === undefined) {
+      return;
+    }
+    this.connectedAt.delete(uuid);
+    const entry = this.registry.entryForUuid(uuid);
+    if (!this.donateCallsToSiri || Platform.OS !== 'ios' || !entry) {
+      return;
+    }
+    void donateCompletedCall({
+      handle: entry.handle,
+      displayName: entry.displayName,
+      outgoing,
+      video: this.mediaFor(entry.call) === 'video',
+      startedAt,
+      endedAt: Date.now()
     });
   }
 

@@ -5,7 +5,7 @@
 import '@signalwire/react-native/polyfills';
 
 import { setDebugOptions, setLogger, setLogLevel } from '@signalwire/js';
-import { getCallKit, registerAndroidCallPush } from '@signalwire/react-native/callkit';
+import { getCallKit, registerAndroidCallPush, requestSiriAuthorization } from '@signalwire/react-native/callkit';
 import { registerRootComponent } from 'expo';
 
 import App from './App';
@@ -83,6 +83,9 @@ if (process.env.EXPO_PUBLIC_SW_CALLKIT !== '0') {
     ...(CALL_WAITING_MODES.includes(callWaiting) ? { callWaiting } : {}),
     endCallsOnHostDestroy: process.env.EXPO_PUBLIC_SW_END_CALLS_ON_BACK === '1'
   });
+  // Siri's "call <name> with SignalWire RN Example" (app.json's enableSiri):
+  // iOS asks once. 'unavailable' on Android and in a build without Siri.
+  void requestSiriAuthorization().then((siri) => console.log(`Siri: ${siri}`));
 }
 
 // Android call pushes, registered here rather than in a component: the
