@@ -56,9 +56,10 @@ export function ConnectScreen({
       ) : null}
       <Text style={styles.subtitle}>Paste a subscriber token to connect.</Text>
 
+      {/* Uncontrolled: `token` follows the field and is never written back,
+          so a re-render while pasting or typing cannot replace the text. */}
       <TextInput
         style={styles.input}
-        value={token}
         onChangeText={setToken}
         placeholder="Subscriber access token"
         placeholderTextColor="#64748b"
@@ -69,7 +70,6 @@ export function ConnectScreen({
 
       <TextInput
         style={styles.referenceInput}
-        value={reference}
         onChangeText={setReference}
         placeholder="Subscriber reference the token was minted for"
         placeholderTextColor="#64748b"
