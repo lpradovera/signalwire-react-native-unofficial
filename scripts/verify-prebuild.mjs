@@ -215,6 +215,15 @@ check(IOS_VOIP_SOURCE, readFileSync(join(example, IOS_VOIP_SOURCE), 'utf8'), [
   'call_id',
   'SignalWireVoipTokenNotification'
 ]);
+// React Native builds from source, so the root patches/ react-native patch
+// reaches the app (example/plugins/withReactNativeFromSource.js).
+check('ios/Podfile.properties.json', readFileSync(join(example, 'ios/Podfile.properties.json'), 'utf8'), [
+  '"ios.buildReactNativeFromSource": "true"'
+]);
+check('ios/Podfile', readFileSync(join(example, 'ios/Podfile'), 'utf8'), [
+  '# @generated begin withReactNativeFromSource',
+  "build.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'"
+]);
 check(IOS_PBXPROJ, readFileSync(join(example, IOS_PBXPROJ), 'utf8'), [
   'SignalWireVoipPush.m in Sources',
   'SignalWireCallKitActivity.m in Sources',
