@@ -29,7 +29,11 @@ jest.mock('react-native', () => ({
     requestMultiple: async (permissions: string[]) =>
       Object.fromEntries(permissions.map((permission) => [permission, 'granted']))
   },
-  NativeModules: { RNCallKeep: { setup: () => undefined }, InCallManager: { start: () => undefined } }
+  NativeModules: { RNCallKeep: { setup: () => undefined }, InCallManager: { start: () => undefined } },
+  // The Android audio routes listen here once a call's audio starts. Missing,
+  // their subscription threw a TypeError that rxjs rethrows from a timer, and
+  // a jest worker that caught it outside a test died with the whole suite.
+  DeviceEventEmitter: { addListener: () => ({ remove: () => undefined }) }
 }));
 
 const callkeep = RNCallKeep as unknown as typeof RNCallKeep & {

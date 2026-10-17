@@ -27,6 +27,7 @@ import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform
 import { forgetPendingVoipCall, getPendingVoipCalls } from '../push/voipToken';
 import { CALLKIT_BRIDGE_KEY } from './bridgeKey';
 import { getCallKeep, requireCallKeep } from './callkeepModule';
+import { WebRTCAudioSessionLink } from './webrtcAudioSession';
 import { CallRegistry, DEFAULT_FUSION_TIMEOUT_MS, INBOUND_ANSWER } from './CallRegistry';
 
 import type { PendingCall } from '../push/voipToken';
@@ -268,6 +269,8 @@ export class CallKeepBridge {
    * would wait for an event that has already fired.
    */
   private readonly audioSessionActive$ = new BehaviorSubject(false);
+  /** Starts and stops WebRTC's audio unit with CallKit's activations (iOS). */
+  private readonly webrtcAudio = new WebRTCAudioSessionLink();
   /**
    * What removes each of the bridge's callkeep handlers (see {@link listen}).
    * destroy() removes these, and only these: callkeep's
@@ -412,6 +415,9 @@ export class CallKeepBridge {
     // — before setup() has had a chance to assert it is installed. An app that
     // only wants the SDK, with no native call UI, must not crash on import.
     if (typeof RNCallKeep?.addEventListener === 'function') {
+      // Before the listeners: a replayed activation must find WebRTC's audio
+      // under CallKit's control already.
+      this.webrtcAudio.adopt();
       this.listen<LoadedEvent[]>('didLoadWithEvents', (events) => this.handleLoadedEvents(events));
       this.registerNativeListeners();
     }
@@ -914,6 +920,7 @@ export class CallKeepBridge {
     for (const listener of this.nativeListeners.splice(0)) {
       listener.remove();
     }
+    this.webrtcAudio.release();
     this.heldActions.clear();
     this.wantHeld.clear();
     this.registry.destroy();
@@ -1008,9 +1015,9 @@ export class CallKeepBridge {
       } else if (event?.name === 'RNCallKeepPerformEndCallAction') {
         this.replayAction((event.data as { callUUID: string }).callUUID, 'end');
       } else if (event?.name === 'RNCallKeepDidActivateAudioSession') {
-        this.setAudioSessionActive(true);
+        this.handleAudioSessionActivated();
       } else if (event?.name === 'RNCallKeepDidDeactivateAudioSession') {
-        this.setAudioSessionActive(false);
+        this.handleAudioSessionDeactivated();
       } else if (event?.name === 'RNCallKeepDidReceiveStartCallAction') {
         this.handleStartCallAction(event.data as StartCallEvent);
       } else if (event?.name === 'RNCallKeepDidFailCallAction') {
@@ -1228,12 +1235,12 @@ export class CallKeepBridge {
     // iOS only. Starting media before this fires yields a silent call.
     this.listen('didActivateAudioSession', () => {
       logger.debug('Audio session activated');
-      this.setAudioSessionActive(true);
+      this.handleAudioSessionActivated();
     });
 
     this.listen('didDeactivateAudioSession', () => {
       logger.debug('Audio session deactivated');
-      this.setAudioSessionActive(false);
+      this.handleAudioSessionDeactivated();
     });
 
     // A provider reset ends every call and its session, with no deactivation
@@ -1593,7 +1600,23 @@ export class CallKeepBridge {
       this.stopAudio(this.audioUuid);
     }
     // Ended calls release the session they own; the activation went with
-    // the reset either way.
+    // the reset either way, and WebRTC's audio unit with it.
+    this.handleAudioSessionDeactivated();
+  }
+
+  /**
+   * CallKit activated the audio session: WebRTC's audio unit is (re)started
+   * first, then the calls waiting for the session start their audio route.
+   * Every activation restarts the unit, because CallKit stops it on each call
+   * change and WebRTC is not told (see WebRTCAudioSessionLink).
+   */
+  private handleAudioSessionActivated(): void {
+    this.webrtcAudio.didActivate();
+    this.setAudioSessionActive(true);
+  }
+
+  private handleAudioSessionDeactivated(): void {
+    this.webrtcAudio.didDeactivate();
     this.setAudioSessionActive(false);
   }
 
@@ -1616,7 +1639,16 @@ export class CallKeepBridge {
       await firstValueFrom(
         this.audioSessionActive$.pipe(
           filter(Boolean),
-          timeout({ first: AUDIO_SESSION_TIMEOUT_MS, with: () => of(true) }),
+          timeout({
+            first: AUDIO_SESSION_TIMEOUT_MS,
+            with: () => {
+              // No activation came: WebRTC runs its audio unit anyway, as it
+              // did on its own before manual audio, rather than stay silent.
+              logger.warn(`No audio session activation in ${AUDIO_SESSION_TIMEOUT_MS} ms; starting audio anyway`);
+              this.webrtcAudio.enableWithoutActivation();
+              return of(true);
+            }
+          }),
           takeUntil(this.destroyed$)
         ),
         { defaultValue: false }
