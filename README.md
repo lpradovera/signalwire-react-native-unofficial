@@ -31,12 +31,18 @@ testing the dev client, not your app.
 
 **Known gaps**
 
-- **Android has no lock-screen call UI.** `backToForeground()` only works on an
-  unlocked device; a locked phone needs a full-screen-intent notification,
-  which this package does not yet implement.
-- **A voice call forces speakerphone.** The audio session mode is chosen from
-  the app's `supportsVideo` capability rather than the call's own media, so a
-  voice call in a video-capable app starts in video mode.
+- **Android's incoming-call UI is a notification.** With the package's Android
+  module linked (rebuild the app after upgrading), a call to a backgrounded or
+  killed app rings as a call notification with Answer and Decline, and opens
+  the app over the lock screen through its full-screen intent; the app's own
+  ringing UI takes it from there. On Android 14+ the user can revoke
+  full-screen intents in Settings, and then the notification only rings.
+- **A call's type is fixed when it is answered.** An outbound call's audio
+  mode and CallKit type come from its own media (`call.mediaDirections`). An
+  inbound call is answered audio-only, so it is a voice call. A pushed call
+  starts its audio when its call connects, with that call's media. A later
+  change of media during the call (adding or dropping video) re-modes
+  neither the audio session nor CallKit.
 
 ## Packages
 
@@ -97,7 +103,7 @@ so the two UI packages are siblings by name only and share no code.
 | `@signalwire/react-native` | Provider, hooks, video view |
 | `@signalwire/react-native/polyfills` | **Must be line 1** of your entry file |
 | `@signalwire/react-native/callkit` | Native call UI, push tokens, `registerAndroidCallPush` |
-| `@signalwire/react-native/audio` | Speaker / earpiece / Bluetooth routing |
+| `@signalwire/react-native/audio` | Speaker / earpiece / headset / Bluetooth routing |
 | `@signalwire/react-native/ringing` | `useRingingPushes`, for drawing your own incoming-call UI |
 
 `./ringing` is deliberately separate from `./callkit`: the latter imports
@@ -203,7 +209,7 @@ Optional, each unlocking one feature:
 | Package | Unlocks |
 | --- | --- |
 | `react-native-callkeep` | `@signalwire/react-native/callkit` — native call UI |
-| `react-native-incall-manager` | `@signalwire/react-native/audio` — speaker/earpiece/Bluetooth routing |
+| `react-native-incall-manager` | `@signalwire/react-native/audio` — speaker/earpiece/headset/Bluetooth routing (iOS beyond speaker on/off: see [Audio routes on iOS](#audio-routes-on-ios)) |
 | `@react-native-community/netinfo` | Network-loss detection and SDK reconnection |
 
 Importing a subpath without its peer throws `MissingPeerDependencyError`, which
@@ -341,11 +347,102 @@ export default function App() {
 | `useIncomingCalls()` | `calls`, `answer`, `reject` | `@signalwire/react-native` |
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` | `@signalwire/react-native` |
 | `useObservable(obs$, initial)` | The latest value of any SDK observable | `@signalwire/react-native` |
-| `useAudioRoute()` | `route`, `setRoute` | `@signalwire/react-native/audio` |
+| `useAudioRoute()` | `route`, `setRoute`, `setSpeakerOn` | `@signalwire/react-native/audio` |
+| `useAudioDevices()` | `available`, `selected`, `selectedName` (e.g. the car's name). iOS, with incall-manager iOS routes. Live while a call's session runs; outside a call, the last status read. | `@signalwire/react-native/audio` |
+| `getAudioDeviceStatus()` (function) | The same status, read now, for code outside React. Resolves `null` without iOS routes (the hook gives an empty status instead). | `@signalwire/react-native/audio` |
 
 `useObservable` is built on `useSyncExternalStore`, so it is tear-free under
 concurrent rendering, and it seeds from the SDK's synchronous getters rather
 than flashing a default. Every hook is safe with a null call or client.
+
+### Audio routes
+
+`useAudioRoute()` has four routes, one for each of incall-manager's devices:
+`'earpiece'` (the receiver), `'speaker'`, `'headset'` (a wired or USB-C
+headset) and `'bluetooth'` (a Bluetooth headset or a car). Use `setSpeakerOn(on)` for a speaker toggle: off returns to the
+route the call had before (a connected headset or car, or the receiver).
+`setRoute(route)` is a choice of that route; `setRoute('earpiece')` means the
+phone's receiver, as on Android, and with iOS routes it moves a call off a
+connected headset or car. A toggle written as
+`setRoute(route === 'speaker' ? 'earpiece' : 'speaker')` should use
+`setSpeakerOn(route !== 'speaker')`.
+
+A route chosen before the call's audio session starts (a speaker tap while an
+outbound CallKit call still rings) shows at once and is applied when the
+session starts; if the call ends first, it is dropped. The CallKit bridge
+starts and stops the session for the calls it tracks. Without CallKit (or
+for a call it doesn't track), call `getAudioRouteController().start(media)`
+when the call connects and `stop()` when it ends; with no session only the
+speaker setting can be written, and only on iOS (speaker on and off;
+`'headset'` and `'bluetooth'` are ignored with a warning), because on
+Android incall-manager refuses every route before its `start()`. A video call starts on the speaker only when nothing else is
+connected: incall-manager's own start decides, and this package doesn't force
+the speaker over a headset or car. `route` shows the media's default (`'speaker'`
+for video) until the session's first status replaces it: on Android
+incall-manager reports its devices, and with iOS routes the session reads
+them; a choice made before that status is held and then applied to the
+reported route. A route that can't be chosen (no such device) goes back to
+where it was, on Android too.
+
+#### Audio routes on Android
+
+A call the CallKit bridge tracks runs in react-native-callkeep's self-managed
+ConnectionService, and Telecom routes its audio. The package then asks
+Telecom for every route (`Connection.setAudioRoute`, through callkeep's
+`setAudioRoute`) and `route` follows Telecom's reports (callkeep's
+`didChangeAudioRoute`): a choice in the system's output switcher, a
+Bluetooth headset or car connecting or dropping, a wired headset plugged in.
+Speaker off returns to the route the call had before: the receiver, the
+wired headset, or the Bluetooth device. A route Telecom doesn't offer the
+call, or doesn't move it to, goes back to where Telecom has it. A video call
+Telecom starts on the receiver is moved to the speaker; one on a headset or
+car stays there.
+
+incall-manager's session isn't started for such a call: its `start()` routes
+the call through AudioManager behind Telecom (the two then disagree, Telecom
+on the receiver while incall-manager forces the speaker). Telecom sets the
+audio mode and takes audio focus for the call. The package still uses
+incall-manager to keep the screen on during the call and to blank it while
+the phone is at the ear on the receiver (its proximity sensor).
+
+The routes Telecom offers are read from the call's `CallAudioState` by the
+package's Android library (callkeep reports only the route), so rebuild the
+app after upgrading. Before the rebuild, the route still follows Telecom and
+every route can be asked for. Choosing between two Bluetooth devices isn't
+possible yet: callkeep asks Telecom for "Bluetooth", which uses the active
+device.
+
+A call the bridge doesn't track (an app that calls
+`getAudioRouteController().start(media)` itself), or one Telecom refused, is
+routed by incall-manager as before.
+
+#### Audio routes on iOS
+
+This package never writes the iOS audio session itself: incall-manager does,
+and so do callkeep (its category and mode on every CallKit activation) and
+WebRTC. Released incall-manager (through 4.3.0) has iOS speaker on/off only,
+and what you get depends on which you have:
+
+| | incall-manager 4.3.0 | incall-manager with iOS routes |
+| --- | --- | --- |
+| Speaker on / off | ✅ | ✅ |
+| `setRoute('earpiece')` | Speaker off; a connected headset or car keeps the call | The receiver |
+| `setRoute('headset')` | Speaker off; a plugged-in headset takes the call | The wired or USB-C headset |
+| `setRoute('bluetooth')` | Ignored, with one warning | A connected Bluetooth headset or car |
+| `route` | What was asked for; at start the media's default (`'speaker'` for video), even when iOS kept the call on a headset or car | What iOS reports: the starting device, a headset or car connecting or dropping, a choice in the system route menu or CallKit |
+| `useAudioDevices()` | Empty | The devices, by name, kept current during a call |
+
+iOS routes come from a change to incall-manager that is proposed upstream
+(chooseAudioRoute, getAudioDeviceStatus and onAudioDeviceChanged on iOS, with
+incall-manager following route changes it didn't make). To use it now, apply
+[`docs/patches/react-native-incall-manager+4.3.0.patch`](docs/patches/react-native-incall-manager+4.3.0.patch)
+with [patch-package](https://github.com/ds300/patch-package): pin
+`react-native-incall-manager` to `4.3.0`, install patch-package
+(`npm install --save-dev patch-package`), copy the file into your app's
+`patches/`, add `"postinstall": "patch-package"` to its scripts, run
+`npm install` (which applies it), and rebuild the app (native code). A vendored copy of incall-manager with the same change works the same
+way. This package detects the iOS routes at run time, so nothing else
+changes; without them it falls back as in the first column.
 
 `useDevices()` has no `refresh`-free auto-update: React Native emits no
 `devicechange` event, so the platform sets `skipDeviceMonitoring: true` and you
@@ -359,6 +456,12 @@ import { getCallKit } from '@signalwire/react-native/callkit';
 
 void getCallKit().setup({ appName: 'My App', supportsVideo: true });
 ```
+
+`supportsVideo` lets the native UI offer video; it does not make a call a
+video call. An outbound call is a video call when its own media
+(`call.mediaDirections`) sends or receives video, and starts on the speaker;
+every other call, including every inbound call (always answered audio-only),
+is a voice call on the earpiece.
 
 ```tsx
 <SignalWireProvider credentialProvider={credentials} callKit>

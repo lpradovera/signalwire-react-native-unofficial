@@ -330,14 +330,21 @@ registerAndroidCallPush();   // no-op on iOS and without Firebase installed
 
 That wires `setBackgroundMessageHandler` (a headless task, used when the app is
 killed — the normal case for an incoming call) and `onMessage` (foreground,
-where the background handler never fires), reports the call to
-ConnectionService, and brings the app forward.
+where the background handler never fires), and reports the call to
+ConnectionService. Telecom then asks for incoming-call UI, and the CallKit
+bridge posts the incoming-call notification when the app is not on screen (see
+2e).
 
 ### 2e. Draw the call yourself
 
-**Android shows no incoming-call UI.** callkeep is registered self-managed, so
-Telecom tracks the call and draws nothing — by design. Without a sheet of your
-own, the push lands, a connection exists, and the user sees nothing at all.
+**Android draws no incoming-call UI for you.** callkeep is registered
+self-managed, so Telecom tracks the call and draws nothing — by design. When the
+app is not on screen, the package posts a call notification when Telecom asks
+for one (`showIncomingCallUi`): it rings on its own channel, carries Decline and
+Answer, and its full-screen intent opens the app over the lock screen. The
+package's Android library does this, so rebuild the app after upgrading. In
+the app itself you draw the ringing call, as below; the notification is not
+posted over it.
 
 The kit's component handles both sources, and defaults to including native
 pushes on Android and not on iOS, where CallKit already drew the call:
@@ -362,9 +369,14 @@ runtime:
   ConnectionService reads the phone account while building an outgoing
   connection. Ungranted, the call connects and *then* the app dies with
   `SecurityException` inside `VoiceConnectionService.createConnection` — which
-  reads as a crash on answer rather than a missing grant. This package requests
-  it during `setup()`.
+  reads as a crash on answer rather than a missing grant. callkeep requests
+  nothing in self-managed mode, so `setup()` requests it, with RECORD_AUDIO,
+  POST_NOTIFICATIONS (13+) and BLUETOOTH_CONNECT (12+), once the app is on
+  screen; set up from a headless task, it waits for the app to come forward.
+  CAMERA is not asked for up front: react-native-webrtc asks when a call first
+  sends video.
 - **`POST_NOTIFICATIONS`** (Android 13+) for anything you want to show.
+  `getFcmToken()` and `watchPushToken()` ask for it before reading the token.
 
 The plugin also declares callkeep's `VoiceConnectionService` with
 `android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"`.
@@ -740,8 +752,18 @@ subscriber check would let any subscriber holding a token join any parked call.
 | Forward opaque payload to JS | generated `SignalWireVoipPush.m` |
 | Adopt the natively-displayed entry | `CallKeepBridge` / `CallRegistry.adoptNativeEntry` |
 | Ask the app to dial | `CallRegistry.answerRequested$` |
-| Attach the placed call | `CallRegistry.bindCall` |
+| Claim the entry for the dial | `CallKeepBridge.beginBridgeDial(uuid)` before dialling, `endBridgeDial()` once the dial settles |
+| Attach the placed call | `CallKeepBridge.bindBridgeCall(uuid, call)` |
 | Example wiring | `example/src/useBridgeAnswer.ts` |
+
+Attach the call with `getCallKit().bindBridgeCall`, not
+`getCallKit().registry.bindCall`. The bridge's version also watches the
+call's status: a pushed call's audio session starts when that call connects,
+and its connect and remote hang-up reach CallKit from the same watch.
+`CallRegistry.bindCall` only attaches the call, so the session never starts
+(no proximity sensor, no route control) and CallKit never hears the call
+end. Without `beginBridgeDial`, the dial is reported to CallKit as a second,
+outgoing call while the answered one is live, and CallKit rejects it.
 
 ### Running it
 

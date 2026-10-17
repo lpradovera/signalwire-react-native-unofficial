@@ -72,7 +72,7 @@ Enable the **Push Notifications** capability and, for VoIP push, the
 
 ## Android: AndroidManifest.xml
 
-Applied by the plugin. For bare projects:
+What the plugin applies (`src/plugin/withAndroidCallKit.ts`). For bare projects:
 
 ```xml
 <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -82,15 +82,36 @@ Applied by the plugin. For bare projects:
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 <uses-permission android:name="android.permission.WAKE_LOCK" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
 <!-- Native call UI only -->
-<uses-permission android:name="android.permission.BIND_TELECOM_CONNECTION_SERVICE" />
 <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
 <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+<uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+
+<application>
+  <!-- callkeep's ConnectionService. android:permission is a guard (only
+       Telecom may bind it), not something the app can hold: never add
+       BIND_TELECOM_CONNECTION_SERVICE as a uses-permission. Declare no
+       foreground-service type without its FOREGROUND_SERVICE_* permission
+       (no "camera"): Android 14+ refuses the whole service. -->
+  <service
+    android:name="io.wazo.callkeep.VoiceConnectionService"
+    android:label="Calls"
+    android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"
+    android:foregroundServiceType="phoneCall|microphone"
+    android:exported="true">
+    <intent-filter>
+      <action android:name="android.telecom.ConnectionService" />
+    </intent-filter>
+  </service>
+</application>
 ```
 
-Also register `react-native-callkeep`'s `ConnectionService` per its
-[Android setup guide](https://github.com/react-native-webrtc/react-native-callkeep).
+The package's own Android library (the incoming-call notification, with
+`USE_FULL_SCREEN_INTENT`, and the reader of a call's Telecom audio routes) is
+autolinked; its manifest merges into the app's.
 
 ## Android: waking on a data message
 
