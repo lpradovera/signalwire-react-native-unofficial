@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Calling with Siri
+
+- New plugin option `enableSiri` (default `false`): adds `INStartCallIntent`
+  to `INIntentsSupported`, `NSSiriUsageDescription` (option
+  `siriPermission`) and the `com.apple.developer.siri` entitlement, and
+  generates `SignalWireSiriCallIntent.m`, the AppDelegate's
+  `application:handlerForIntent:` (in-app intent handling, no Intents
+  extension). "Call <name> with <app>" and "call back" resolve against the
+  app's recent callees and reach `startCallRequested$` through the Recents
+  forwarder. Needs a paid Apple team, `UIApplicationSupportsMultipleScenes`
+  and Siri permission; see docs/native-setup.md.
+- The bridge donates each connected call to Siri when it ends
+  (`INInteraction`, `INStartCallIntent`, the remote party's name and handle):
+  `CallKitSetupOptions.donateCallsToSiri`, default `includesCallsInRecents`.
+- New `requestSiriAuthorization()`, `getSiriAuthorization()`,
+  `forgetSiriCalls()` and `donateCompletedCall()` in
+  `@signalwire/react-native/callkit`; new iOS pod files `SWSiriCalls`,
+  `SWSiriCallStore`, `SWSiriCallIntentHandler` (the pod now links Intents).
+- Docs: Recents call-back alone never made Siri work; native-setup.md said it
+  did.
+- Example: `enableSiri`, multiple scenes, and a Siri permission request at
+  launch.
+
 ### Android: the microphone stays live in the background without CallKit
 
 - With `callKit` off, `SignalWireProvider` runs a `microphone` foreground

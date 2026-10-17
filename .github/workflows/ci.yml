@@ -77,3 +77,12 @@ jobs:
         env:
           SW_REQUIRE_SWIFTC: '1'
         run: node --test plugins/withSceneLifecycle.swift.test.js
+
+      # The plugin's generated Objective-C (the Recents forwarder, the Siri
+      # intent handler) and the pod's Siri files, compiled against the iOS
+      # Simulator SDK with warnings as errors; skipped on Linux.
+      - name: Compile the generated and pod Objective-C
+        working-directory: packages/react-native
+        env:
+          SW_REQUIRE_SWIFTC: '1'
+        run: npx jest src/plugin/nativeSources.test.ts

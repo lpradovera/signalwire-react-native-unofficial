@@ -4,6 +4,7 @@ import { isCallKeepInstalled } from './callKeep';
 import { withAndroidCallKit } from './withAndroidCallKit';
 import { withCallKitActivity } from './withCallKitActivity';
 import { withIosCallKit } from './withIosCallKit';
+import { withSiriCallIntent } from './withSiriCallIntent';
 import { withVoipPush } from './withVoipPush';
 
 import type { ConfigPlugin } from 'expo/config-plugins';
@@ -29,13 +30,28 @@ export interface SignalWirePluginOptions {
    * to CallKit through it. `true` without callkeep fails prebuild.
    */
   enableVoipPush?: boolean;
+  /**
+   * iOS: let Siri place calls through the app ("call <name> with <app>", "call
+   * back"). Adds `INStartCallIntent` to `INIntentsSupported`,
+   * `NSSiriUsageDescription`, the `com.apple.developer.siri` entitlement, and
+   * generates `SignalWireSiriCallIntent.m`, the AppDelegate's in-app intent
+   * handler. Default `false`: the entitlement needs a paid Apple Developer
+   * Program team (a free personal team cannot sign it), and Siri asks the app
+   * only when it supports multiple scenes. Needs `enableCallKit` and callkeep:
+   * the call is placed through the Recents call-back path.
+   */
+  enableSiri?: boolean;
+  /** iOS `NSSiriUsageDescription`, with `enableSiri`; kept or defaulted like the others. */
+  siriPermission?: string;
 }
 
 const OPTION_TYPES: Record<keyof SignalWirePluginOptions, 'string' | 'boolean'> = {
   microphonePermission: 'string',
   cameraPermission: 'string',
   enableCallKit: 'boolean',
-  enableVoipPush: 'boolean'
+  enableVoipPush: 'boolean',
+  enableSiri: 'boolean',
+  siriPermission: 'string'
 };
 
 /** Rejects misspelt or mistyped options, which would otherwise fall back to a default silently. */
@@ -81,32 +97,50 @@ function validateOptions(options: unknown): SignalWirePluginOptions {
  * forwards `application:continueUserActivity:` (Recents and Siri call-backs,
  * `INStartCallIntent`) to RNCallKeep, and declares the call intents in
  * `NSUserActivityTypes`.
+ *
+ * With `enableSiri` it generates a third, `SignalWireSiriCallIntent.m`, which
+ * gives the AppDelegate `application:handlerForIntent:` for Siri's
+ * `INStartCallIntent`, and adds the intent, the Siri usage string and the Siri
+ * entitlement.
  */
 const withSignalWire: ConfigPlugin<SignalWirePluginOptions | undefined> = (config, options) => {
   const {
     microphonePermission,
     cameraPermission,
     enableCallKit = true,
-    enableVoipPush: requestedVoipPush
+    enableVoipPush: requestedVoipPush,
+    enableSiri = false,
+    siriPermission
   } = validateOptions(options);
 
   const projectRoot = (config as { _internal?: { projectRoot?: unknown } })._internal?.projectRoot;
   // Prebuild always sets it; without it there is nothing to check against.
   const callKeep = typeof projectRoot === 'string' ? isCallKeepInstalled(projectRoot) : true;
   const enableVoipPush = resolveVoipPush(callKeep, enableCallKit, requestedVoipPush);
+  if (enableSiri && !(enableCallKit && callKeep)) {
+    throw new Error(
+      '@signalwire/react-native: enableSiri needs enableCallKit and callkeep: Siri opens the app with the ' +
+        'call, which reaches startCallRequested$ through callkeep, like a Recents call-back. Install ' +
+        '@signalwire/react-native-callkeep, or leave enableSiri off.'
+    );
+  }
 
   const withIos = withIosCallKit(config, {
     microphonePermission,
     cameraPermission,
     enableVoipPush,
-    enableCallKit
+    enableCallKit,
+    enableSiri,
+    siriPermission
   });
 
   // Recents and Siri call-backs: the AppDelegate hands INStartCallIntent to
   // RNCallKeep, which only a generated Objective-C file can reach. That file
   // imports RNCallKeep.h too, so without callkeep it is not generated either.
   const withActivity = enableCallKit && callKeep ? withCallKitActivity(withIos) : withIos;
-  const withPush = enableVoipPush ? withVoipPush(withActivity) : withActivity;
+  // Siri's start-call request: the AppDelegate's in-app intent handler.
+  const withSiri = enableSiri ? withSiriCallIntent(withActivity) : withActivity;
+  const withPush = enableVoipPush ? withVoipPush(withSiri) : withSiri;
 
   return withAndroidCallKit(withPush, { enableCallKit });
 };
