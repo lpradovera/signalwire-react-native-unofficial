@@ -16,7 +16,7 @@
  * ```
  */
 export { CallKeepBridge, getCallKit, resetCallKitForTesting } from './callkit/CallKeepBridge';
-export type { CallKitSetupOptions } from './callkit/CallKeepBridge';
+export type { CallKitSetupOptions, StartCallRequest } from './callkit/CallKeepBridge';
 export { CallRegistry } from './callkit/CallRegistry';
 export type {
   CallEntry,

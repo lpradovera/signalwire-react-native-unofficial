@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Calling back from Recents and Siri
+
+- `CallKitSetupOptions.includesCallsInRecents` (iOS, default `true`, which is
+  CallKit's default too).
+- New `getCallKit().startCallRequested$`: a `StartCallRequest` (`handle`,
+  `displayName`, `video`) each time the user calls back from Recents or Siri,
+  from callkeep's `didReceiveStartCallAction` (also when it is replayed at a
+  cold start, held for the first subscriber for up to a minute). CallKit's
+  echo of the app's own outbound calls is left out. The example dials from it.
+- The Expo plugin (with `enableCallKit`) generates
+  `SignalWireCallKitActivity.m`, which forwards the AppDelegate's
+  `continueUserActivity` (`INStartCallIntent`) to RNCallKeep the way the
+  PushKit hook is generated, and declares the call intents in
+  `NSUserActivityTypes`. Without it callkeep never received the activity.
+
 ### CallKit audio belongs to its call
 
 - The audio session belongs to the call it was started for. Another call
