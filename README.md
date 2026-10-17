@@ -824,6 +824,16 @@ not natively linked. Install it and rebuild the native app (`npx expo prebuild
 the audio session. The bridge gates on `didActivateAudioSession`; if you start
 media yourself, wait for that event too.
 
+**iOS sends no audio after a call change (Hold & Accept, End & Accept, a
+second call, a swap or a resume)** — WebRTC's audio unit was not restarted
+after CallKit deactivated and reactivated the audio session. The bridge puts
+WebRTC on manual audio (`RTCAudioSession.useManualAudio`) and restarts its
+unit on every activation, through this package's native module
+`SWWebRTCAudioSession`. A log line `SWWebRTCAudioSession native module
+missing` means the app was not rebuilt (`pod install`, or `expo prebuild`)
+since that module was added. Don't set `useManualAudio` or `isAudioEnabled`
+yourself while the bridge runs.
+
 **Network loss is not detected** — check for `Network monitoring unavailable,
 continuing with reduced resilience` in the log: the NetInfo shim could not
 start, and the line carries the reason. Also check the app did not pass
