@@ -87,6 +87,8 @@
   },
   "files": [
     "dist",
+    "android/build.gradle",
+    "android/src",
     "app.plugin.js",
     "README.md"
   ],
@@ -109,7 +111,7 @@
     "@react-native-community/netinfo": ">=11.0.0",
     "@react-native-firebase/app": ">=22.0.0",
     "@react-native-firebase/messaging": ">=22.0.0",
-    "@signalwire/js": "^4.0.0-rc.2",
+    "@signalwire/js": "^4.0.0-rc.5",
     "react": ">=18.2.0",
     "react-native": ">=0.76.0",
     "react-native-callkeep": ">=4.3.0",
@@ -144,7 +146,7 @@
     "@expo/config-types": "^54.0.10",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/netinfo": "11.4.1",
-    "@signalwire/js": "^4.0.0-rc.2",
+    "@signalwire/js": "^4.0.0-rc.5",
     "@testing-library/react-native": "^14.0.1",
     "@types/jest": "^29.5.14",
     "@types/react": "~19.1.10",

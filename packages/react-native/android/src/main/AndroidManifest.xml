@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Lets the incoming-call notification open the call over the lock screen. -->
+  <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
+  <application>
+    <receiver
+      android:name="com.signalwire.reactnative.IncomingCallActionReceiver"
+      android:exported="false" />
+  </application>
+</manifest>

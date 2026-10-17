@@ -31,12 +31,18 @@ testing the dev client, not your app.
 
 **Known gaps**
 
-- **Android has no lock-screen call UI.** `backToForeground()` only works on an
-  unlocked device; a locked phone needs a full-screen-intent notification,
-  which this package does not yet implement.
-- **A voice call forces speakerphone.** The audio session mode is chosen from
-  the app's `supportsVideo` capability rather than the call's own media, so a
-  voice call in a video-capable app starts in video mode.
+- **Android's incoming-call UI is a notification.** With the package's Android
+  module linked (rebuild the app after upgrading), a call to a backgrounded or
+  killed app rings as a call notification with Answer and Decline, and opens
+  the app over the lock screen through its full-screen intent; the app's own
+  ringing UI takes it from there. On Android 14+ the user can revoke
+  full-screen intents in Settings, and then the notification only rings.
+- **A call's type is fixed when it is answered.** An outbound call's audio
+  mode and CallKit type come from its own media (`call.mediaDirections`). An
+  inbound call is answered audio-only, so it is a voice call. A pushed call
+  starts its audio when its call connects, with that call's media. A later
+  change of media during the call (adding or dropping video) re-modes
+  neither the audio session nor CallKit.
 
 ## Packages
 
@@ -359,6 +365,12 @@ import { getCallKit } from '@signalwire/react-native/callkit';
 
 void getCallKit().setup({ appName: 'My App', supportsVideo: true });
 ```
+
+`supportsVideo` lets the native UI offer video; it does not make a call a
+video call. An outbound call is a video call when its own media
+(`call.mediaDirections`) sends or receives video, and starts on the speaker;
+every other call, including every inbound call (always answered audio-only),
+is a voice call on the earpiece.
 
 ```tsx
 <SignalWireProvider credentialProvider={credentials} callKit>
