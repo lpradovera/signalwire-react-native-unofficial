@@ -7,6 +7,7 @@ import com.facebook.react.bridge.NativeModule;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.uimanager.ViewManager;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -21,7 +22,11 @@ public class SignalWireReactNativePackage implements ReactPackage {
   @NonNull
   @Override
   public List<NativeModule> createNativeModules(@NonNull ReactApplicationContext context) {
-    return Collections.singletonList(new IncomingCallNotificationModule(context));
+    List<NativeModule> modules = new ArrayList<>();
+    modules.add(new IncomingCallNotificationModule(context));
+    // Bridgeless only: lets the FCM headless task finish (see the module).
+    modules.addAll(HeadlessTaskSupportModule.forContext(context));
+    return modules;
   }
 
   @NonNull
