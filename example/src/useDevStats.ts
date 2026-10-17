@@ -11,6 +11,20 @@ import type { Call } from '@signalwire/js';
  */
 const ENABLED = process.env.EXPO_PUBLIC_SW_DEV_STATS === '1';
 
+/** Each sender's track kind and whether it sends (`paused` while held). */
+function sendersOf(call: Call): string {
+  try {
+    const pc = call.rtcPeerConnection as unknown as {
+      getSenders?: () => Array<{ track: { kind: string } | null; getParameters(): { encodings?: Array<{ active?: boolean }> } }>;
+    };
+    return (pc?.getSenders?.() ?? [])
+      .map((sender) => `${sender.track?.kind ?? 'none'}:${sender.getParameters().encodings?.[0]?.active === false ? 'paused' : 'on'}`)
+      .join(',');
+  } catch {
+    return '?';
+  }
+}
+
 async function rtpOf(call: Call): Promise<{ received: number; sent: number } | null> {
   const pc = call.rtcPeerConnection;
   if (!pc) {
@@ -65,7 +79,7 @@ export function useDevStats(): void {
           .then((rtp) =>
             console.log(
               `[DEVSTATS] call=${call.id} dir=${call.direction} status=${status} held=${held} ` +
-                `in=${rtp?.received ?? '-'} out=${rtp?.sent ?? '-'}`
+                `in=${rtp?.received ?? '-'} out=${rtp?.sent ?? '-'} senders=${sendersOf(call)}`
             )
           )
           .catch(() => console.log(`[DEVSTATS] call=${call.id} status=${status} held=${held} stats-failed`));
