@@ -6,6 +6,14 @@ import { useObservable } from './useObservable';
 import type { SignalWireContextValue } from './SignalWireProvider';
 import type { Call, DialOptions, Directory, SignalWire, User } from '@signalwire/js';
 
+/** Call statuses past which a hangup has nothing left to end. */
+const ENDING_STATUSES: ReadonlySet<string> = new Set([
+  'disconnecting',
+  'disconnected',
+  'destroyed',
+  'failed'
+]);
+
 export interface UseSignalWireResult {
   readonly client: SignalWire | null;
   readonly isConnected: boolean;
@@ -48,7 +56,17 @@ export function useSignalWire(): UseSignalWireResult {
       const call = await client.dial(destination, options);
       // The core does not know what an observer does with this — on React
       // Native it registers the call with CallKit; on the web nobody listens.
-      observer?.onOutgoingCall?.(call, destination);
+      try {
+        observer?.onOutgoingCall?.(call, destination);
+      } catch (error) {
+        // dial() rejects, so the app never gets this call to hang up: end it
+        // here, or its leg stays up on SignalWire. An observer that ended it
+        // already (a refused second call) is left to finish its own bye.
+        if (!ENDING_STATUSES.has(call.status)) {
+          void call.hangup().catch(() => undefined);
+        }
+        throw error;
+      }
       return call;
     },
     [client, observer]
