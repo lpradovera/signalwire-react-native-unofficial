@@ -18,6 +18,7 @@ import { useCallBack } from './src/useCallBack';
 import { useBridgeDecline } from './src/useBridgeDecline';
 import { fetchServerToken, useServerReference } from './src/fetchServerToken';
 import { useDeviceRegistration } from './src/useDeviceRegistration';
+import { useDevStats } from './src/useDevStats';
 
 import type { Call, CredentialProvider } from '@signalwire/js';
 
@@ -47,6 +48,8 @@ function Shell({ reference }: { reference: string | null | undefined }): React.J
   // or what was entered beside a pasted token. A build-time constant here
   // registered a pasted token's device under another subscriber.
   useDeviceRegistration(reference);
+  // EXPO_PUBLIC_SW_DEV_STATS=1: per-call RTP counters in the log.
+  useDevStats();
   // Answering a parked-caller push means dialling, not answering — see the hook.
   useBridgeAnswer(setActiveCall);
   // A tap in Recents, or "Hey Siri, call back": dial it.

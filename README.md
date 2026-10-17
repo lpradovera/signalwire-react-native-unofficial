@@ -492,7 +492,8 @@ const fetchToken = async () => {
 | --- | --- | --- |
 | `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `tokenStatus`, `dial`, `connect`, `disconnect` | `@signalwire/react-native` |
 | `useCall(call)` | `status`, `participants`, `self`, `localStream`, `remoteStream`, `isAudioMuted`, `isVideoMuted`, `error`, `hangup`, `toggleHold`, `setAudioMuted`, `setVideoMuted`, `sendDigits` | `@signalwire/react-native` |
-| `useIncomingCalls()` | `calls`, `answer`, `reject` | `@signalwire/react-native` |
+| `useIncomingCalls()` | `calls`, `answer` (holds a call in progress first), `endAndAnswer` (ends it first), `reject` | `@signalwire/react-native` |
+| `useCalls()` | `calls` in progress, `activeCall`, `heldCalls`, `isHeld`, `hold`, `unhold`, `swap` (call waiting) | `@signalwire/react-native` |
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` | `@signalwire/react-native` |
 | `useObservable(obs$, initial)` | The latest value of any SDK observable | `@signalwire/react-native` |
 | `useAudioRoute()` | `route`, `setRoute`, `setSpeakerOn` | `@signalwire/react-native/audio` |
@@ -656,13 +657,57 @@ by then, so it is still tracked. An inbound call's `fromName` that is a Fabric
 address is shown readably too, and the placeholder `_undef_` some calls carry
 for a missing name shows as "Unknown caller" (with a debug log line).
 
-Native call UI runs **one call at a time**. While a call is live (a ringing
-push included), `dial()` rejects with `CallInProgressError` before anything
-is placed: CallKit would refuse the second call's start, and callkeep does not
-tell JavaScript, so the call would run with no native UI to end it from.
-Answering a push by dialling a bridge is not refused. On Android an incoming
-call that arrives while another call is live is refused as busy (SIP 486) and
-never shown; on iOS CallKit shows it with End & Accept and Decline.
+### Call waiting
+
+A second call can ring during a live one, on iOS and Android alike. The
+`callWaiting` setup option picks how much of that the app allows, and every
+mode behaves the same on both platforms:
+
+| `callWaiting` | A call comes in during a call | Dialling during a call |
+| --- | --- | --- |
+| `'full'` (default) | It rings: **Hold & Accept** (the live call goes on hold), **End & Accept**, or **Decline**. The two calls can then be swapped, and either ended. | Places the call and puts the live one on hold. |
+| `'endAndAccept'` | It rings: **End & Accept** or **Decline**. | `CallInProgressError` |
+| `'single'` | Refused as busy (SIP 486), never shown. | `CallInProgressError` |
+
+```ts
+void getCallKit().setup({ appName: 'My App', callWaiting: 'endAndAccept' });
+```
+
+In `'full'` mode there are at most two calls, one active and one waiting or
+on hold: a third incoming call is refused as busy, and a third dial throws
+`CallInProgressError`. Calls are never merged.
+
+Where the choice is offered:
+
+- **iOS**: CallKit's own waiting-call screen offers Hold & Accept (with
+  `'full'`, which reports two call groups), End & Accept and Decline, over
+  the lock screen too, and its in-call screen holds and swaps.
+- **Android**: Telecom draws nothing for a self-managed call, so the app does.
+  `IncomingCallSheet` (`@signalwire/react-native-ui`) shows over a call in
+  progress with the buttons the mode allows; in the background the
+  incoming-call notification's Answer is Hold & Accept (End & Accept outside
+  `'full'`).
+- **Your own UI**: `useIncomingCalls().answer(call)` is Hold & Accept,
+  `endAndAnswer(call)` is End & Accept. `useCalls()` gives the calls in
+  progress, the `activeCall`, the `heldCalls`, and `hold`, `unhold` and
+  `swap`. Every hold, from the app, CallKit or Telecom, goes through one
+  hold state per call, so the native UI and the app always agree.
+
+The audio session follows the active call: it is never stopped while a held
+call is left, and on Android the active call's Telecom connection routes the
+audio. A held call sends no media and receives none.
+
+```tsx
+const { activeCall, heldCalls, swap } = useCalls();
+// …
+{heldCalls.map((call) => (
+  <HeldCallRow key={call.id} call={call} onSwap={swap} onEnd={() => call.hangup()} />
+))}
+```
+
+Outside `'full'`, `dial()` rejects with `CallInProgressError` before anything
+is placed while a call is live (a ringing push included). Answering a push by
+dialling a bridge is never refused.
 
 ```ts
 import { CallInProgressError } from '@signalwire/react-native';
@@ -677,6 +722,26 @@ try {
   }
 }
 ```
+
+### Back keeps the call running (Android)
+
+Back on the root screen destroys the activity, which unmounts the app. By
+default the call goes on: callkeep keeps its connection
+(`endCallsOnHostDestroy: false`), `SignalWireProvider` keeps the client and
+its calls instead of hanging up, and the ongoing-call notification brings the
+app back, where the provider takes the same client back and `useCalls()`
+finds the call. Once the kept calls end with the app still closed, the client
+is torn down. The provider does the same on iOS if your root unmounts.
+
+To have Back end the call instead (the old behaviour):
+
+```ts
+void getCallKit().setup({ appName: 'My App', endCallsOnHostDestroy: true });
+```
+
+If the process dies mid-call (killed by the system or by the user), nothing
+on the device can send a bye; see
+[device testing](docs/device-testing.md) for what the server does then.
 
 Calls appear in the Phone app's Recents. To call back from there, or from
 Siri, dial what `getCallKit().startCallRequested$` emits (`handle`,

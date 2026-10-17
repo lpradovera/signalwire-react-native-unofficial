@@ -63,6 +63,7 @@ export class CallHoldState {
           this.publish(call, held);
           return;
         }
+        this.warnIfUnpatched(call);
         await call.toggleHold();
         this.applied.set(call, held);
         this.publish(call, held);
@@ -86,6 +87,30 @@ export class CallHoldState {
       const next = new Set(this._held$.value);
       next.delete(call);
       this._held$.next(next);
+    }
+  }
+
+  private warnedUnpatched = false;
+
+  /**
+   * @signalwire/js 4.0.0-rc.5 holds a call on the server only: the held call
+   * goes on sending the microphone, and its recovery runs ICE restarts
+   * against the silence. This repository's
+   * `patches/@signalwire+js+4.0.0-rc.5.patch` fixes both; an app without it
+   * is told once.
+   */
+  private warnIfUnpatched(call: Call): void {
+    const sdk = call as unknown as { _holdState?: unknown; _pauseLocalMediaForHold?: unknown };
+    if (this.warnedUnpatched || typeof sdk._holdState !== 'boolean') {
+      return;
+    }
+    if (typeof sdk._pauseLocalMediaForHold !== 'function') {
+      this.warnedUnpatched = true;
+      logger.warn(
+        '@signalwire/js has no hold patch: a held call keeps sending audio and its network recovery ' +
+          'restarts ICE while held. Apply patches/@signalwire+js+4.0.0-rc.5.patch with patch-package ' +
+          '(see the README, "Call waiting").'
+      );
     }
   }
 
