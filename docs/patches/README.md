@@ -27,3 +27,25 @@ The diff ignores your git config (global and system config are not read, and
 every diff setting a repository's config could change is given explicitly),
 so the bytes are the same for everyone. It is not part of `npm run verify`,
 which has no incall-manager clone to compare against.
+
+## `@signalwire+js+4.0.0-rc.5.patch` (repository root `patches/`)
+
+Two fixes to `WebRTCCall` in @signalwire/js 4.0.0-rc.5 (`dist/index.mjs` and
+`dist/index.cjs`), found while building call waiting, applied to this
+repository by the root `postinstall` (patch-package). Apps that hold calls
+need it too (see the README, "Call waiting"). Reported to the SDK owner.
+
+- `toggleHold()` only sent `verto.modify`: the server stopped its media to the
+  held call, but the device kept sending its microphone. The patch sets
+  `RTCRtpEncodingParameters.active = false` on the main peer connection's
+  senders while held (no RTP, no renegotiation; `replaceTrack(null)` was not
+  enough, an audio sender without a track still sends silence), and back on
+  unhold.
+- The stats monitor reports `no_inbound_audio` for a held call, and the
+  recovery manager ran ICE restarts against it. The patch drops recovery
+  triggers while held and for 5 s after unhold.
+
+`scripts/sdk-hold-patch.test.mjs` (in `npm test`) checks that the installed
+SDK is rc.5 with both fixes, and runs the patched `toggleHold()` against a
+stub peer connection. It fails if the patch did not apply. Drop the patch once
+the SDK fixes both.
