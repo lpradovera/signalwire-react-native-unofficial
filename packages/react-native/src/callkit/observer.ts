@@ -37,6 +37,7 @@ export function createCallKitObserver(
       void getCallKit().trackCall(call, destination, nameFor(destination, getOptions())),
     onIncomingAnswer: (call, others) => getCallKit().answerIncomingFromApp(call, others),
     onIncomingReject: (call) => getCallKit().rejectIncomingFromApp(call),
+    isIncomingRefused: (call) => getCallKit().isIncomingRefused(call),
     onHoldChange: (call, held) => getCallKit().mirrorHold(call, held)
   };
 }

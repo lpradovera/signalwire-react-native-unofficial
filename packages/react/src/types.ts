@@ -64,6 +64,14 @@ export interface CallObserver {
   /** Same coordination for an in-app reject. Return `true` to take over. */
   onIncomingReject?(call: Call): boolean;
   /**
+   * Whether the observer has turned this inbound call down (the CallKit
+   * observer: refused as busy by the call-waiting policy, or declined). Such a
+   * call is left out of `useIncomingCalls()`: the SDK keeps it listed, still
+   * `ringing`, until its decline completes, and an in-app sheet would offer
+   * it for that moment.
+   */
+  isIncomingRefused?(call: Call): boolean;
+  /**
    * Called after the app put a call on hold or took it off (`useCalls()`'s
    * `hold`, `unhold` and `swap`, a `dial()` or `answer()` that held the
    * active call). The native call UI mirrors it, so its own screen shows the

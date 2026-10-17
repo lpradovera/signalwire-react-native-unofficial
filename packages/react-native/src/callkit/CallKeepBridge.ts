@@ -703,6 +703,15 @@ export class CallKeepBridge {
     this.followActiveCall();
   }
 
+  /**
+   * Whether an SDK incoming call was turned down here (busy under the
+   * call-waiting policy, or declined): the app's incoming list must not
+   * offer it. See {@link CallRegistry.isRefused}.
+   */
+  isIncomingRefused(call: Call): boolean {
+    return this.registry.isRefused(call);
+  }
+
   /** The reject twin of {@link answerIncomingFromApp}. */
   rejectIncomingFromApp(call: Call): boolean {
     const uuid = this.registry.uuidForCall(call);

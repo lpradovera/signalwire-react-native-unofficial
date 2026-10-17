@@ -159,6 +159,20 @@ export class CallRegistry {
     this.callLimit = limit;
   }
 
+  /**
+   * Whether the registry has turned this SDK call down: refused as busy (the
+   * call-waiting policy's limit), or declined as a push before it arrived, or
+   * declined from the native UI. An in-app incoming list leaves such a call
+   * out: the SDK keeps it listed, with status `ringing`, until its decline
+   * completes, so a sheet drawn from the SDK alone offered it for that
+   * moment (BUG-I1). The SDK's incoming list is subscribed to synchronously
+   * (`CallKeepBridge.bindClient`), so the decision is made before React
+   * renders the list.
+   */
+  isRefused(call: Call): boolean {
+    return this.refusedCalls.has(call);
+  }
+
   /** The entries that are live, oldest first. */
   get liveEntries(): CallEntry[] {
     return this.entries.filter((entry) => this.isLive(entry.uuid));
@@ -704,14 +718,17 @@ export class CallRegistry {
     return live.length >= this.callLimit ? live[0] : undefined;
   }
 
-  /** Calls already refused as busy: the SDK lists a call until it is gone. */
-  private readonly refusedBusy = new WeakSet<Call>();
+  /**
+   * SDK calls the registry has turned down (busy, or a declined push's call):
+   * the SDK lists a call until it is gone, and its status stays `ringing`
+   * until the decline's request completes. See {@link isRefused}.
+   */
+  private readonly refusedCalls = new WeakSet<Call>();
 
   private refuseBusy(call: Call, live: CallEntry): void {
-    if (this.refusedBusy.has(call)) {
+    if (this.refusedCalls.has(call)) {
       return;
     }
-    this.refusedBusy.add(call);
     logger.info(`Refusing inbound call ${call.id} as busy: ${live.uuid} is live; not showing it`);
     this.runIntent(call, 'reject');
   }
@@ -797,6 +814,9 @@ export class CallRegistry {
         // CallKeepBridge shows and starts it with INBOUND_ANSWER's media.
         call.answer({ ...INBOUND_ANSWER });
       } else {
+        // Before reject(): its status leaves `ringing` only once the bye
+        // completes, and nothing may offer the call in the meantime.
+        this.refusedCalls.add(call);
         call.reject();
       }
     } catch (error) {

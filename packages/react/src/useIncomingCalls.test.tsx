@@ -126,4 +126,37 @@ describe('useIncomingCalls', () => {
 
     expect(call.answer).toHaveBeenCalledWith({ audio: true, video: false });
   });
+
+  it("leaves out a call the observer refused (busy), keeping the others", () => {
+    const refused = { id: 'refused' };
+    const ringing = { id: 'ringing' };
+    const observer = { isIncomingRefused: jest.fn((call: unknown) => call === refused) };
+    render(
+      <SignalWireContext.Provider
+        value={{ client: client as never, error: null, observer }}
+      >
+        <Probe />
+      </SignalWireContext.Provider>
+    );
+
+    act(() => incomingCalls$.next([ringing, refused]));
+
+    expect(result?.calls).toEqual([ringing]);
+  });
+
+  it('keeps the SDK list as it is when the observer refused nothing', () => {
+    const calls = [{ id: 'a' }];
+    const observer = { isIncomingRefused: jest.fn(() => false) };
+    render(
+      <SignalWireContext.Provider
+        value={{ client: client as never, error: null, observer }}
+      >
+        <Probe />
+      </SignalWireContext.Provider>
+    );
+
+    act(() => incomingCalls$.next(calls));
+
+    expect(result?.calls).toBe(calls);
+  });
 });
