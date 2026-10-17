@@ -12,6 +12,9 @@
  * intent carries no call: Answer did nothing and the call kept ringing
  * (emulator, 2026-10-17, simulated FCM push with the app killed).
  */
+// A module, not a script: its names stay out of the other test files' scope.
+export {};
+
 // Node built-ins, typed here: this package's tsconfig has no Node types
 // (the same pattern as reactNativeWebRTCSurface.test.ts).
 declare const __dirname: string;
