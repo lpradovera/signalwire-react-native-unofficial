@@ -4,6 +4,8 @@ import { Text } from 'react-native';
 
 jest.mock('../platform/createReactNativePlatform');
 jest.mock('../callkit/observer');
+const mockBridge = { keepsCallsOnUnmount: true };
+jest.mock('../callkit/CallKeepBridge', () => ({ getCallKit: () => mockBridge }));
 
 // The core provider is exercised by its own package. Here we only care that
 // the RN wrapper hands it the right platform and observer.
@@ -139,5 +141,27 @@ describe('React Native SignalWireProvider', () => {
     const props = core.mock.calls[0]?.[0];
     expect(props.fetchToken).toBe(fetchToken);
     expect(props.credentialProvider).toBeUndefined();
+  });
+
+  describe('keeping the call when the app unmounts (Back on Android)', () => {
+    const keep = (): unknown => core.mock.calls[core.mock.calls.length - 1]?.[0].keepCallsOnUnmount;
+
+    it('keeps the client and its calls with native call UI, by default', async () => {
+      mockBridge.keepsCallsOnUnmount = true;
+      await renderProvider({ callKit: true });
+      expect(keep()).toBe(true);
+    });
+
+    it("ends the calls when setup() was given endCallsOnHostDestroy: true", async () => {
+      mockBridge.keepsCallsOnUnmount = false;
+      await renderProvider({ callKit: true });
+      expect(keep()).toBe(false);
+      mockBridge.keepsCallsOnUnmount = true;
+    });
+
+    it('does not keep them without native call UI: nothing would show the call', async () => {
+      await renderProvider();
+      expect(keep()).toBe(false);
+    });
   });
 });

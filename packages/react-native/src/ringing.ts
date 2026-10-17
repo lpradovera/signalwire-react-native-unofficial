@@ -12,3 +12,6 @@ export type { RingingPush, RingingPushes } from './callkit/useRingingPushes';
 
 /** Also on the main entry; here so a component drawing a ringing call needs only this entry. */
 export { displayableName } from './callkit/displayName';
+
+export { callWaitingMode } from './callkit/callWaitingMode';
+export type { CallWaitingMode } from './callkit/callWaitingMode';

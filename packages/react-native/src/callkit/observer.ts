@@ -35,8 +35,9 @@ export function createCallKitObserver(
     beforeOutgoingCall: () => getCallKit().assertCanDial(),
     onOutgoingCall: (call, destination) =>
       void getCallKit().trackCall(call, destination, nameFor(destination, getOptions())),
-    onIncomingAnswer: (call) => getCallKit().answerIncomingFromApp(call),
-    onIncomingReject: (call) => getCallKit().rejectIncomingFromApp(call)
+    onIncomingAnswer: (call, others) => getCallKit().answerIncomingFromApp(call, others),
+    onIncomingReject: (call) => getCallKit().rejectIncomingFromApp(call),
+    onHoldChange: (call, held) => getCallKit().mirrorHold(call, held)
   };
 }
 

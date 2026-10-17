@@ -1,5 +1,6 @@
 import { useCallback, useContext } from 'react';
 
+import { holdOtherCalls, resumeCalls } from './liveCalls';
 import { SignalWireContext } from './SignalWireProvider';
 import { useObservable } from './useObservable';
 
@@ -28,6 +29,11 @@ export interface UseSignalWireResult {
    * provider was given a `credentialProvider`.
    */
   readonly tokenStatus: TokenStatus | null;
+  /**
+   * Places a call. A call already in progress is put on hold first (and
+   * taken off hold again if this one cannot be placed). On React Native the
+   * native call UI may refuse a second call; see `callWaiting`.
+   */
   dial(destination: string, options?: DialOptions): Promise<Call>;
   /**
    * Connects the client again after {@link disconnect}, and registers it for
@@ -69,7 +75,16 @@ export function useSignalWire(): UseSignalWireResult {
       // May throw to refuse the dial (a call already in progress on React
       // Native): nothing has been placed yet.
       observer?.beforeOutgoingCall?.(destination);
-      const call = await client.dial(destination, options);
+      // Call waiting: the call in progress is put on hold first, so only the
+      // new call has live media; it is resumed if the new call is not placed.
+      const held = await holdOtherCalls(client, observer);
+      let call: Call;
+      try {
+        call = await client.dial(destination, options);
+      } catch (error) {
+        await resumeCalls(held, observer);
+        throw error;
+      }
       // The core does not know what an observer does with this — on React
       // Native it registers the call with CallKit; on the web nobody listens.
       try {
@@ -81,6 +96,7 @@ export function useSignalWire(): UseSignalWireResult {
         if (!ENDING_STATUSES.has(call.status)) {
           void call.hangup().catch(() => undefined);
         }
+        await resumeCalls(held, observer);
         throw error;
       }
       // A call is up: an earlier failed dial's error no longer says anything.

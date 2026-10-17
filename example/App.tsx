@@ -1,4 +1,4 @@
-import { SignalWireProvider, useSignalWire } from '@signalwire/react-native';
+import { SignalWireProvider, useCalls, useSignalWire } from '@signalwire/react-native';
 import { getCallKit } from '@signalwire/react-native/callkit';
 import { CallOverlayHost } from '@signalwire/react-native-ui';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -34,6 +34,12 @@ interface Credentials {
 function Shell({ reference }: { reference: string | null | undefined }): React.JSX.Element {
   const { isConnected, connect, disconnect } = useSignalWire();
   const [activeCall, setActiveCall] = useState<Call | null>(null);
+  // Every call in progress, from the SDK: the one with live media, and those
+  // on hold (call waiting). It also finds a call that outlived the UI: Back
+  // closes the activity on Android while the call goes on, and the provider
+  // keeps it; the app comes back to it from the ongoing-call notification.
+  const { activeCall: liveCall, heldCalls } = useCalls();
+  const shownCall = liveCall ?? heldCalls[heldCalls.length - 1] ?? activeCall;
   // Set by the Disconnect button: the SDK does not reconnect after an explicit
   // disconnect, so this offers Connect instead of "Connecting…" forever.
   const [disconnected, setDisconnected] = useState(false);
@@ -71,11 +77,21 @@ function Shell({ reference }: { reference: string | null | undefined }): React.J
     return <ConnectScreen />;
   }
 
-  if (activeCall) {
-    // Keyed by the call: End & Accept replaces the active call while this
-    // screen is up, and the next call gets a fresh screen (and fresh hook
-    // state) rather than the ended call's.
-    return <CallScreen key={activeCall.id} call={activeCall} onEnded={() => setActiveCall(null)} />;
+  if (shownCall) {
+    // Keyed by the call: End & Accept or a swap replaces the call shown while
+    // this screen is up, and the next call gets a fresh screen (and fresh
+    // hook state) rather than the other call's. The sheet stays mounted over
+    // it, so a second call rings here too (Hold & Accept, End & Accept).
+    return (
+      <>
+        <CallScreen
+          key={shownCall.id}
+          call={shownCall}
+          onEnded={() => setActiveCall((current) => (current === shownCall ? null : current))}
+        />
+        <IncomingCallSheet onAnswered={setActiveCall} />
+      </>
+    );
   }
 
   return (

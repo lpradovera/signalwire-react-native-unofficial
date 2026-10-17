@@ -18,12 +18,16 @@ export type { UseSignalWireResult } from './useSignalWire';
 export { useCall } from './useCall';
 export type { UseCallResult } from './useCall';
 export { useIncomingCalls } from './useIncomingCalls';
+export { useCalls } from './useCalls';
+export type { UseCallsResult } from './useCalls';
+export { getCallHoldState, CallHoldState, resetCallHoldStateForTesting } from './callHold';
+export { isLiveCall } from './liveCalls';
 export type { UseIncomingCallsResult } from './useIncomingCalls';
 export { useDevices } from './useDevices';
 export type { UseDevicesResult } from './useDevices';
 export { useObservable } from './useObservable';
 
-export type { CallObserver, SignalWirePlatform } from './types';
+export type { CallObserver, OtherCalls, SignalWirePlatform } from './types';
 
 export { TokenFetchError } from './tokenSource';
 export type { FetchToken, FetchedToken, TokenState, TokenStatus } from './tokenSource';

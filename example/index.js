@@ -66,9 +66,18 @@ if (process.env.EXPO_PUBLIC_SW_WIRE_LOG !== '1') {
 // start finds a bridge ready to report it to CallKit. The example dials
 // audio-only unless EXPO_PUBLIC_SW_DIAL_VIDEO=1, so it offers native video
 // only then: an audio-only app has no business with the camera.
+//
+// Call waiting is the library's default ('full': Hold & Accept, End & Accept,
+// swap). EXPO_PUBLIC_SW_CALL_WAITING=endAndAccept or =single tries the other
+// modes; EXPO_PUBLIC_SW_END_CALLS_ON_BACK=1 makes Back end the call (the
+// default keeps it running, with its notification to come back to).
+const CALL_WAITING_MODES = ['full', 'endAndAccept', 'single'];
+const callWaiting = process.env.EXPO_PUBLIC_SW_CALL_WAITING?.trim();
 void getCallKit().setup({
   appName: 'SignalWire RN Example',
-  supportsVideo: process.env.EXPO_PUBLIC_SW_DIAL_VIDEO === '1'
+  supportsVideo: process.env.EXPO_PUBLIC_SW_DIAL_VIDEO === '1',
+  ...(CALL_WAITING_MODES.includes(callWaiting) ? { callWaiting } : {}),
+  endCallsOnHostDestroy: process.env.EXPO_PUBLIC_SW_END_CALLS_ON_BACK === '1'
 });
 
 // Android call pushes, registered here rather than in a component: the

@@ -106,7 +106,8 @@ function callerOf(
 export class CallRegistry {
   private readonly host: CallRegistryHost;
   private fusionTimeoutMs: number;
-  private readonly refuseIncomingWhileBusy: boolean;
+  /** How many calls may be live at once; another incoming call is refused as busy. */
+  private callLimit: number;
   private readonly _entries$ = new BehaviorSubject<CallEntry[]>([]);
   private readonly _answered$ = new Subject<Call>();
   private readonly _answerRequested$ = new Subject<CallEntry>();
@@ -131,7 +132,7 @@ export class CallRegistry {
   constructor(options: CallRegistryOptions) {
     this.host = options.host;
     this.fusionTimeoutMs = options.fusionTimeoutMs ?? DEFAULT_FUSION_TIMEOUT_MS;
-    this.refuseIncomingWhileBusy = options.refuseIncomingWhileBusy ?? false;
+    this.callLimit = options.callLimit ?? (options.refuseIncomingWhileBusy ? 1 : Number.POSITIVE_INFINITY);
   }
 
   /**
@@ -146,6 +147,21 @@ export class CallRegistry {
       return;
     }
     this.fusionTimeoutMs = ms;
+  }
+
+  /**
+   * Sets how many calls may be live at once (ringing included). An incoming
+   * call or push beyond it is refused as busy. `getCallKit()` builds its
+   * registry before `setup()` runs, so this is how
+   * `CallKitSetupOptions.callWaiting` reaches it.
+   */
+  setCallLimit(limit: number): void {
+    this.callLimit = limit;
+  }
+
+  /** The entries that are live, oldest first. */
+  get liveEntries(): CallEntry[] {
+    return this.entries.filter((entry) => this.isLive(entry.uuid));
   }
 
   get entries$(): Observable<CallEntry[]> {
@@ -404,10 +420,9 @@ export class CallRegistry {
   /**
    * Fuses an inbound SDK call with a pending push, or creates a new entry.
    *
-   * One call at a time (with `refuseIncomingWhileBusy`): while another call
-   * is live, a call with no push entry of its own is refused as busy
-   * (`reject()`, USER_BUSY) and nothing is shown. Returns whether the call
-   * has an entry.
+   * At the call limit (see `CallRegistryOptions.callLimit`) a call with no
+   * push entry of its own is refused as busy (`reject()`, USER_BUSY) and
+   * nothing is shown. Returns whether the call has an entry.
    */
   attachIncomingCall(call: Call): boolean {
     if (this.uuidForCall(call)) {
@@ -680,15 +695,13 @@ export class CallRegistry {
   }
 
   /**
-   * The call that makes the device busy for another incoming call: any live
-   * entry, when incoming calls are refused while busy (see
-   * `CallRegistryOptions.refuseIncomingWhileBusy`).
+   * The call that makes the device busy for another incoming call: the
+   * oldest live entry, once the live entries reach the call limit (see
+   * `CallRegistryOptions.callLimit`).
    */
   private liveEntry(): CallEntry | undefined {
-    if (!this.refuseIncomingWhileBusy) {
-      return undefined;
-    }
-    return this.entries.find((entry) => this.isLive(entry.uuid));
+    const live = this.liveEntries;
+    return live.length >= this.callLimit ? live[0] : undefined;
   }
 
   /** Calls already refused as busy: the SDK lists a call until it is gone. */
