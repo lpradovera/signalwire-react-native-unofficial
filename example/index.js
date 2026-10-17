@@ -71,14 +71,19 @@ if (process.env.EXPO_PUBLIC_SW_WIRE_LOG !== '1') {
 // swap). EXPO_PUBLIC_SW_CALL_WAITING=endAndAccept or =single tries the other
 // modes; EXPO_PUBLIC_SW_END_CALLS_ON_BACK=1 makes Back end the call (the
 // default keeps it running, with its notification to come back to).
+//
+// EXPO_PUBLIC_SW_CALLKIT=0 builds the app without the native call UI: plain
+// WebRTC calls, outside Telecom and CallKit (App.tsx passes callKit={false}).
 const CALL_WAITING_MODES = ['full', 'endAndAccept', 'single'];
 const callWaiting = process.env.EXPO_PUBLIC_SW_CALL_WAITING?.trim();
-void getCallKit().setup({
-  appName: 'SignalWire RN Example',
-  supportsVideo: process.env.EXPO_PUBLIC_SW_DIAL_VIDEO === '1',
-  ...(CALL_WAITING_MODES.includes(callWaiting) ? { callWaiting } : {}),
-  endCallsOnHostDestroy: process.env.EXPO_PUBLIC_SW_END_CALLS_ON_BACK === '1'
-});
+if (process.env.EXPO_PUBLIC_SW_CALLKIT !== '0') {
+  void getCallKit().setup({
+    appName: 'SignalWire RN Example',
+    supportsVideo: process.env.EXPO_PUBLIC_SW_DIAL_VIDEO === '1',
+    ...(CALL_WAITING_MODES.includes(callWaiting) ? { callWaiting } : {}),
+    endCallsOnHostDestroy: process.env.EXPO_PUBLIC_SW_END_CALLS_ON_BACK === '1'
+  });
+}
 
 // Android call pushes, registered here rather than in a component: the
 // background handler runs in a headless task when the app is killed, which is

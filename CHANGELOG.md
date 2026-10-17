@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Android: the microphone stays live in the background without CallKit
+
+- With `callKit` off, `SignalWireProvider` runs a `microphone` foreground
+  service on Android while a call is in progress (placed, or answered) and
+  stops it when none is. From Android 14 a background app records silence
+  without one, so a plain WebRTC call muted the user when the screen locked
+  or the app went to the background (react-native-webrtc #1774, #1780;
+  react-native-incall-manager #204, #208). Calls under `callKit` keep the
+  ConnectionService's own. The library manifest declares the service
+  (`com.signalwire.reactnative.CallForegroundService`) and
+  `FOREGROUND_SERVICE_MICROPHONE`, so a native rebuild picks it up with no
+  app change. See docs/native-setup.md, "Android: calls without the native
+  call UI".
+- Docs: `BLUETOOTH_CONNECT` (Android 12+) has to be granted at runtime;
+  `setup()` asks for it with `callKit`, an app without it must ask itself.
+- Example: `EXPO_PUBLIC_SW_CALLKIT=0` builds it without the native call UI.
+
 ### Call waiting, the same on iOS and Android
 
 - **New default, `callWaiting: 'full'`** (`getCallKit().setup()`), on both
