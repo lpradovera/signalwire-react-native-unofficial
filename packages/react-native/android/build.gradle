@@ -1,6 +1,7 @@
 // The package's Android side: the incoming-call notification a self-managed
-// ConnectionService must show itself (see IncomingCallNotificationModule), and
-// the reader of a call's Telecom audio state (CallAudioStateModule).
+// ConnectionService must show itself (see IncomingCallNotificationModule), the
+// reader of a call's Telecom audio state (CallAudioStateModule), and the
+// microphone foreground service for calls outside Telecom (CallForegroundService).
 // Autolinked by React Native / Expo like any native library.
 apply plugin: 'com.android.library'
 

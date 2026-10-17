@@ -657,6 +657,17 @@ by then, so it is still tracked. An inbound call's `fromName` that is a Fabric
 address is shown readably too, and the placeholder `_undef_` some calls carry
 for a missing name shows as "Unknown caller" (with a debug log line).
 
+**Without the native call UI** (`callKit` off), on Android:
+
+- The provider runs the package's `microphone` foreground service while a
+  call is in progress, so Android 14+ doesn't silence the microphone when the
+  screen locks or the app goes to the background. The library manifest
+  declares it; see [native setup](docs/native-setup.md#android-calls-without-the-native-call-ui).
+- Ask for `BLUETOOTH_CONNECT` (Android 12+) at runtime yourself: `setup()`
+  does it for `callKit` apps, and without the grant no Bluetooth headset or
+  car is ever a route. See
+  [runtime permissions](docs/native-setup.md#android-runtime-permissions).
+
 ### Call waiting
 
 A second call can ring during a live one, on iOS and Android alike. The
