@@ -181,6 +181,12 @@ function androidCallPermissions(): string[] {
   ];
 }
 
+/**
+ * callkeep's iOS setup options, plus `handleType`, which callkeep reads (the
+ * provider's `supportedHandleTypes`) but its typings leave out.
+ */
+type IosSetupOptions = Parameters<typeof RNCallKeep.setup>[0]['ios'] & { handleType: typeof HANDLE_TYPE };
+
 /** Call statuses after which the native entry must be torn down. */
 // 'ended' is what the SDK actually reports — the wire shows call_state
 // created -> answered -> ending -> ended. Without it a remote hangup never
@@ -461,19 +467,24 @@ export class CallKeepBridge {
       this.registry.setFusionTimeoutMs(options.fusionTimeoutMs);
     }
 
+    const ios: IosSetupOptions = {
+      appName: options.appName,
+      imageName: options.imageName,
+      ringtoneSound: options.ringtoneSound,
+      supportsVideo: this.supportsVideo,
+      includesCallsInRecents: options.includesCallsInRecents ?? true,
+      // The provider's supportedHandleTypes. callkeep's default is phone
+      // numbers only; calls are reported generic, and iOS offers a call-back
+      // from Recents or the contact card only for a supported handle type.
+      handleType: HANDLE_TYPE,
+      // Two groups for call waiting: CallKit then offers Hold & Accept
+      // beside End & Accept, and holds and swaps the two calls. One group
+      // offers End & Accept only. A group is one call: no merging.
+      maximumCallGroups: this._callWaiting === 'full' ? '2' : '1',
+      maximumCallsPerCallGroup: '1'
+    };
     await RNCallKeep.setup({
-      ios: {
-        appName: options.appName,
-        imageName: options.imageName,
-        ringtoneSound: options.ringtoneSound,
-        supportsVideo: this.supportsVideo,
-        includesCallsInRecents: options.includesCallsInRecents ?? true,
-        // Two groups for call waiting: CallKit then offers Hold & Accept
-        // beside End & Accept, and holds and swaps the two calls. One group
-        // offers End & Accept only. A group is one call: no merging.
-        maximumCallGroups: this._callWaiting === 'full' ? '2' : '1',
-        maximumCallsPerCallGroup: '1'
-      },
+      ios,
       android: {
         alertTitle: 'Permissions required',
         alertDescription: `${options.appName} needs permission to manage phone calls.`,
