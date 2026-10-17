@@ -16,13 +16,17 @@ export function HomeScreen({
 }: {
   onCallStarted: (call: Call) => void;
 }): React.JSX.Element {
-  const { user, directory, dial, disconnect, error } = useSignalWire();
+  const { user, directory, dial, disconnect, error, isConnected } = useSignalWire();
   const [dialError, setDialError] = useState<string | null>(null);
   // Seed from the synchronous getter, not a literal: `addresses$` is deferred
   // through asapScheduler like every SDK observable, so a `[]` here would show
   // an empty directory for a frame even when addresses are already loaded.
   const addresses = useObservable<Address[]>(directory?.addresses$, directory?.addresses ?? []);
-  const [destination, setDestination] = useState('');
+  // The field is uncontrolled: this follows what the native input holds and is
+  // never written back. A `value` prop let any re-render (each keystroke's own,
+  // the directory loading, call state) put an older string back into the field
+  // while the user was still typing, and fast typing lost characters.
+  const destination = useRef('');
   const [dialing, setDialing] = useState(false);
   // One dial at a time: a double tap otherwise placed two calls, and the first
   // stayed live with nothing in the app to end it. See dialGuard.
@@ -86,21 +90,29 @@ export function HomeScreen({
       {error ? <Text style={styles.error}>{error.message}</Text> : null}
       {dialError ? <Text style={styles.error}>Dial failed: {dialError}</Text> : null}
 
-      <TextInput
-        style={styles.input}
-        value={destination}
-        onChangeText={setDestination}
-        placeholder="/public/my-room"
-        placeholderTextColor="#64748b"
-        autoCapitalize="none"
-        autoCorrect={false}
-        onSubmitEditing={() => void start(destination)}
-      />
+      {/* Shown only once the client is connected: there is nothing to dial
+          before that, and a field that is on screen takes input. */}
+      {isConnected ? (
+        <TextInput
+          style={styles.input}
+          onChangeText={(text) => {
+            destination.current = text;
+          }}
+          placeholder="/public/my-room"
+          placeholderTextColor="#64748b"
+          autoCapitalize="none"
+          autoCorrect={false}
+          onSubmitEditing={() => void start(destination.current)}
+          testID="sw-destination"
+        />
+      ) : (
+        <Text style={styles.empty}>Connecting…</Text>
+      )}
 
       <Pressable
-        style={[styles.button, dialing && styles.disabled]}
-        disabled={dialing}
-        onPress={() => void start(destination)}
+        style={[styles.button, (dialing || !isConnected) && styles.disabled]}
+        disabled={dialing || !isConnected}
+        onPress={() => void start(destination.current)}
       >
         <Text style={styles.buttonLabel}>{dialing ? 'Calling…' : 'Call'}</Text>
       </Pressable>
