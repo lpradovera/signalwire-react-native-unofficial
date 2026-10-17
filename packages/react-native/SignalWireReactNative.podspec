@@ -3,7 +3,8 @@ require 'json'
 package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
 
 # The system audio route button (AVRoutePickerView) and WebRTC's manual-audio
-# switches for CallKit (SWWebRTCAudioSession). Autolinked: an app picks this up
+# switches for CallKit (SWWebRTCAudioSession), and Siri calls (SWSiriCalls,
+# SWSiriCallIntentHandler). Autolinked: an app picks this up
 # on its next `pod install` (Expo: `expo prebuild` / `expo run:ios`).
 Pod::Spec.new do |s|
   s.name         = 'SignalWireReactNative'
@@ -18,7 +19,7 @@ Pod::Spec.new do |s|
   # package.json's URL is npm's "git+https://..."; git can't clone that form.
   s.source       = { :git => package['repository']['url'].sub(/^git\+/, ''), :tag => "v#{s.version}" }
   s.source_files = 'ios/**/*.{h,m}'
-  s.frameworks   = 'AVKit'
+  s.frameworks   = 'AVKit', 'Intents'
 
   if respond_to?(:install_modules_dependencies, true)
     install_modules_dependencies(s)

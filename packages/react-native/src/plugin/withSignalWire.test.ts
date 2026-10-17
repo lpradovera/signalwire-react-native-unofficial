@@ -215,6 +215,59 @@ describe('withSignalWire', () => {
     expect(result.ios?.entitlements?.['aps-environment']).toBeUndefined();
   });
 
+  describe('Siri calls (enableSiri)', () => {
+    type IosResult = { ios?: { infoPlist?: Record<string, unknown>; entitlements?: Record<string, unknown> } };
+    const apply = (options: Record<string, unknown>, ios: Record<string, unknown> = {}) =>
+      withSignalWire({ name: 'demo', slug: 'demo', ios } as never, options as never) as unknown as IosResult;
+
+    it('is off by default: no intent, no usage string, no entitlement', () => {
+      const result = apply({});
+      expect(result.ios?.infoPlist?.INIntentsSupported).toBeUndefined();
+      expect(result.ios?.infoPlist?.NSSiriUsageDescription).toBeUndefined();
+      expect(result.ios?.entitlements?.['com.apple.developer.siri']).toBeUndefined();
+    });
+
+    it('declares INStartCallIntent for in-app handling, with the Siri entitlement and usage string', () => {
+      const result = apply({ enableSiri: true, enableVoipPush: true });
+      expect(result.ios?.infoPlist?.INIntentsSupported).toEqual(['INStartCallIntent']);
+      expect(result.ios?.infoPlist?.NSSiriUsageDescription).toEqual(expect.any(String));
+      expect(result.ios?.entitlements?.['com.apple.developer.siri']).toBe(true);
+      // The push entitlement is still there beside it.
+      expect(result.ios?.entitlements?.['aps-environment']).toBe('development');
+    });
+
+    it('adds the Siri entitlement without VoIP push', () => {
+      const result = apply({ enableSiri: true, enableVoipPush: false });
+      expect(result.ios?.entitlements).toEqual({ 'com.apple.developer.siri': true });
+    });
+
+    it("keeps the app's own intents and Siri usage string, and lets the option win", () => {
+      const own = { INIntentsSupported: ['INSendMessageIntent'], NSSiriUsageDescription: 'Ours.' };
+      const kept = apply({ enableSiri: true }, { infoPlist: { ...own } });
+      expect(kept.ios?.infoPlist?.INIntentsSupported).toEqual(['INSendMessageIntent', 'INStartCallIntent']);
+      expect(kept.ios?.infoPlist?.NSSiriUsageDescription).toBe('Ours.');
+
+      const option = apply({ enableSiri: true, siriPermission: 'Call people by name.' }, { infoPlist: { ...own } });
+      expect(option.ios?.infoPlist?.NSSiriUsageDescription).toBe('Call people by name.');
+    });
+
+    it('needs CallKit and callkeep, which carry the call into the app', () => {
+      expect(() => apply({ enableSiri: true, enableCallKit: false })).toThrow(/enableSiri needs enableCallKit/);
+      mockCallKeepInstalled = false;
+      expect(() =>
+        withSignalWire(
+          { name: 'demo', slug: 'demo', _internal: { projectRoot: '/app' } } as never,
+          { enableSiri: true, enableVoipPush: false } as never
+        )
+      ).toThrow(/enableSiri needs enableCallKit and callkeep/);
+    });
+
+    it('rejects a mistyped option', () => {
+      expect(() => apply({ enableSiri: 'yes' })).toThrow(/enableSiri/);
+      expect(() => apply({ siriPermission: false })).toThrow(/siriPermission/);
+    });
+  });
+
   it('declares callkeep\'s ConnectionService, which Telecom requires', () => {
     // callkeep ships permissions only; without the service declaration Telecom
     // throws SecurityException on registerPhoneAccount during setup and the

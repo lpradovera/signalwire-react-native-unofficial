@@ -38,6 +38,7 @@ const GOOGLE_SERVICES_FIXTURE = join(root, 'scripts', 'fixtures', 'google-servic
 const IOS_PLIST = 'ios/SignalWireRNExample/Info.plist';
 const IOS_VOIP_SOURCE = 'ios/SignalWireRNExample/SignalWireVoipPush.m';
 const IOS_ACTIVITY_SOURCE = 'ios/SignalWireRNExample/SignalWireCallKitActivity.m';
+const IOS_SIRI_SOURCE = 'ios/SignalWireRNExample/SignalWireSiriCallIntent.m';
 const IOS_PBXPROJ = 'ios/SignalWireRNExample.xcodeproj/project.pbxproj';
 const IOS_ENTITLEMENTS = 'ios/SignalWireRNExample/SignalWireRNExample.entitlements';
 const IOS_APP_DELEGATE = 'ios/SignalWireRNExample/AppDelegate.swift';
@@ -79,7 +80,10 @@ const EXPECTED_PLIST_ENTRIES = [
   '<string>audio</string>',
   '<string>voip</string>',
   'NSUserActivityTypes',
-  '<string>INStartCallIntent</string>'
+  '<string>INStartCallIntent</string>',
+  // Siri's start-call request, handled in the app (enableSiri).
+  'INIntentsSupported',
+  'NSSiriUsageDescription'
 ];
 
 const failures = [];
@@ -213,8 +217,28 @@ check(IOS_VOIP_SOURCE, readFileSync(join(example, IOS_VOIP_SOURCE), 'utf8'), [
 ]);
 check(IOS_PBXPROJ, readFileSync(join(example, IOS_PBXPROJ), 'utf8'), [
   'SignalWireVoipPush.m in Sources',
-  'SignalWireCallKitActivity.m in Sources'
+  'SignalWireCallKitActivity.m in Sources',
+  'SignalWireSiriCallIntent.m in Sources'
 ]);
+
+// Siri's "call <name> with <app>": the AppDelegate's in-app intent handler,
+// which iOS asks only in an app that supports multiple scenes.
+if (!existsSync(join(example, IOS_SIRI_SOURCE))) {
+  failures.push(`${IOS_SIRI_SOURCE}: not generated (enableSiri)`);
+}
+check(IOS_SIRI_SOURCE, existsSync(join(example, IOS_SIRI_SOURCE)) ? readFileSync(join(example, IOS_SIRI_SOURCE), 'utf8') : '', [
+  '@selector(application:handlerForIntent:)',
+  'SWSiriCallIntentHandler'
+]);
+{
+  const plist = readFileSync(join(example, IOS_PLIST), 'utf8');
+  if (!/<key>INIntentsSupported<\/key>\s*<array>\s*<string>INStartCallIntent<\/string>/.test(plist)) {
+    failures.push(`${IOS_PLIST}: INIntentsSupported does not list INStartCallIntent`);
+  }
+  if (!/<key>UIApplicationSupportsMultipleScenes<\/key>\s*<true\/>/.test(plist)) {
+    failures.push(`${IOS_PLIST}: UIApplicationSupportsMultipleScenes is not true; iOS would not ask the app for Siri's intents`);
+  }
+}
 
 // Recents and Siri call-backs reach callkeep only through this forwarder.
 check(IOS_ACTIVITY_SOURCE, readFileSync(join(example, IOS_ACTIVITY_SOURCE), 'utf8'), [
@@ -227,12 +251,16 @@ check(IOS_ACTIVITY_SOURCE, readFileSync(join(example, IOS_ACTIVITY_SOURCE), 'utf
 check(IOS_ENTITLEMENTS, readFileSync(join(example, IOS_ENTITLEMENTS), 'utf8'), [
   'aps-environment'
 ]);
+// Siri hands the app nothing without its capability (enableSiri).
+if (!/<key>com\.apple\.developer\.siri<\/key>\s*<true\/>/.test(readFileSync(join(example, IOS_ENTITLEMENTS), 'utf8'))) {
+  failures.push(`${IOS_ENTITLEMENTS}: missing com.apple.developer.siri`);
+}
 
 // Injecting twice would make Xcode compile the translation unit twice and fail
 // on duplicate symbols, so the mod must be idempotent across repeat prebuilds.
 {
   const pbxproj = readFileSync(join(example, IOS_PBXPROJ), 'utf8');
-  for (const file of ['SignalWireVoipPush.m', 'SignalWireCallKitActivity.m']) {
+  for (const file of ['SignalWireVoipPush.m', 'SignalWireCallKitActivity.m', 'SignalWireSiriCallIntent.m']) {
     const occurrences = pbxproj.split(`${file} in Sources`).length - 1;
     if (occurrences !== 2) {
       failures.push(
@@ -256,6 +284,7 @@ rmSync(scratch, { recursive: true, force: true });
 console.log(
   `\n✓ ${EXPECTED_ANDROID_PERMISSIONS.length} Android permissions, ` +
     `${EXPECTED_PLIST_ENTRIES.length} iOS Info.plist entries, the VoIP push ` +
-    `hook (generated and compiled), and Firebase on Android only; App Transport ` +
+    `hook (generated and compiled), the Siri call intent handler (generated, compiled, entitled), ` +
+    `and Firebase on Android only; App Transport ` +
     `Security keeps local networking beside the tailnet exception.`
 );

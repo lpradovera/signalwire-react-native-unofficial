@@ -20,6 +20,8 @@ export { CallKeepBridge, getCallKit, resetCallKitForTesting } from './callkit/Ca
 export type { CallKitObserverOptions } from './callkit/observer';
 export type { CallKitSetupOptions, CallWaitingMode, StartCallRequest } from './callkit/CallKeepBridge';
 export { CallInProgressError } from './errors';
+export { donateCompletedCall, forgetSiriCalls, getSiriAuthorization, requestSiriAuthorization } from './callkit/siri';
+export type { CompletedCall, SiriAuthorization } from './callkit/siri';
 export { CallRegistry } from './callkit/CallRegistry';
 export type {
   CallEntry,

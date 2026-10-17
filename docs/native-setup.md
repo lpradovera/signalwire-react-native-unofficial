@@ -46,19 +46,19 @@ calls `reportIncomingPush`: callkeep emits the event for the calls
 `reportIncomingPush` reports too, so each one would be reported again, without
 end.
 
-## iOS: calling back from Recents and Siri
+## iOS: calling back from Recents
 
 Calls placed or answered through CallKit are listed in the Phone app's
 Recents (`includesCallsInRecents`, default `true` in `getCallKit().setup()`;
-pass `false` to keep them out). Tapping one, or asking Siri to call back,
-opens the app with an `INStartCallIntent` user activity. callkeep turns it
-into a start-call event only if the app delegate passes it on, so the plugin
-(with `enableCallKit`, the default) generates `SignalWireCallKitActivity.m`:
-an Objective-C file that wraps the AppDelegate's
-`application:continueUserActivity:restorationHandler:` and hands call intents
-to `[RNCallKeep application:continueUserActivity:restorationHandler:]`. The
-AppDelegate's own handling (universal links, Expo's subscribers) still runs.
-It also adds the three call intents to `NSUserActivityTypes`.
+pass `false` to keep them out). Tapping one, or a contact card's call button
+for a handle the app has called, opens the app with an `INStartCallIntent`
+user activity. callkeep turns it into a start-call event only if the app
+delegate passes it on, so the plugin (with `enableCallKit`, the default)
+generates `SignalWireCallKitActivity.m`: an Objective-C file that wraps the
+AppDelegate's `application:continueUserActivity:restorationHandler:` and hands
+call intents to `[RNCallKeep application:continueUserActivity:restorationHandler:]`.
+The AppDelegate's own handling (universal links, Expo's subscribers) still
+runs. It also adds the three call intents to `NSUserActivityTypes`.
 
 The app then dials from `startCallRequested$`:
 
@@ -75,6 +75,74 @@ activities to the app delegate (the example's does). Bare projects: copy
 `packages/react-native/src/plugin/callKitActivitySource.ts` into the app
 target, or call RNCallKeep from your own Objective-C AppDelegate.
 
+This alone does **not** make Siri work: Siri does not open an app to resolve a
+name it does not know. That is the next section.
+
+## iOS: calling with Siri (`enableSiri`)
+
+"Hey Siri, call Alice with My App" and "Hey Siri, call back" for the people
+the user calls through the app, SignalWire addresses included, not only
+numbers in Contacts. Opt in:
+
+```json
+{ "plugins": [["@signalwire/react-native", { "enableCallKit": true, "enableSiri": true }]] }
+```
+
+What works, and what it takes:
+
+- **A paid Apple Developer Program team.** The plugin adds the
+  `com.apple.developer.siri` entitlement, which only a paid team can sign
+  (Apple's [capabilities table](https://developer.apple.com/help/account/reference/supported-capabilities-ios)
+  has no Siri for a free "Apple Developer" account). A free personal team's
+  build fails provisioning with it: leave `enableSiri` off there, or sign
+  with an entitlements file without the key. Without the entitlement
+  everything else still works and Siri behaves as before.
+- **Siri permission.** Call `requestSiriAuthorization()`
+  (`@signalwire/react-native/callkit`) once, for example after `setup()`;
+  iOS asks with `NSSiriUsageDescription` (the plugin's `siriPermission`
+  option, else what the app sets, else a default). It resolves
+  `'unavailable'` without asking in a build without `enableSiri`.
+- **Multiple scenes.** iOS asks the app delegate for an intent handler only
+  in an app with `UIApplicationSupportsMultipleScenes` set
+  ([Apple](https://developer.apple.com/documentation/uikit/uiapplicationdelegate/application(_:handlerfor:))).
+  The plugin does not set it, since it changes how iPad windows behave; the
+  example sets it in `app.json`
+  (`ios.infoPlist.UIApplicationSceneManifest.UIApplicationSupportsMultipleScenes`).
+  Without it the generated file logs `[SignalWireSiri]
+  UIApplicationSupportsMultipleScenes is off` at launch, and Siri never asks
+  the app.
+- **One call first.** A name becomes callable after the first completed call
+  with it (placed or answered, connected, then ended). The bridge donates
+  each one when it ends (`donateCallsToSiri`, default
+  `includesCallsInRecents`): an `INInteraction` with an `INStartCallIntent`
+  whose `INPerson` has the remote party's display name and its handle as an
+  `INPersonHandle` of unknown type. The package keeps the newest 50 callees
+  in the app's user defaults; `forgetSiriCalls()` deletes them and the
+  donations (a sign-out). The callees' names are also set as Siri's
+  contact-name vocabulary once Siri is authorized.
+- **Say the app's name.** "call <name> with <app name>" (the home-screen
+  name). Without it Siri uses the Phone app's contacts and call log.
+
+How it works: the plugin adds `INStartCallIntent` to `INIntentsSupported`,
+the usage string and the entitlement, and generates
+`SignalWireSiriCallIntent.m`, which gives the AppDelegate
+`application:handlerForIntent:` (in-app intent handling, iOS 14+; no Intents
+extension) returning the pod's `SWSiriCallIntentHandler`. That resolves the
+spoken name against the recent callees (every spoken word in the name,
+ignoring case, accents and punctuation; an exact match wins; two different
+callees are offered to choose from), a person Siri already resolved to a
+handle as it is, and "call back" to the most recent callee. It never dials:
+its answer is `continueInApp`, so iOS opens the app with an
+`INStartCallIntent` user activity, which the Recents forwarder hands to
+callkeep, and the app dials from `startCallRequested$` as above. A call
+started from the lock screen asks the user to unlock first (iOS's
+`continueInApp` behaviour).
+
+Bare projects: add the Info.plist keys and the entitlement, and either copy
+`packages/react-native/src/plugin/siriIntentSource.ts` into the app target or
+return `[SWSiriCallIntentHandler new]` from your AppDelegate's
+`application:handlerForIntent:` for `INStartCallIntent`.
+
 ## iOS: Info.plist
 
 Applied by the plugin. The usage strings come from the plugin's
@@ -88,9 +156,12 @@ For bare projects:
 | `NSCameraUsageDescription` | Why your app needs the camera |
 | `UIBackgroundModes` | `audio` (always), plus `voip` when using VoIP push |
 | `NSUserActivityTypes` | `INStartCallIntent`, `INStartAudioCallIntent`, `INStartVideoCallIntent` (Recents and Siri call-backs) |
+| `INIntentsSupported` | `INStartCallIntent` (with `enableSiri`) |
+| `NSSiriUsageDescription` | Why the app uses Siri (with `enableSiri`) |
 
 Enable the **Push Notifications** capability and, for VoIP push, the
-**Voice over IP** background mode in Xcode.
+**Voice over IP** background mode in Xcode; for Siri calls, the **Siri**
+capability (`com.apple.developer.siri`).
 
 ## Android: AndroidManifest.xml
 
