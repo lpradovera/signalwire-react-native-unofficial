@@ -231,7 +231,8 @@ static const NSUInteger SWMaxPendingCalls = 8;
     @"appName": appName,
     @"supportsVideo": @NO,
     @"maximumCallGroups": @"1",
-    @"maximumCallsPerCallGroup": @"1"
+    @"maximumCallsPerCallGroup": @"1",
+    @"audioSession": @{ @"categoryOptions": @4, @"mode": @"AVAudioSessionModeVoiceChat" }
   }];
 }
 

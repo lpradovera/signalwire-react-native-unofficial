@@ -1066,3 +1066,64 @@ describe('CallRegistry — finished calls', () => {
     expect(registry.isLive(live)).toBe(true);
   });
 });
+
+/*
+ * isRefused (BUG-I1): the in-app incoming list leaves out every SDK call the
+ * registry turned down, from the moment it decides, while the SDK still lists
+ * the call as ringing.
+ */
+describe('CallRegistry — isRefused', () => {
+  it('reports a call refused as busy at the call limit, and only that one', () => {
+    const registry = new CallRegistry({ host: createHost(), callLimit: 1 });
+    const first = createCall('a');
+    const second = createCall('b');
+    registry.attachIncomingCall(first as never);
+
+    expect(registry.attachIncomingCall(second as never)).toBe(false);
+
+    expect(second.reject).toHaveBeenCalledTimes(1);
+    expect(registry.isRefused(second as never)).toBe(true);
+    expect(registry.isRefused(first as never)).toBe(false);
+  });
+
+  it('reports the third call at a limit of two', () => {
+    const registry = new CallRegistry({ host: createHost(), callLimit: 2 });
+    const calls = ['a', 'b', 'c'].map(createCall);
+    calls.forEach((call) => registry.attachIncomingCall(call as never));
+
+    expect(calls.map((call) => registry.isRefused(call as never))).toEqual([false, false, true]);
+  });
+
+  it('reports the SDK call of a push refused as busy', () => {
+    const registry = new CallRegistry({ host: createHost(), callLimit: 1 });
+    registry.attachIncomingCall(createCall('a') as never);
+    registry.reportIncomingPush({ callId: 'b' });
+    const pushed = createCall('b');
+
+    registry.attachIncomingCall(pushed as never);
+
+    expect(pushed.reject).toHaveBeenCalledTimes(1);
+    expect(registry.isRefused(pushed as never)).toBe(true);
+  });
+
+  it('reports a call declined from the native UI', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const call = Object.assign(createCall('a'), { status: 'ringing' });
+    registry.attachIncomingCall(call as never);
+    const uuid = registry.uuidForCall(call as never) ?? '';
+
+    registry.endCall(uuid);
+
+    expect(call.reject).toHaveBeenCalledTimes(1);
+    expect(registry.isRefused(call as never)).toBe(true);
+  });
+
+  it('does not report an answered call', () => {
+    const registry = new CallRegistry({ host: createHost() });
+    const call = createCall('a');
+    registry.attachIncomingCall(call as never);
+    registry.applyIntent(registry.uuidForCall(call as never) ?? '', 'answer');
+
+    expect(registry.isRefused(call as never)).toBe(false);
+  });
+});

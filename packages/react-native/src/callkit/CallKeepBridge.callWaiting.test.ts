@@ -131,6 +131,9 @@ describe.each(['ios', 'android'] as const)('call waiting on %s', (os) => {
       expect(bridge.callWaiting).toBe('full');
       const options = (RNCallKeep.setup as jest.Mock).mock.calls[0][0];
       expect(options.ios).toMatchObject({ maximumCallGroups: '2', maximumCallsPerCallGroup: '1' });
+      // callkeep's own default (mode Default) left a Bluetooth call on the
+      // receiver after its answer and activation on iOS 27 (BUG-I2).
+      expect(options.ios.audioSession).toEqual({ categoryOptions: 0x4, mode: 'AVAudioSessionModeVoiceChat' });
       expect(options.android.endCallsOnHostDestroy).toBe(false);
       expect(bridge.keepsCallsOnUnmount).toBe(true);
     });
