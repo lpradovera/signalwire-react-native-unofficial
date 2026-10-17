@@ -8,7 +8,6 @@ import { CallScreen } from './src/screens/CallScreen';
 import { ConnectScreen } from './src/screens/ConnectScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
 import { useBridgeAnswer } from './src/useBridgeAnswer';
-import { useBridgeDecline } from './src/useBridgeDecline';
 import { SUBSCRIBER_REFERENCE } from './src/subscriber';
 import { useDeviceRegistration } from './src/useDeviceRegistration';
 import { useServerToken } from './src/useServerToken';
@@ -21,9 +20,8 @@ function Shell(): React.JSX.Element {
   // Must match the subscriber reference the token was minted for.
   useDeviceRegistration(SUBSCRIBER_REFERENCE);
   // Answering a parked-caller push means dialling, not answering — see the hook.
+  // (Declining one is index.js's registerBridgeDecline: it must work with no React.)
   useBridgeAnswer(setActiveCall);
-  // Declining one means telling the server, which holds the caller.
-  useBridgeDecline();
 
   // A CallKit Accept answers the call — audio and all — without touching
   // React. Subscribe to the registry so a native answer also brings up the
