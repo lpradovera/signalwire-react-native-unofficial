@@ -13,6 +13,12 @@ import java.util.List;
 
 /** Autolinked entry point for @signalwire/react-native's Android code. */
 public class SignalWireReactNativePackage implements ReactPackage {
+  public SignalWireReactNativePackage() {
+    // Before any native module exists: WebRTCModule reads the trials when it
+    // is created. See WebRTCFieldTrials.
+    WebRTCFieldTrials.apply();
+  }
+
   @NonNull
   @Override
   public List<NativeModule> createNativeModules(@NonNull ReactApplicationContext context) {
