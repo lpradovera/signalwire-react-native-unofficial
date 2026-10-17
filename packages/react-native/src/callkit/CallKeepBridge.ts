@@ -1,5 +1,4 @@
 import { AppState, NativeModules, PermissionsAndroid, Platform } from 'react-native';
-import RNCallKeep, { CONSTANTS } from 'react-native-callkeep';
 import {
   BehaviorSubject,
   concat,
@@ -27,10 +26,20 @@ import { assertPeerModule } from '../platform/peers';
 import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
 import { forgetPendingVoipCall, getPendingVoipCalls } from '../push/voipToken';
 import { CALLKIT_BRIDGE_KEY } from './bridgeKey';
+import { getCallKeep, requireCallKeep } from './callkeepModule';
 import { CallRegistry, DEFAULT_FUSION_TIMEOUT_MS, INBOUND_ANSWER } from './CallRegistry';
 
 import type { PendingCall } from '../push/voipToken';
+import type { CallKeep } from './callkeepModule';
 import type { CallEndReason, CallRegistryHost, PushPayload } from './types';
+
+/**
+ * callkeep's module: `@signalwire/react-native-callkeep`, else stock
+ * `react-native-callkeep` (see `callkeepModule`). Undefined when the app has
+ * neither: setup() then throws MissingPeerDependencyError before any call
+ * reaches it, and the constructor registers no listeners.
+ */
+const RNCallKeep = getCallKeep()?.module as CallKeep;
 
 /** The `didDisplayIncomingCall` payload, which callkeep types loosely. */
 interface DisplayEvent {
@@ -218,10 +227,12 @@ export interface CallKitSetupOptions {
 }
 
 /**
- * Connects {@link CallRegistry} to `react-native-callkeep`.
+ * Connects {@link CallRegistry} to callkeep (`@signalwire/react-native-callkeep`,
+ * or stock `react-native-callkeep`).
  *
- * The only file in the package that imports callkeep. Lives at module scope as
- * a singleton because a VoIP push can wake the app before React mounts.
+ * The only file in the package that calls callkeep (`callkeepModule` loads
+ * it). Lives at module scope as a singleton because a VoIP push can wake the
+ * app before React mounts.
  */
 export class CallKeepBridge {
   readonly registry: CallRegistry;
@@ -404,9 +415,10 @@ export class CallKeepBridge {
     // class instance that always has `setup`, so an installed but unlinked
     // callkeep passed the wrapper check and failed later with a TypeError,
     // in setup() and in every startCall the observer made.
+    const callKeep = requireCallKeep('native call UI');
     assertPeerModule(
       (NativeModules as Record<string, object | undefined> | undefined)?.RNCallKeep,
-      'react-native-callkeep',
+      callKeep.packageName,
       'native call UI',
       'setup'
     );
@@ -1790,7 +1802,7 @@ export class CallKeepBridge {
    * the native UI has usually ended the call already.
    */
   private endReasonFor(reason: Exclude<CallEndReason, 'declined'>): number {
-    const reasons = CONSTANTS.END_CALL_REASONS;
+    const reasons = requireCallKeep('native call UI').constants.END_CALL_REASONS;
     switch (reason) {
       case 'missed':
         return Platform.OS === 'ios' ? reasons.UNANSWERED : reasons.MISSED;

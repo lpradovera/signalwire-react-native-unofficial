@@ -33,15 +33,24 @@ export class MissingPeerDependencyError extends Error {
     return isInstance(this, value, MISSING_PEER);
   }
 
+  /**
+   * @param options.alternative - Another package that also provides the
+   *   feature (stock react-native-callkeep beside the SignalWire fork).
+   * @param options.detail - Why an installed package could not be used.
+   */
   constructor(
     public readonly packageName: string,
-    public readonly feature: string
+    public readonly feature: string,
+    options: { alternative?: string; detail?: string } = {}
   ) {
     super(
-      `${feature} requires "${packageName}", which is not available. ` +
+      `${feature} requires "${packageName}"` +
+        (options.alternative ? ` (or "${options.alternative}")` : '') +
+        `, which is not available. ` +
         `Run \`npm install ${packageName}\` and rebuild the native app ` +
         `(\`npx expo prebuild --clean\` or a fresh pod install / gradle build). ` +
-        `A package that is installed but not linked produces this same error.`
+        `A package that is installed but not linked produces this same error.` +
+        (options.detail ? `\n${options.detail}` : '')
     );
     this.name = 'MissingPeerDependencyError';
     brand(this, MISSING_PEER);

@@ -32,7 +32,8 @@ export interface SignalWireProviderProps {
   options?: SignalWireOptions;
   /**
    * Route calls through the native call UI (CallKit / ConnectionService).
-   * Requires the optional peer `react-native-callkeep`, and
+   * Requires callkeep (`@signalwire/react-native-callkeep`, or stock
+   * `react-native-callkeep`), and
    * `getCallKit().setup(...)` to have been called from your app entry. Pass
    * options instead of `true` to name outbound calls in the native UI.
    */

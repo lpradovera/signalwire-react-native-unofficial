@@ -5,7 +5,7 @@
  * DIALING until the app sets it active, and callkeep requests no permission at
  * all in self-managed mode. Each of those is the app's job, so the package's.
  */
-import RNCallKeep from 'react-native-callkeep';
+import RNCallKeep from '@signalwire/react-native-callkeep';
 import { BehaviorSubject, Subject } from 'rxjs';
 
 import { CallKeepBridge } from './CallKeepBridge';

@@ -1,5 +1,5 @@
 import { ParticipantNotReadyError } from '@signalwire/js';
-import RNCallKeep from 'react-native-callkeep';
+import RNCallKeep from '@signalwire/react-native-callkeep';
 import InCallManager from 'react-native-incall-manager';
 import { BehaviorSubject, Observable, Subject } from 'rxjs';
 
@@ -592,6 +592,26 @@ describe('CallKeepBridge', () => {
     expect(RNCallKeep.setup).not.toHaveBeenCalled();
   });
 
+  it('loads without either callkeep, and setup() names the fork to install', async () => {
+    // Both are optional peers: the bridge module must load (the main entry
+    // imports it), and the failure comes from setup(), naming both packages.
+    let Isolated!: typeof CallKeepBridge;
+    jest.isolateModules(() => {
+      jest.doMock('@signalwire/react-native-callkeep', () => {
+        throw new Error("Cannot find module '@signalwire/react-native-callkeep'");
+      });
+      ({ CallKeepBridge: Isolated } = require('./CallKeepBridge') as { CallKeepBridge: typeof CallKeepBridge });
+    });
+    jest.dontMock('@signalwire/react-native-callkeep');
+
+    const isolated = new Isolated();
+    await expect(isolated.setup({ appName: 'Demo' })).rejects.toThrow(
+      /requires "@signalwire\/react-native-callkeep" \(or "react-native-callkeep"\)/
+    );
+    expect(RNCallKeep.setup).not.toHaveBeenCalled();
+    isolated.destroy();
+  });
+
   it('handles a native answer that arrives before setup()', () => {
     // On iOS the constructor's listener starts callkeep's observing, after
     // which callkeep sends actions live instead of buffering them: one that
@@ -946,7 +966,7 @@ describe('CallKeepBridge', () => {
         INBOUND_ANSWER: { audio: true, video: true }
       }));
       isolated.Bridge = (require('./CallKeepBridge') as typeof import('./CallKeepBridge')).CallKeepBridge;
-      isolated.callkeep = (require('react-native-callkeep') as { default: typeof callkeep }).default;
+      isolated.callkeep = (require('@signalwire/react-native-callkeep') as { default: typeof callkeep }).default;
       isolated.incall = (require('react-native-incall-manager') as { default: typeof InCallManager }).default;
     });
     jest.dontMock('./CallRegistry');

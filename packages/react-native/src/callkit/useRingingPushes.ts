@@ -10,7 +10,7 @@ import type { CallEntry } from './types';
  * The bridge singleton, if one exists; see `getCallKit`.
  *
  * Read off `globalThis` rather than imported, deliberately. Importing
- * `CallKeepBridge` pulls in `react-native-callkeep`, which constructs a
+ * `CallKeepBridge` pulls in callkeep, which constructs a
  * NativeEventEmitter at import time — so merely importing this hook would
  * make an optional peer mandatory, and would crash any app that uses the UI
  * kit without native call UI. If no bridge exists, nothing is ringing

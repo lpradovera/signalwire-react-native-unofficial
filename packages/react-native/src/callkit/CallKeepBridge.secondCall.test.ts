@@ -1,4 +1,4 @@
-import RNCallKeep from 'react-native-callkeep';
+import RNCallKeep from '@signalwire/react-native-callkeep';
 import { BehaviorSubject, Subject } from 'rxjs';
 
 import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';

@@ -3,7 +3,7 @@
  * fusion timeout from setup(), a decline with no SDK call, and bridge dials
  * whose entry ended or already has its call.
  */
-import RNCallKeep from 'react-native-callkeep';
+import RNCallKeep from '@signalwire/react-native-callkeep';
 import { BehaviorSubject } from 'rxjs';
 
 import { resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';
