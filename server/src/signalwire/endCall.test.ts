@@ -40,6 +40,8 @@ describe('createCallEnder', () => {
 
     const result = await ender.end('gone');
     assert.equal(result.ok, false);
+    // The status, so a caller can tell "no such call" from a failure.
+    assert.equal(result.ok === false && result.status, 404);
   });
 
   it('bounds the request, and reports a stalled one as a failure', async () => {

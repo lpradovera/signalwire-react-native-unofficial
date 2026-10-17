@@ -134,6 +134,27 @@ A transient failure (a 503, a timeout) is reported as `failed` and the token is
 **kept** — never prune on a transport error. A rejected credential (FCM `401`,
 APNs `ExpiredProviderToken`) is re-minted and the push retried once.
 
+APNs gets one HTTP/2 connection per host, kept open as Apple asks. An idle one
+can die without a word (a NAT mapping on the path expires) and the next push
+fails with `read ECONNRESET`, so a push that fails before APNs answers on a
+reused connection is retried once on a new one, and the connection is pinged
+every 60 s (`ApnsConfig.keepaliveMs`; an unanswered ping retires it). FCM goes
+through `fetch`, which closes idle sockets after a few seconds, so it never
+reuses a stale one.
+
+### Testing the parked-caller flow
+
+Call the park handler from a phone number pointed at it, or as a top-level call
+whose own SWML is the park URL (a Calling API `dial` with
+`"url": "<public>/swml/park?subscriber=<ref>"`). A REST dial or SWML `connect`
+to the park resource's *Fabric address* runs the park on an internal leg
+(`to: sip:steer@…`) that the API cannot end: after the device hangs up or
+declines, `calling.end`, `update` with `status: completed` and the LaML Calls
+update all answer `404`, and the caller stays up until its own script or
+`max_duration` ends it. The server warns `Parked on an internal leg` when that
+happens, and adds a `hint` to the failed end. Details in
+[docs/push-setup.md](../docs/push-setup.md#testing-it-call-the-park-handler-from-a-phone-number-or-as-a-top-level-call).
+
 ## ⚠️ The one unverified piece
 
 `src/signalwire/webhook.ts` maps SignalWire's inbound-call webhook onto the

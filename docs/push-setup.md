@@ -575,6 +575,16 @@ Three things that silently break this:
   registers against `api.sandbox.push.apple.com`. Sending a sandbox token to the
   production host returns `BadDeviceToken`.
 
+This sample opens a connection per push to stay short. Apple asks you to keep
+one open instead, and the support server does; if you do, expect it to die
+silently while idle. A NAT or carrier-grade NAT on the path drops the mapping
+after a few idle minutes, and the next push finds out with `read ECONNRESET`
+(seen on the device tests: the first push after ten idle minutes failed and the
+caller was turned away). `server/src/core/ApnsVoipSender.ts` retries a push
+once on a new connection when a reused one fails before APNs answers, and sends
+an HTTP/2 PING every 60 s, which keeps the mapping alive and retires a
+connection whose ping goes unanswered.
+
 ### 4c. Sending an FCM data message
 
 ```js
@@ -766,6 +776,24 @@ PUBLIC_URL=https://<host>.ts.net npm run dev -w @signalwire/rn-push-server
 Then create a SignalWire resource whose SWML handler is `<public>/swml/park`,
 and point `EXPO_PUBLIC_SW_BRIDGE_ADDRESS` at an address whose handler is
 `<public>/swml/bridge`.
+
+### Testing it: call the park handler from a phone number, or as a top-level call
+
+Place test calls the way real ones arrive: from a phone (a number pointed at the
+park handler), or as a top-level call whose own SWML is the park URL, such as a
+Calling API `dial` with `"url": "<public>/swml/park?subscriber=<ref>"`.
+
+Do **not** test with a REST dial (or another SWML `connect`) *to the park
+resource's Fabric address* (`/public/<park-resource>`). The call rings, answers
+and bridges normally, but SignalWire runs the park SWML on an internal leg (its
+`to` is `sip:steer@<internal host>`), and no API can end that leg: after the
+device hangs up or declines, `calling.end` answers `404`, and so do the Calling
+API's `update` with `status: completed` and the compatibility (LaML) Calls
+update with `Status=completed` (all tried against a live parked leg,
+2026-10-17). The caller stays connected to nothing until its own script or
+`max_duration` ends it. The server warns `Parked on an internal leg` at park
+time, and logs the same explanation with the `404` when it cannot end the
+caller.
 
 ### Pointing a phone number at it
 
