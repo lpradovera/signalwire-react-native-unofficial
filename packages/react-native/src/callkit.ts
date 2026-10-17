@@ -1,7 +1,8 @@
 /**
  * Native call UI: CallKit on iOS, ConnectionService on Android.
  *
- * Requires the optional peer `react-native-callkeep`.
+ * Requires callkeep: the optional peer `@signalwire/react-native-callkeep`
+ * (the SignalWire fork), or stock `react-native-callkeep`.
  *
  * ```ts
  * // index.js — before React mounts, so a cold-start VoIP push finds it ready

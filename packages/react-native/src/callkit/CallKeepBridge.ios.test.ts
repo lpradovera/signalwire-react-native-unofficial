@@ -4,7 +4,7 @@
  * suite, which runs with `Platform.OS === 'android'`.
  */
 import InCallManager from 'react-native-incall-manager';
-import RNCallKeep from 'react-native-callkeep';
+import RNCallKeep from '@signalwire/react-native-callkeep';
 import { Subject } from 'rxjs';
 
 import { getAudioRouteController, resetAudioRouteControllerForTesting } from '../audio/AudioRouteController';

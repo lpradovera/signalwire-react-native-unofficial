@@ -28,7 +28,11 @@ module.exports = {
     '^@signalwire/js$': '<rootDir>/../../node_modules/@signalwire/js/dist/index.cjs',
     '^@react-native-firebase/messaging$': RNFB_MESSAGING,
     '^react-native-webrtc$': '<rootDir>/jest/mocks/react-native-webrtc.ts',
-    '^react-native-callkeep$': '<rootDir>/jest/mocks/react-native-callkeep.ts',
+    // The SignalWire callkeep fork, which the bridge prefers (callkit/callkeepModule).
+    // Stock 'react-native-callkeep' is not mapped and not installed, so the
+    // bridge's tests run on the fork's name; callkeepModule.test.ts mocks
+    // each name itself to cover the stock fallback.
+    '^@signalwire/react-native-callkeep$': '<rootDir>/jest/mocks/react-native-callkeep.ts',
     '^react-native-incall-manager$': '<rootDir>/jest/mocks/react-native-incall-manager.ts'
   }
 };

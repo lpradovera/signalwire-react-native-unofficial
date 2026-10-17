@@ -4,7 +4,7 @@
  * registry entry is dropped and the SDK call it stands for is hung up: left
  * alone it would run on with no native UI and nothing to end it from.
  */
-import RNCallKeep from 'react-native-callkeep';
+import RNCallKeep from '@signalwire/react-native-callkeep';
 import { BehaviorSubject } from 'rxjs';
 
 import { logger } from '@signalwire/react';

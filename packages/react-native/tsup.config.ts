@@ -56,6 +56,7 @@ export default defineConfig({
     'react',
     'react-native',
     'react-native-webrtc',
+    '@signalwire/react-native-callkeep',
     'react-native-callkeep',
     'react-native-incall-manager',
     '@react-native-async-storage/async-storage',

@@ -16,7 +16,9 @@
  *   1. no `__require(` call is left in either file, and
  *   2. Metro collects the same dependencies from both, so an app gets the same
  *      bundle whether it imports or requires the entry, and
- *   3. the lazy peers this package loads at runtime are among them.
+ *   3. the lazy peers this package loads at runtime are among them, and Metro
+ *      treats each as optional (a `require` inside a try), so an app that
+ *      installed only one callkeep, or no Firebase, still bundles.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,9 +30,18 @@ const require = createRequire(path.join(root, 'package.json'));
 const parser = require('@babel/parser');
 const collectDependencies = require('metro/private/ModuleGraph/worker/collectDependencies').default;
 
+/**
+ * callkeep under either name: the SignalWire fork first, else stock
+ * (`callkit/callkeepModule.ts`). Each is an optional `require` in a try, so
+ * both must reach Metro; the one an app did not install is dropped from its
+ * bundle as an optional dependency.
+ */
+const CALLKEEP = ['@signalwire/react-native-callkeep', 'react-native-callkeep'];
+
 /** Peers each entry requires lazily, and so must reach Metro as dependencies. */
 const LAZY_PEERS = {
-  'packages/react-native/dist/callkit': ['@react-native-firebase/messaging']
+  'packages/react-native/dist/callkit': ['@react-native-firebase/messaging', ...CALLKEEP],
+  'packages/react-native/dist/index': CALLKEEP
 };
 
 const DIST_DIRS = [
@@ -40,6 +51,7 @@ const DIST_DIRS = [
   'packages/react-native-ui/dist'
 ];
 
+/** Metro's dependencies of `file`: name -> whether it is optional. */
 function metroDependencies(file) {
   const code = fs.readFileSync(file, 'utf8');
   const ast = parser.parse(code, { sourceType: 'unambiguous', plugins: ['jsx'] });
@@ -53,7 +65,7 @@ function metroDependencies(file) {
     unstable_allowRequireContext: false,
     unstable_isESMImportAtSource: null
   });
-  return new Set(dependencies.map((dependency) => dependency.name));
+  return new Map(dependencies.map((dependency) => [dependency.name, dependency.data.isOptional === true]));
 }
 
 const failures = [];
@@ -87,8 +99,8 @@ for (const dir of DIST_DIRS) {
 
     const esmDeps = metroDependencies(esm);
     const cjsDeps = metroDependencies(cjs);
-    const onlyCjs = [...cjsDeps].filter((name) => !esmDeps.has(name));
-    const onlyEsm = [...esmDeps].filter((name) => !cjsDeps.has(name));
+    const onlyCjs = [...cjsDeps.keys()].filter((name) => !esmDeps.has(name));
+    const onlyEsm = [...esmDeps.keys()].filter((name) => !cjsDeps.has(name));
     if (onlyCjs.length > 0) {
       failures.push(`${key}.mjs: Metro does not see ${onlyCjs.join(', ')} (the .js build does)`);
     }
@@ -103,6 +115,11 @@ for (const dir of DIST_DIRS) {
         if (!deps.has(peer)) {
           failures.push(
             `${path.relative(root, file)}: ${peer} is not a dependency Metro will bundle`
+          );
+        } else if (!deps.get(peer)) {
+          failures.push(
+            `${path.relative(root, file)}: ${peer} is not optional to Metro (not required inside a try), ` +
+              'so an app without it fails to bundle'
           );
         }
       }
