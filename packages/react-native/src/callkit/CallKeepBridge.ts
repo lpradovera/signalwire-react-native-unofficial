@@ -520,7 +520,7 @@ export class CallKeepBridge {
     } finally {
       this.adoptingLaunchPush = false;
     }
-    logger.debug('CallKit ready');
+    logger.info(`CallKit ready (callWaiting: ${this._callWaiting}, endCallsOnHostDestroy: ${String(this.endCallsOnHostDestroy)})`);
   }
 
   /**
