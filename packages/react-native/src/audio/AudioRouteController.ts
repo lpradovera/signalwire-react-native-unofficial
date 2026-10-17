@@ -265,8 +265,8 @@ export class AudioRouteController {
    * one is live and no session runs, a route choice waits for it instead of
    * reaching incall-manager outside a call. When the last one ends with no
    * session (an outbound call nobody answered, a push that never got its
-   * call), a held choice is forgotten and the route goes back to the
-   * earpiece, as `stop()` does.
+   * call), a held choice is forgotten and the route shown is the idle one,
+   * as after `stop()`.
    */
   expectSession(expected: boolean): void {
     this.expecting = expected;
@@ -276,9 +276,7 @@ export class AudioRouteController {
     this.early = null;
     this.chosen = false;
     this.beforeSpeaker = DEFAULT_ROUTE;
-    if (!this.destroyed) {
-      this._route$.next('earpiece');
-    }
+    this.showIdleRoute();
   }
 
   /**
@@ -335,7 +333,11 @@ export class AudioRouteController {
     this.session = session;
     this.chosen = false;
     this.beforeSpeaker = DEFAULT_ROUTE;
-    if (!this.early) {
+    // With iOS routes the session's first status says where the call is,
+    // within a few hundred ms: until then the route shown is left alone
+    // rather than guessed (see begin). A guess was wrong for every call to a
+    // headset or car: "Earpiece" for 0.4-0.6 s, then "Bluetooth" (BUG-I2).
+    if (!this.early && !iosRoutes) {
       this._route$.next(mediaDefault(media));
     }
     if (telecom) {
@@ -422,6 +424,18 @@ export class AudioRouteController {
     }
     const held = this.early;
     this.early = null;
+    if (!held && session.iosRoutes) {
+      // The first route this session shows (start() showed none): the one
+      // iOS reports, or the media default when it reports none.
+      if (status) {
+        session.available = status.available;
+      }
+      const first = status?.selected ? ROUTE_FOR_DEVICE[status.selected] : mediaDefault(session.media);
+      if (first !== this._route$.value) {
+        this._route$.next(first);
+      }
+      return;
+    }
     if (!held) {
       if (status) {
         this.mirror(session, status);
@@ -454,7 +468,8 @@ export class AudioRouteController {
   }
 
   /**
-   * Ends the native audio session and resets to the earpiece. A choice held
+   * Ends the native audio session; the route shown is then the one iOS
+   * reports with iOS routes, else the earpiece (see showIdleRoute). A choice held
    * for a call whose session hasn't started (see {@link expectSession}) is
    * kept for that call's `start()`, and stays shown; nothing else of the
    * ended session carries over.
@@ -491,9 +506,44 @@ export class AudioRouteController {
     // between calls).
     this.chosen = held?.chosen ?? false;
     this.beforeSpeaker = DEFAULT_ROUTE;
-    if (!this.destroyed) {
-      this._route$.next(held?.route ?? 'earpiece');
+    if (held) {
+      if (!this.destroyed) {
+        this._route$.next(held.route);
+      }
+    } else {
+      this.showIdleRoute();
     }
+  }
+
+  /**
+   * The route between sessions. With iOS routes: the one iOS reports once
+   * the session has stopped, read now; until the answer the route shown is
+   * left as it was, never guessed. `'earpiece'` was wrong whenever a headset
+   * or car was connected, and the next call's screen opened on it (BUG-I2).
+   * Elsewhere nothing reports a route outside a session: `'earpiece'`.
+   */
+  private showIdleRoute(): void {
+    if (this.destroyed) {
+      return;
+    }
+    if (Platform.OS !== 'ios' || !hasIosAudioRoutes()) {
+      this._route$.next('earpiece');
+      return;
+    }
+    const writes = this.writes;
+    getAudioDeviceStatus().then(
+      (status) => {
+        // A session, a held choice or a write since: theirs is the route now.
+        if (this.destroyed || this.session || this.early || this.writes !== writes || !status?.selected) {
+          return;
+        }
+        const route = ROUTE_FOR_DEVICE[status.selected];
+        if (route !== this._route$.value) {
+          this._route$.next(route);
+        }
+      },
+      (error: unknown) => logger.debug('Reading the route after the session failed:', error)
+    );
   }
 
   /**

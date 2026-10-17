@@ -1106,3 +1106,107 @@ describe('AudioRouteController teardown', () => {
     expect(complete).toHaveBeenCalledTimes(1);
   });
 });
+
+/*
+ * BUG-I2 (iPhone 15 Pro Max, Bose QC Ultra): each call's screen showed
+ * "Earpiece" for 0.4-0.6 s before "Bluetooth". stop() reset the route to
+ * 'earpiece' and start() to the media default, both guesses, until the
+ * session's first status. With iOS routes the route shown is now only ever
+ * one iOS reported (or, with none reported, the media default).
+ */
+describe('AudioRouteController with iOS routes: no guessed route between and before sessions', () => {
+  const statusNow = (selected: string): void => {
+    incallIosRoutes.getAudioDeviceStatus.mockImplementation(async () => deviceStatus(selected));
+  };
+
+  beforeEach(() => {
+    installIncallIosRoutes(deviceStatus('BLUETOOTH'));
+  });
+
+  it('goes from the idle route straight to the reported one at start, showing nothing in between', async () => {
+    const seen: string[] = [];
+    controller.route$.subscribe((route) => seen.push(route));
+    controller.start('audio');
+    expect(controller.route).toBe('earpiece'); // the initial value, not a guess for this call
+    await flush();
+    expect(seen).toEqual(['earpiece', 'bluetooth']);
+  });
+
+  it('keeps showing Bluetooth from one call to the next: stop() reads the route instead of guessing', async () => {
+    controller.start('audio');
+    await flush();
+    expect(controller.route).toBe('bluetooth');
+    const seen: string[] = [];
+    controller.route$.subscribe((route) => seen.push(route));
+
+    controller.stop();
+    await flush();
+    controller.start('audio');
+    await flush();
+
+    expect(seen).toEqual(['bluetooth']);
+    expect(controller.route).toBe('bluetooth');
+  });
+
+  it('shows the route iOS reports after the session stops', async () => {
+    controller.start('audio');
+    await flush();
+    statusNow('EARPIECE'); // the headset went away with the call
+    controller.stop();
+    expect(controller.route).toBe('bluetooth'); // unchanged until the answer
+    await flush();
+    expect(controller.route).toBe('earpiece');
+  });
+
+  it("ignores the stop's read once the next session has started", async () => {
+    controller.start('audio');
+    await flush();
+    let answer: (value: unknown) => void = () => undefined;
+    incallIosRoutes.getAudioDeviceStatus.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)) as never
+    );
+    controller.stop();
+    controller.start('audio');
+    await flush();
+    answer(deviceStatus('SPEAKER_PHONE'));
+    await flush();
+    expect(controller.route).toBe('bluetooth');
+  });
+
+  it('keeps the route shown when the read after stop fails', async () => {
+    controller.start('audio');
+    await flush();
+    incallIosRoutes.getAudioDeviceStatus.mockImplementationOnce(async () => {
+      throw new Error('no session');
+    });
+    controller.stop();
+    await flush();
+    expect(controller.route).toBe('bluetooth');
+  });
+
+  it('shows the media default when the first status reports no route', async () => {
+    controller.start('audio');
+    await flush();
+    controller.stop();
+    await flush();
+    incallIosRoutes.getAudioDeviceStatus.mockImplementationOnce(async () => {
+      throw new Error('read failed');
+    });
+    controller.start('video');
+    await flush();
+    expect(controller.route).toBe('speaker');
+  });
+
+  it('still shows a choice made before the first status at once', async () => {
+    let answer: (value: unknown) => void = () => undefined;
+    incallIosRoutes.getAudioDeviceStatus.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)) as never
+    );
+    controller.start('audio');
+    controller.setRoute('speaker');
+    expect(controller.route).toBe('speaker');
+    answer(deviceStatus('BLUETOOTH'));
+    await flush();
+    expect(controller.route).toBe('speaker');
+  });
+});
