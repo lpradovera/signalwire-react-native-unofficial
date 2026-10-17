@@ -190,4 +190,79 @@ describe('NotificationService', () => {
     assert.equal(result.delivered, 1);
     assert.equal(android.sent.length, 1);
   });
+  it('carries the provider reason on a pruned token', async () => {
+    // "token-expired" covers a wrong-environment iOS token and a token from
+    // another Firebase project as well as an uninstalled app; the reason is
+    // what says which.
+    const store = await storeWith({ token: 'ios-1' });
+    const ios = recordingSender('ios', (device) => {
+      throw new TokenExpiredError(device.token, 'BadDeviceToken: invalid, or not a production token');
+    });
+    const logged: Array<Record<string, unknown> | undefined> = [];
+    const service = new NotificationService({
+      store,
+      senders: [ios],
+      log: (_message, meta) => logged.push(meta)
+    });
+
+    const result = await service.notify({ externalUserId: 'user-1', correlationId: 'call-1' });
+
+    assert.equal(result.results[0]?.status, 'token-expired');
+    assert.match(result.results[0]?.error ?? '', /BadDeviceToken/);
+    assert.ok(
+      logged.some((meta) => JSON.stringify(meta?.prunedReasons ?? '').includes('BadDeviceToken')),
+      'the log names why the token was pruned'
+    );
+  });
+
+  it('still reports the fan-out when pruning a dead token fails to persist', async () => {
+    // The live devices have already rung by the time pruning runs. A store
+    // write failing then (EACCES, ENOSPC) must not turn the whole notify into
+    // a rejection — /swml/park would answer SignalWire with a 500 instead of
+    // SWML for a call the device is already ringing for.
+    const store = await storeWith({ token: 'live' }, { token: 'dead' });
+    store.remove = async () => {
+      throw new Error('EACCES: permission denied');
+    };
+    const ios = recordingSender('ios', (device) => {
+      if (device.token === 'dead') {
+        throw new TokenExpiredError(device.token);
+      }
+    });
+    const logged: string[] = [];
+    const service = new NotificationService({
+      store,
+      senders: [ios],
+      log: (message, meta) => logged.push(`${message} ${JSON.stringify(meta)}`)
+    });
+
+    const result = await service.notify({ externalUserId: 'user-1', correlationId: 'call-1' });
+
+    assert.equal(result.delivered, 1);
+    assert.equal(result.pruned, 0);
+    assert.ok(logged.some((line) => /Failed to prune/.test(line) && /EACCES/.test(line)));
+  });
+
+  it('does not let an extra overwrite the core fields (server-22)', async () => {
+    const store = await storeWith({ token: 'ios-1' });
+    const ios = recordingSender('ios');
+    const service = new NotificationService({ store, senders: [ios], uuid: () => 'the-uuid' });
+
+    await service.notify({
+      externalUserId: 'user-1',
+      correlationId: 'call-9',
+      from: '+15550001',
+      fromName: 'Ada',
+      data: { call_id: 'forged', from: 'x', from_name: 'y', uuid: 'z', bridgeToken: 'bt-1' }
+    });
+
+    assert.deepEqual(ios.sent[0]?.payload, {
+      call_id: 'call-9',
+      from: '+15550001',
+      from_name: 'Ada',
+      uuid: 'the-uuid',
+      bridgeToken: 'bt-1'
+    });
+  });
 });
+

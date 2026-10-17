@@ -403,7 +403,9 @@ export async function uploadToken(externalUserId: string, token: string): Promis
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      authorization: `Bearer ${process.env.EXPO_PUBLIC_PUSH_API_TOKEN ?? ''}`
+      // The user's own session credential, as for /token. Never API_TOKEN:
+      // anything in the bundle (EXPO_PUBLIC_*) is readable by anyone.
+      authorization: `Bearer ${await yourSessionToken()}`
     },
     body: JSON.stringify({
       externalUserId,
@@ -453,15 +455,24 @@ Three things worth getting right here:
   single most common reason a correctly-written push never arrives.
 - **Unregister on sign-out** with `DELETE /devices/:token`, or the next person
   to use the handset gets a call meant for someone else.
+- **The server decides who the user is, not the body.** Whoever can register a
+  token under a user receives that user's calls. The example server does this
+  with `DEVICE_AUTH=caller`: `/devices` runs the same `authenticateCaller` as
+  `/token` and acts only for that user (see
+  [Device registration](../server/README.md#device-registration)). Its default
+  (`DEVICE_AUTH=api-token`) trusts `externalUserId` behind a shared
+  `API_TOKEN`, which is a backend's secret and must not ship in an app.
 
 The server in [`../server/`](../server/) implements this endpoint. To try the
 whole chain locally:
 
 ```bash
-API_TOKEN=devsecret npm run dev -w @signalwire/rn-push-server
+ALLOW_UNAUTHENTICATED_TOKENS=1 DEVICE_AUTH=caller npm run dev -w @signalwire/rn-push-server
 ```
 
-Point `EXPO_PUBLIC_PUSH_SERVER` at it — for a physical device, that means your
+(The development `authenticateCaller` accepts anyone as the user the request
+names, so this proves the wiring, not the security.) Point
+`EXPO_PUBLIC_PUSH_SERVER` at it — for a physical device, that means your
 machine's LAN address rather than `localhost`.
 
 ---
@@ -563,6 +574,16 @@ Three things that silently break this:
 - **Sandbox and production tokens are not interchangeable.** A development build
   registers against `api.sandbox.push.apple.com`. Sending a sandbox token to the
   production host returns `BadDeviceToken`.
+
+This sample opens a connection per push to stay short. Apple asks you to keep
+one open instead, and the support server does; if you do, expect it to die
+silently while idle. A NAT or carrier-grade NAT on the path drops the mapping
+after a few idle minutes, and the next push finds out with `read ECONNRESET`
+(seen on the device tests: the first push after ten idle minutes failed and the
+caller was turned away). `server/src/core/ApnsVoipSender.ts` retries a push
+once on a new connection when a reused one fails before APNs answers, and sends
+an HTTP/2 PING every 60 s, which keeps the mapping alive and retires a
+connection whose ping goes unanswered.
 
 ### 4c. Sending an FCM data message
 
@@ -728,8 +749,10 @@ single-use, expires in 60s and is bound to one subscriber, so redemption is a
 decision the server makes rather than a fact the device asserts.
 
 `/swml/bridge` sits outside the API-token guard, because SignalWire fetches it
-and cannot present that secret — it authorises on the token alone. Losing the
-subscriber check would let any subscriber holding a token join any parked call.
+and cannot present that secret. It authorises on the token and, with
+`SIGNALWIRE_SIGNING_KEY` set, on SignalWire's request signature, as
+`/swml/park` and `/swml/bridge/status` do. Losing the subscriber check would
+let any subscriber holding a token join any parked call.
 
 ### What each side does
 
@@ -754,6 +777,24 @@ Then create a SignalWire resource whose SWML handler is `<public>/swml/park`,
 and point `EXPO_PUBLIC_SW_BRIDGE_ADDRESS` at an address whose handler is
 `<public>/swml/bridge`.
 
+### Testing it: call the park handler from a phone number, or as a top-level call
+
+Place test calls the way real ones arrive: from a phone (a number pointed at the
+park handler), or as a top-level call whose own SWML is the park URL, such as a
+Calling API `dial` with `"url": "<public>/swml/park?subscriber=<ref>"`.
+
+Do **not** test with a REST dial (or another SWML `connect`) *to the park
+resource's Fabric address* (`/public/<park-resource>`). The call rings, answers
+and bridges normally, but SignalWire runs the park SWML on an internal leg (its
+`to` is `sip:steer@<internal host>`), and no API can end that leg: after the
+device hangs up or declines, `calling.end` answers `404`, and so do the Calling
+API's `update` with `status: completed` and the compatibility (LaML) Calls
+update with `Status=completed` (all tried against a live parked leg,
+2026-10-17). The caller stays connected to nothing until its own script or
+`max_duration` ends it. The server warns `Parked on an internal leg` at park
+time, and logs the same explanation with the `404` when it cannot end the
+caller.
+
 ### Pointing a phone number at it
 
 Set `PARK_ROUTES` so the number resolves to a subscriber:
@@ -762,9 +803,11 @@ Set `PARK_ROUTES` so the number resolves to a subscriber:
 PARK_ROUTES=+15551234567:rn-example
 ```
 
-Without it the resolver falls back to the last path segment of the dialled
-destination, which for a number is the number — the push is addressed to a
-subscriber that does not exist and reports `delivered: 0` with no error. That
+Without it the resolver falls back to `DEV_SUBSCRIBER_REFERENCE` when that is
+set — `server/.env.example` sets it, so every unrouted number rings that one
+user — and otherwise to the last path segment of the dialled destination,
+which for a number is the number: the push is addressed to a subscriber that
+does not exist, reaches no device, and the caller is turned away. That
 exact mistake happened here with the park resource's own name, which is why the
 fallback is now last rather than first.
 
@@ -774,5 +817,6 @@ real number appears as itself rather than "Unknown".
 **Still unverified:** the exact request shape SignalWire sends to a SWML
 handler. `callSidFrom` and `calledAddressFrom` accept several plausible field
 names and the handler logs the whole body — point a real call at it, read the
-log, then delete the guesses. The `ring:2:us` fallback for ringback is likewise
-from memory; set `PUBLIC_URL` and serve your own audio if it is wrong.
+log, then delete the guesses. The generated `ring:15.0:us` ringback is likewise
+unverified; set `PARK_RINGBACK_URL` to your own recording (`<public>/swml/ringback`
+serves one) if it is wrong.

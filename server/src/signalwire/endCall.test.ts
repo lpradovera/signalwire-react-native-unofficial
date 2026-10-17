@@ -40,5 +40,69 @@ describe('createCallEnder', () => {
 
     const result = await ender.end('gone');
     assert.equal(result.ok, false);
+    // The status, so a caller can tell "no such call" from a failure.
+    assert.equal(result.ok === false && result.status, 404);
   });
+
+  it('bounds the request, and reports a stalled one as a failure', async () => {
+    // Off the park path, but a hung REST call here strands the caller just
+    // the same, and nothing else would ever end it.
+    let signal: AbortSignal | null | undefined;
+    const ender = createCallEnder({
+      space: 'example.signalwire.com',
+      projectId: 'p',
+      apiToken: 't',
+      timeoutMs: 50,
+      fetchImpl: ((_url: string, init: RequestInit) => {
+        signal = init.signal;
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+        });
+      }) as unknown as typeof fetch
+    });
+
+    const result = await ender.end('stalled');
+
+    assert.ok(signal instanceof AbortSignal);
+    assert.equal(result.ok, false);
+  });
+
+  it('puts the reason under params, where the Calling API schema has it (server-32)', async () => {
+    // Calling.CallHangupRequest: { id, params: { reason } }, both required.
+    let seen: Record<string, unknown> = {};
+    const ender = createCallEnder({
+      space: 'example.signalwire.com',
+      projectId: 'p',
+      apiToken: 't',
+      fetchImpl: (async (_url: string, init: { body: string }) => {
+        seen = JSON.parse(init.body) as Record<string, unknown>;
+        return { ok: true, status: 200, text: async () => '' };
+      }) as unknown as typeof fetch
+    });
+
+    await ender.end('call-sid-1', 'decline');
+
+    assert.deepEqual(seen, { command: 'calling.end', id: 'call-sid-1', params: { reason: 'decline' } });
+  });
+
+  for (const space of ['https://example.signalwire.com', 'example.signalwire.com/', 'http://example.signalwire.com/']) {
+    it(`reaches the space host when SIGNALWIRE_SPACE is written "${space}" (server-5)`, async () => {
+      // The subscriber-token minter accepts these forms; the ender built
+      // https://https://... and every calling.end went to host "https".
+      let url = '';
+      const ender = createCallEnder({
+        space,
+        projectId: 'p',
+        apiToken: 't',
+        fetchImpl: (async (target: string) => {
+          url = target;
+          return { ok: true, status: 200, text: async () => '' };
+        }) as unknown as typeof fetch
+      });
+
+      await ender.end('call-sid-1');
+
+      assert.equal(url, 'https://example.signalwire.com/api/calling/calls');
+    });
+  }
 });

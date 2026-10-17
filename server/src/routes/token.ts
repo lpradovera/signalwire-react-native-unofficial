@@ -53,9 +53,16 @@ export function createTokenRoutes({ minter, authenticateCaller }: TokenRouteOpti
       res.json({ token, reference });
     } catch (error) {
       if (error instanceof SubscriberTokenError) {
-        // 5xx from SignalWire is not the caller's fault; surface it as a gateway
-        // error so a client retry policy can tell the two apart.
-        res.status(error.status >= 500 ? 502 : error.status).json({ error: error.message });
+        // Nothing SignalWire refuses here is the app's fault: the caller was
+        // already authenticated above, and the request upstream carries this
+        // server's project credentials and its own reference. So every
+        // upstream failure is a gateway error. Passing a 401 through would
+        // read to the app as its own login failing.
+        const hint =
+          error.status === 401 || error.status === 403
+            ? ' Check this server\'s SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN and SIGNALWIRE_SPACE.'
+            : '';
+        res.status(502).json({ error: `${error.message}${hint}` });
         return;
       }
       res.status(500).json({ error: (error as Error).message });
@@ -75,9 +82,14 @@ export function createTokenRoutes({ minter, authenticateCaller }: TokenRouteOpti
  */
 export function createDevAuthenticateCaller(defaultReference: string): AuthenticateCaller {
   return (req) => {
-    const body = req.body as { reference?: unknown } | undefined;
-    return typeof body?.reference === 'string' && body.reference.length > 0
-      ? body.reference
-      : defaultReference;
+    // `reference` is what /token is sent; `externalUserId` is what /devices is
+    // sent (with DEVICE_AUTH=caller). Either names the caller, unchecked.
+    const body = req.body as { reference?: unknown; externalUserId?: unknown } | undefined;
+    for (const claimed of [body?.reference, body?.externalUserId]) {
+      if (typeof claimed === 'string' && claimed.length > 0) {
+        return claimed;
+      }
+    }
+    return defaultReference;
   };
 }
