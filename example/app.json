@@ -29,7 +29,8 @@
       ],
       "./plugins/withCleartextTraffic",
       "./plugins/withPodDeploymentTarget",
-      "./plugins/withSceneLifecycle"
+      "./plugins/withSceneLifecycle",
+      "./plugins/withReactNativeFromSource"
     ]
   }
 }
