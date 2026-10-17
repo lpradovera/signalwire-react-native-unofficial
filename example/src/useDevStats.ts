@@ -5,9 +5,12 @@ import type { Call } from '@signalwire/js';
 
 /**
  * Dev only: `EXPO_PUBLIC_SW_DEV_STATS=1` logs, every 2 s, each call's status,
- * hold state and RTP counters (inbound-rtp packetsReceived, outbound-rtp
- * packetsSent, audio), and each SDK recovery event, as `[DEVSTATS]` lines.
- * Used to check that a held call carries no media and a resumed one does.
+ * hold state and RTP counters (inbound-rtp packetsReceived and packetsLost,
+ * outbound-rtp packetsSent, audio), and each SDK recovery event, as
+ * `[DEVSTATS]` lines. Used to check that a held call carries no media and a
+ * resumed one does. `lost` tells a gap in what the app received apart:
+ * packets that never arrived (it grows) from ones the app did not read (it
+ * doesn't).
  */
 const ENABLED = process.env.EXPO_PUBLIC_SW_DEV_STATS === '1';
 
@@ -25,7 +28,7 @@ function sendersOf(call: Call): string {
   }
 }
 
-async function rtpOf(call: Call): Promise<{ received: number; sent: number } | null> {
+async function rtpOf(call: Call): Promise<{ received: number; sent: number; lost: number } | null> {
   const pc = call.rtcPeerConnection;
   if (!pc) {
     return null;
@@ -33,15 +36,17 @@ async function rtpOf(call: Call): Promise<{ received: number; sent: number } | n
   const report = await pc.getStats();
   let received = 0;
   let sent = 0;
-  report.forEach((stat: { type?: string; kind?: string; mediaType?: string; packetsReceived?: number; packetsSent?: number }) => {
+  let lost = 0;
+  report.forEach((stat: { type?: string; kind?: string; mediaType?: string; packetsReceived?: number; packetsSent?: number; packetsLost?: number }) => {
     const audio = (stat.kind ?? stat.mediaType) === 'audio';
     if (stat.type === 'inbound-rtp' && audio) {
       received += stat.packetsReceived ?? 0;
+      lost += stat.packetsLost ?? 0;
     } else if (stat.type === 'outbound-rtp' && audio) {
       sent += stat.packetsSent ?? 0;
     }
   });
-  return { received, sent };
+  return { received, sent, lost };
 }
 
 export function useDevStats(): void {
@@ -79,7 +84,7 @@ export function useDevStats(): void {
           .then((rtp) =>
             console.log(
               `[DEVSTATS] call=${call.id} dir=${call.direction} status=${status} held=${held} ` +
-                `in=${rtp?.received ?? '-'} out=${rtp?.sent ?? '-'} senders=${sendersOf(call)}`
+                `in=${rtp?.received ?? '-'} out=${rtp?.sent ?? '-'} senders=${sendersOf(call)} lost=${rtp?.lost ?? '-'}`
             )
           )
           .catch(() => console.log(`[DEVSTATS] call=${call.id} status=${status} held=${held} stats-failed`));
