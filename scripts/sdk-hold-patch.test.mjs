@@ -28,15 +28,16 @@ for (const file of ['index.mjs', 'index.cjs']) {
   });
 }
 
-test('a held call stops sending: its senders are paused and restored', async () => {
+test('a held call stops sending: its senders are deactivated and reactivated', async () => {
   const { WebRTCCall } = require('@signalwire/js');
   const log = [];
-  const track = { id: 'mic', readyState: 'live' };
+  let active = true;
   const sender = {
-    track,
-    replaceTrack: async (next) => {
-      log.push(`replaceTrack ${next ? next.id : 'null'}`);
-      sender.track = next;
+    track: { id: 'mic', kind: 'audio' },
+    getParameters: () => ({ transactionId: 't', encodings: [{ active }] }),
+    setParameters: async (parameters) => {
+      active = parameters.encodings[0].active;
+      log.push(`active ${active}`);
     }
   };
   const call = {
@@ -50,11 +51,11 @@ test('a held call stops sending: its senders are paused and restored', async () 
   };
 
   await WebRTCCall.prototype.toggleHold.call(call);
-  assert.deepEqual(log, ['verto hold', 'replaceTrack null']);
+  assert.deepEqual(log, ['verto hold', 'active false']);
   assert.equal(call._holdState, true);
 
   await WebRTCCall.prototype.toggleHold.call(call);
-  assert.deepEqual(log, ['verto hold', 'replaceTrack null', 'verto unhold', 'replaceTrack mic']);
+  assert.deepEqual(log, ['verto hold', 'active false', 'verto unhold', 'active true']);
   assert.equal(call._holdState, false);
   assert.equal(typeof call._holdReleasedAt, 'number');
 });

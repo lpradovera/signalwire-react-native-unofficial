@@ -1,23 +1,24 @@
 diff --git a/node_modules/@signalwire/js/dist/index.cjs b/node_modules/@signalwire/js/dist/index.cjs
-index b3e1f39..a990632 100644
+index b3e1f39..b650ce0 100644
 --- a/node_modules/@signalwire/js/dist/index.cjs
 +++ b/node_modules/@signalwire/js/dist/index.cjs
-@@ -8392,6 +8392,42 @@ var WebRTCCall = class extends Destroyable {
+@@ -8392,6 +8392,34 @@ var WebRTCCall = class extends Destroyable {
  		if (this._holdState) await this.vertoManager.unhold();
  		else await this.vertoManager.hold();
  		this._holdState = !this._holdState;
 +		// [@signalwire/react-native patch: hold] verto.modify hold stops the
 +		// server's media to this call, but nothing stopped ours: a held call
 +		// kept sending the microphone (outbound-rtp packetsSent kept rising).
-+		// Pause the senders while held (replaceTrack(null) sends no RTP and
-+		// needs no renegotiation) and restore their tracks on unhold.
++		// Stop the senders' RTP while held (RTCRtpEncodingParameters.active,
++		// no renegotiation; replaceTrack(null) is not enough, as an audio
++		// sender without a track still sends silence) and restart it on unhold.
 +		await this._pauseLocalMediaForHold(this._holdState);
 +		// Stats seen while held say "no inbound audio" by design; give the
 +		// resumed media a moment before they count again (see the recovery
 +		// gate in initResilienceSubsystems).
 +		if (!this._holdState) this._holdReleasedAt = Date.now();
 +	}
-+	/** [@signalwire/react-native patch: hold] Pauses or restores the main peer connection's senders. */
++	/** [@signalwire/react-native patch: hold] Stops or restarts the main peer connection's senders. */
 +	async _pauseLocalMediaForHold(paused) {
 +		let pc;
 +		try {
@@ -26,26 +27,17 @@ index b3e1f39..a990632 100644
 +			return;
 +		}
 +		if (!pc || typeof pc.getSenders !== "function") return;
-+		if (paused) {
-+			this._heldSenderTracks = /* @__PURE__ */ new Map();
-+			for (const sender of pc.getSenders()) {
-+				if (!sender.track) continue;
-+				this._heldSenderTracks.set(sender, sender.track);
-+				await sender.replaceTrack(null).catch(() => {});
-+			}
-+			return;
-+		}
-+		const held = this._heldSenderTracks;
-+		this._heldSenderTracks = void 0;
-+		if (!held) return;
-+		for (const [sender, track] of held) {
-+			if (track.readyState === "ended") continue;
-+			await sender.replaceTrack(track).catch(() => {});
++		for (const sender of pc.getSenders()) {
++			if (!sender.track || typeof sender.getParameters !== "function") continue;
++			const parameters = sender.getParameters();
++			if (!parameters?.encodings?.length) continue;
++			for (const encoding of parameters.encodings) encoding.active = !paused;
++			await sender.setParameters(parameters).catch(() => {});
 +		}
  	}
  	/** @throws {UnimplementedError} Not yet implemented. Status tracked via {@link recording$}. */
  	async startRecording() {
-@@ -8816,6 +8852,12 @@ var WebRTCCall = class extends Destroyable {
+@@ -8816,6 +8844,12 @@ var WebRTCCall = class extends Destroyable {
  				}
  			});
  			this.subscribeTo(this._statsMonitor.criticalIssue$, (issue) => {
@@ -59,25 +51,26 @@ index b3e1f39..a990632 100644
  					source: "stats",
  					detail: `${issue.type}: ${issue.severity}`,
 diff --git a/node_modules/@signalwire/js/dist/index.mjs b/node_modules/@signalwire/js/dist/index.mjs
-index 911a321..411e5dd 100644
+index 911a321..b379643 100644
 --- a/node_modules/@signalwire/js/dist/index.mjs
 +++ b/node_modules/@signalwire/js/dist/index.mjs
-@@ -8392,6 +8392,42 @@ var WebRTCCall = class extends Destroyable {
+@@ -8392,6 +8392,34 @@ var WebRTCCall = class extends Destroyable {
  		if (this._holdState) await this.vertoManager.unhold();
  		else await this.vertoManager.hold();
  		this._holdState = !this._holdState;
 +		// [@signalwire/react-native patch: hold] verto.modify hold stops the
 +		// server's media to this call, but nothing stopped ours: a held call
 +		// kept sending the microphone (outbound-rtp packetsSent kept rising).
-+		// Pause the senders while held (replaceTrack(null) sends no RTP and
-+		// needs no renegotiation) and restore their tracks on unhold.
++		// Stop the senders' RTP while held (RTCRtpEncodingParameters.active,
++		// no renegotiation; replaceTrack(null) is not enough, as an audio
++		// sender without a track still sends silence) and restart it on unhold.
 +		await this._pauseLocalMediaForHold(this._holdState);
 +		// Stats seen while held say "no inbound audio" by design; give the
 +		// resumed media a moment before they count again (see the recovery
 +		// gate in initResilienceSubsystems).
 +		if (!this._holdState) this._holdReleasedAt = Date.now();
 +	}
-+	/** [@signalwire/react-native patch: hold] Pauses or restores the main peer connection's senders. */
++	/** [@signalwire/react-native patch: hold] Stops or restarts the main peer connection's senders. */
 +	async _pauseLocalMediaForHold(paused) {
 +		let pc;
 +		try {
@@ -86,26 +79,17 @@ index 911a321..411e5dd 100644
 +			return;
 +		}
 +		if (!pc || typeof pc.getSenders !== "function") return;
-+		if (paused) {
-+			this._heldSenderTracks = /* @__PURE__ */ new Map();
-+			for (const sender of pc.getSenders()) {
-+				if (!sender.track) continue;
-+				this._heldSenderTracks.set(sender, sender.track);
-+				await sender.replaceTrack(null).catch(() => {});
-+			}
-+			return;
-+		}
-+		const held = this._heldSenderTracks;
-+		this._heldSenderTracks = void 0;
-+		if (!held) return;
-+		for (const [sender, track] of held) {
-+			if (track.readyState === "ended") continue;
-+			await sender.replaceTrack(track).catch(() => {});
++		for (const sender of pc.getSenders()) {
++			if (!sender.track || typeof sender.getParameters !== "function") continue;
++			const parameters = sender.getParameters();
++			if (!parameters?.encodings?.length) continue;
++			for (const encoding of parameters.encodings) encoding.active = !paused;
++			await sender.setParameters(parameters).catch(() => {});
 +		}
  	}
  	/** @throws {UnimplementedError} Not yet implemented. Status tracked via {@link recording$}. */
  	async startRecording() {
-@@ -8816,6 +8852,12 @@ var WebRTCCall = class extends Destroyable {
+@@ -8816,6 +8844,12 @@ var WebRTCCall = class extends Destroyable {
  				}
  			});
  			this.subscribeTo(this._statsMonitor.criticalIssue$, (issue) => {
