@@ -11,6 +11,11 @@ const SANDBOX_HOST = 'https://api.sandbox.push.apple.com';
 /** Apple rejects provider tokens older than 1h, and regeneration under 20 min. */
 const TOKEN_TTL_MS = 30 * 60 * 1000;
 
+/** How often an open connection is pinged, idle or not. */
+const DEFAULT_KEEPALIVE_MS = 60_000;
+/** How long a ping may go unanswered before the connection is given up. */
+const DEFAULT_PING_TIMEOUT_MS = 10_000;
+
 export interface ApnsConfig {
   teamId: string;
   keyId: string;
@@ -18,6 +23,17 @@ export interface ApnsConfig {
   privateKey: string;
   /** Your app's bundle id, *without* the `.voip` suffix — this adds it. */
   bundleId: string;
+  /**
+   * HTTP/2 PING interval on the open connection, in ms; 0 turns it off.
+   * Default 60 s. An idle connection is otherwise silently dropped by the
+   * path to Apple (a NAT or CGNAT mapping expiring after a few minutes), and
+   * the next push finds out with `read ECONNRESET`. The ping keeps the
+   * mapping alive, and an unanswered one retires the connection before a
+   * call needs it.
+   */
+  keepaliveMs?: number;
+  /** How long a ping may go unanswered before the connection is dropped. Default 10 s. */
+  pingTimeoutMs?: number;
 }
 
 type Connect = (authority: string) => http2.ClientHttp2Session;
@@ -55,6 +71,13 @@ function reasonOf(body: string): string {
  * days"), and a fresh TLS + HTTP/2 handshake per push sat on the critical path
  * of every incoming call. A connection that errors, closes or receives GOAWAY
  * is dropped and the next push opens a new one.
+ *
+ * A reused connection can still be dead without having said so: the network
+ * dropped it while idle and the RST arrives only when a push is written. So a
+ * push that fails with no response on a reused connection is retried once on
+ * a new one, and the connection is pinged (`keepaliveMs`) so that idle ones
+ * stay up or are retired early. A failure on a connection just opened is not
+ * retried: that is APNs or the network being unreachable, and is reported.
  */
 /** The `reason` from a GOAWAY frame's debug data, if it carries Apple's JSON. */
 function goawayReason(opaqueData: Buffer | undefined): string | undefined {
@@ -112,10 +135,11 @@ export class ApnsVoipSender implements PushSender {
     }
   }
 
-  private session(host: string): http2.ClientHttp2Session {
+  /** The open connection for a host, or a new one; `reused` says which. */
+  private session(host: string): { session: http2.ClientHttp2Session; reused: boolean } {
     const existing = this.sessions.get(host);
     if (existing && !existing.closed && !existing.destroyed) {
-      return existing;
+      return { session: existing, reused: true };
     }
 
     const session = this.connect(host);
@@ -155,7 +179,52 @@ export class ApnsVoipSender implements PushSender {
     // Idle, the connection must not keep the process alive.
     session.unref();
     this.sessions.set(host, session);
-    return session;
+    this.keepalive(host, session);
+    return { session, reused: false };
+  }
+
+  /** Stops using a connection and closes it; requests on it fail and retry. */
+  private retire(host: string, session: http2.ClientHttp2Session, error?: Error): void {
+    if (this.sessions.get(host) === session) {
+      this.sessions.delete(host);
+    }
+    if (!session.destroyed) {
+      session.destroy(error);
+    }
+  }
+
+  /**
+   * Pings the connection every `keepaliveMs`. Traffic keeps a NAT mapping
+   * alive; a ping with no answer in `pingTimeoutMs` means the connection is
+   * already gone, and it is retired before a push is written into it.
+   */
+  private keepalive(host: string, session: http2.ClientHttp2Session): void {
+    const every = this.config.keepaliveMs ?? DEFAULT_KEEPALIVE_MS;
+    if (every <= 0) {
+      return;
+    }
+    const timeout = this.config.pingTimeoutMs ?? DEFAULT_PING_TIMEOUT_MS;
+    const timer = setInterval(() => {
+      if (session.closed || session.destroyed) {
+        return;
+      }
+      const unanswered = setTimeout(() => {
+        this.retire(host, session, new Error(`APNs did not answer a keepalive ping within ${timeout} ms`));
+      }, timeout);
+      unanswered.unref();
+      const sent = session.ping((error) => {
+        clearTimeout(unanswered);
+        if (error && !session.destroyed) {
+          this.retire(host, session, error);
+        }
+      });
+      if (!sent) {
+        // Too many pings outstanding: the earlier ones' timers will decide.
+        clearTimeout(unanswered);
+      }
+    }, every);
+    timer.unref();
+    session.once('close', () => clearInterval(timer));
   }
 
   private hold(session: http2.ClientHttp2Session, delta: 1 | -1): void {
@@ -173,8 +242,36 @@ export class ApnsVoipSender implements PushSender {
     }
   }
 
-  private async exchange(host: string, device: Device, body: string, token: string): Promise<Exchange> {
-    const session = this.session(host);
+  /**
+   * One push, retried once on a new connection if a reused one fails before
+   * APNs answers (see the class comment). `exchange` rejects only for those
+   * failures; anything APNs answered comes back as an `Exchange`.
+   */
+  private async attempt(host: string, device: Device, body: string, token: string): Promise<Exchange> {
+    const { session, reused } = this.session(host);
+    try {
+      return await this.exchange(session, device, body, token);
+    } catch (error) {
+      if (!reused) {
+        throw error;
+      }
+      this.retire(host, session);
+      const first = error instanceof Error ? error.message : String(error);
+      try {
+        return await this.exchange(this.session(host).session, device, body, token);
+      } catch (retryError) {
+        const message = retryError instanceof Error ? retryError.message : String(retryError);
+        throw new Error(`${message} (retried on a new connection after: ${first})`, { cause: retryError });
+      }
+    }
+  }
+
+  private async exchange(
+    session: http2.ClientHttp2Session,
+    device: Device,
+    body: string,
+    token: string
+  ): Promise<Exchange> {
     this.hold(session, 1);
 
     const waiting = this.waiters.get(session);
@@ -246,7 +343,7 @@ export class ApnsVoipSender implements PushSender {
     const body = JSON.stringify(payload);
 
     let token = this.bearer();
-    let result = await this.exchange(host, device, body, token);
+    let result = await this.attempt(host, device, body, token);
 
     // Apple: ExpiredProviderToken means "generate a new token". Keeping the
     // cached one would fail every iOS push until the cache lapsed. Re-mint
@@ -255,7 +352,7 @@ export class ApnsVoipSender implements PushSender {
     if (result.status === 403 && reasonOf(result.body) === 'ExpiredProviderToken') {
       this.invalidate(token);
       token = this.bearer();
-      result = await this.exchange(host, device, body, token);
+      result = await this.attempt(host, device, body, token);
     }
 
     if (result.status === 200) {

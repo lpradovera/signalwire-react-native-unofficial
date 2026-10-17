@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import http2 from 'node:http2';
 import { duplexPair } from 'node:stream';
+import type { Duplex } from 'node:stream';
 import { beforeEach, describe, it } from 'node:test';
 
 import { ApnsVoipSender } from './ApnsVoipSender.js';
@@ -23,6 +24,8 @@ type Behaviour = (
 const fakeApns = http2.createServer();
 const seen: Array<{ authority: string; headers: http2.IncomingHttpHeaders; body: string }> = [];
 const connects: string[] = [];
+/** The client end of each connection, to break it the way a dead NAT mapping does. */
+const clientSockets: Duplex[] = [];
 const serverSessions: http2.ServerHttp2Session[] = [];
 let behaviour: Behaviour;
 
@@ -41,6 +44,7 @@ fakeApns.on('stream', (stream, headers) => {
 const connect = (authority: string): http2.ClientHttp2Session => {
   connects.push(authority);
   const [client, server] = duplexPair();
+  clientSockets.push(client);
   fakeApns.emit('connection', server);
   return http2.connect(authority, { createConnection: () => client as never });
 };
@@ -56,9 +60,15 @@ const ec = generateKeyPairSync('ec', {
   publicKeyEncoding: { type: 'spki', format: 'pem' }
 });
 
-const sender = (): ApnsVoipSender =>
+const sender = (options: { keepaliveMs?: number; pingTimeoutMs?: number } = {}): ApnsVoipSender =>
   new ApnsVoipSender(
-    { teamId: 'TEAM', keyId: 'KEY', privateKey: ec.privateKey, bundleId: 'com.example.app' },
+    {
+      teamId: 'TEAM',
+      keyId: 'KEY',
+      privateKey: ec.privateKey,
+      bundleId: 'com.example.app',
+      ...options
+    },
     connect
   );
 
@@ -81,6 +91,7 @@ const rejection = (promise: Promise<unknown>): Promise<unknown> =>
 beforeEach(() => {
   seen.length = 0;
   connects.length = 0;
+  clientSockets.length = 0;
   behaviour = reply(200);
 });
 
@@ -234,5 +245,156 @@ describe('ApnsVoipSender: a stream that ends without a response (server-36)', ()
     const error = (await rejection(sender().send(device(), payload))) as Error;
     assert.match(error.message, /GOAWAY/);
     assert.match(error.message, /Shutdown/);
+  });
+});
+
+/** The socket error a connection the network dropped while idle gives on its next write. */
+const connectionReset = (): Error =>
+  Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET', syscall: 'read', errno: -54 });
+
+/** Resets the connection under the given attempts, as a stale one does; answers 200 otherwise. */
+const resetOn = (...attempts: number[]): Behaviour => (stream, headers, attempt) => {
+  if (attempts.includes(attempt)) {
+    clientSockets.at(-1)?.destroy(connectionReset());
+    return;
+  }
+  reply(200)(stream, headers, attempt);
+};
+
+const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe('ApnsVoipSender: a stale reused connection (BUG-P1)', () => {
+  it('retries once on a new connection when a reused one turns out to be reset', async () => {
+    // Device test, 2026-10-17: the first push after ten idle minutes failed
+    // with "read ECONNRESET" and the caller was turned away; the next push,
+    // on a new connection, rang.
+    const apns = sender();
+    await apns.send(device(), payload);
+    behaviour = resetOn(2);
+
+    await apns.send(device(), payload);
+
+    assert.equal(connects.length, 2);
+    assert.equal(seen.length, 3);
+  });
+
+  it('retries once when APNs resets the stream on a reused connection', async () => {
+    const apns = sender();
+    await apns.send(device(), payload);
+    behaviour = (stream, headers, attempt) =>
+      attempt === 2
+        ? stream.close(http2.constants.NGHTTP2_INTERNAL_ERROR)
+        : reply(200)(stream, headers, attempt);
+
+    await apns.send(device(), payload);
+
+    assert.equal(seen.length, 3);
+    // The suspect connection is replaced, not reused for the retry.
+    assert.equal(connects.length, 2);
+  });
+
+  it('does not retry on a connection it has just opened', async () => {
+    behaviour = resetOn(1);
+    await assert.rejects(sender().send(device(), payload), /ECONNRESET/);
+    assert.equal(connects.length, 1);
+    assert.equal(seen.length, 1);
+  });
+
+  it('retries only once, and says so', async () => {
+    const apns = sender();
+    await apns.send(device(), payload);
+    behaviour = resetOn(2, 3);
+
+    const error = (await rejection(apns.send(device(), payload))) as Error;
+    assert.match(error.message, /ECONNRESET/);
+    assert.match(error.message, /new connection/);
+    assert.equal(connects.length, 2);
+    assert.equal(seen.length, 3);
+  });
+
+  it('does not retry a push APNs answered', async () => {
+    const apns = sender();
+    await apns.send(device(), payload);
+    behaviour = reply(500, 'InternalServerError');
+
+    await assert.rejects(apns.send(device(), payload), /APNs 500/);
+    assert.equal(seen.length, 2);
+    assert.equal(connects.length, 1);
+  });
+
+  it('retries every push that was waiting on the reset connection', async () => {
+    const apns = sender();
+    await apns.send(device(), payload);
+    let reset = false;
+    behaviour = (stream, headers, attempt) => {
+      if (!reset && attempt > 1) {
+        reset = true;
+        clientSockets.at(-1)?.destroy(connectionReset());
+        return;
+      }
+      reply(200)(stream, headers, attempt);
+    };
+
+    await Promise.all(['a', 'b', 'c'].map((token) => apns.send(device(token), payload)));
+    assert.equal(connects.length, 2);
+  });
+});
+
+describe('ApnsVoipSender: keepalive (BUG-P1)', () => {
+  it('pings an idle connection, so the network does not drop it', async () => {
+    const apns = sender({ keepaliveMs: 20 });
+    await apns.send(device(), payload);
+    let pings = 0;
+    serverSessions.at(-1)?.on('ping', () => (pings += 1));
+
+    await settle(110);
+
+    assert.ok(pings >= 2, `expected at least 2 pings, saw ${pings}`);
+    // Still the one connection: answered pings keep it.
+    await apns.send(device(), payload);
+    assert.equal(connects.length, 1);
+  });
+
+  it('drops a connection whose ping goes unanswered; the next push opens a new one', async () => {
+    // A path that silently stops carrying packets: no RST, no FIN. Bytes are
+    // relayed between the two ends until `blackholed` is set.
+    let blackholed = false;
+    const relayed = (authority: string): http2.ClientHttp2Session => {
+      connects.push(authority);
+      const [client, near] = duplexPair();
+      const [far, server] = duplexPair();
+      near.on('data', (chunk: Buffer) => blackholed || far.write(chunk));
+      far.on('data', (chunk: Buffer) => blackholed || near.write(chunk));
+      fakeApns.emit('connection', server);
+      return http2.connect(authority, { createConnection: () => client as never });
+    };
+    const apns = new ApnsVoipSender(
+      {
+        teamId: 'TEAM',
+        keyId: 'KEY',
+        privateKey: ec.privateKey,
+        bundleId: 'com.example.app',
+        keepaliveMs: 20,
+        pingTimeoutMs: 30
+      },
+      relayed
+    );
+    await apns.send(device(), payload);
+
+    blackholed = true;
+    await settle(120);
+    blackholed = false;
+
+    await apns.send(device(), payload);
+    assert.equal(connects.length, 2);
+  });
+
+  it('can be turned off', async () => {
+    const apns = sender({ keepaliveMs: 0 });
+    await apns.send(device(), payload);
+    let pings = 0;
+    serverSessions.at(-1)?.on('ping', () => (pings += 1));
+    await settle(60);
+    assert.equal(pings, 0);
   });
 });
