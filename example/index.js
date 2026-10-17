@@ -9,6 +9,8 @@ import { getCallKit, registerAndroidCallPush } from '@signalwire/react-native/ca
 import { registerRootComponent } from 'expo';
 
 import App from './App';
+import { declineUrl, registerBridgeDecline } from './src/bridgeDecline';
+import { DEVICES_URL, TOKEN_URL } from './src/endpoints';
 
 // Wire log, off by default. React Native's console collapses nested objects to
 // `[Object]`, which hides the verto params and the SDP — exactly what you need
@@ -65,5 +67,13 @@ void getCallKit().setup({ appName: 'SignalWire RN Example', supportsVideo: true 
 // the normal state for an incoming call, and React never mounts in that case.
 // No-op on iOS, where PushKit delivers natively before JavaScript exists.
 registerAndroidCallPush();
+
+// A decline of a parked-caller push goes to the server from here, outside
+// React, for the same reason: Decline on the call notification of a killed
+// app runs in that headless context and does not open the app.
+registerBridgeDecline({
+  registry: getCallKit().registry,
+  url: declineUrl(DEVICES_URL, TOKEN_URL)
+});
 
 registerRootComponent(App);

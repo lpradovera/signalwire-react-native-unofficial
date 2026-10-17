@@ -20,6 +20,7 @@ function Shell(): React.JSX.Element {
   // Must match the subscriber reference the token was minted for.
   useDeviceRegistration(SUBSCRIBER_REFERENCE);
   // Answering a parked-caller push means dialling, not answering — see the hook.
+  // (Declining one is index.js's registerBridgeDecline: it must work with no React.)
   useBridgeAnswer(setActiveCall);
 
   // A CallKit Accept answers the call — audio and all — without touching

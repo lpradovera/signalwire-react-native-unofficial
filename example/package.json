@@ -8,6 +8,7 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "bundle-check": "expo export --platform ios --platform android --output-dir ./.expo-export-check",
+    "test": "node --import tsx --test $(find src plugins -name '*.test.*')",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

@@ -6,9 +6,10 @@ import { getAudioRouteController } from '../audio/AudioRouteController';
 import { logger } from '@signalwire/react';
 import { assertPeerModule } from '../platform/peers';
 import { clearPendingVoipCall, getPendingVoipCall } from '../push/voipToken';
+import { CALLKIT_BRIDGE_KEY } from './bridgeKey';
 import { CallRegistry } from './CallRegistry';
 
-import type { CallRegistryHost, PushPayload } from './types';
+import type { CallEndReason, CallRegistryHost, PushPayload } from './types';
 
 /** The `didDisplayIncomingCall` payload, which callkeep types loosely. */
 interface DisplayEvent {
@@ -54,7 +55,11 @@ export interface CallKitSetupOptions {
   supportsVideo?: boolean;
   androidChannelId?: string;
   androidChannelName?: string;
-  /** How long a push entry waits for its SDK call. Default 20000. */
+  /**
+   * How long a push entry waits for its SDK call, in ms: for a bridge push,
+   * how long it rings. Applies to pushes reported after `setup()`. Default
+   * 45000.
+   */
   fusionTimeoutMs?: number;
 }
 
@@ -87,6 +92,8 @@ export class CallKeepBridge {
   private releaseAudioGate: (() => void) | null = null;
   /** Entry awaiting a bridge dial; see {@link beginBridgeDial}. */
   private pendingBridgeUuid: string | null = null;
+  /** The call whose native end is being handled; see {@link reportEnded}. */
+  private endingNatively: string | null = null;
   /**
    * The call the audio session was started for. There is one session per
    * app, so only this call may stop it, and it is released when this call
@@ -101,8 +108,7 @@ export class CallKeepBridge {
       startOutgoingCall: (uuid, handle, displayName) =>
         RNCallKeep.startCall(uuid, handle, displayName, HANDLE_TYPE, this.supportsVideo),
       reportOutgoingConnected: (uuid) => RNCallKeep.reportConnectedOutgoingCallWithUUID(uuid),
-      reportCallEnded: (uuid, reason) =>
-        RNCallKeep.reportEndCallWithUUID(uuid, this.endReasonFor(reason)),
+      reportCallEnded: (uuid, reason) => this.reportEnded(uuid, reason),
       generateUuid: () => generateUuid(),
       now: () => Date.now()
     };
@@ -149,6 +155,10 @@ export class CallKeepBridge {
     );
 
     this.supportsVideo = options.supportsVideo ?? false;
+    // The registry was built before setup() by getCallKit(), with no options.
+    if (options.fusionTimeoutMs !== undefined) {
+      this.registry.setFusionTimeoutMs(options.fusionTimeoutMs);
+    }
 
     await RNCallKeep.setup({
       ios: {
@@ -349,16 +359,20 @@ export class CallKeepBridge {
         logger.debug(`Adopted bridge call ${call.id} into existing entry ${claimed}`);
         return claimed;
       }
-      if (this.registry.entryForUuid(claimed)?.state === 'pending-push') {
-        // The user ended the answered push while this call was being placed.
-        // They have hung up: no second native call, and nothing left live.
-        logger.debug(`Entry ${claimed} was ended by the user during the bridge dial; hanging up`);
+      const entry = this.registry.entryForUuid(claimed);
+      if (entry) {
+        // The entry cannot take this call: the user ended the answered push,
+        // it ended on its own (the answered timeout, the app's endCall), or
+        // it already has its call (a second dial for one answer). Reported as
+        // a new outgoing call, it rang as one and was hung up at once by the
+        // app's failed bind. Nothing here is live: no second native call.
+        logger.debug(`Entry ${entry.uuid} cannot take bridge call ${call.id}; hanging up`);
         void call.hangup().catch((error: unknown) => {
           logger.debug('Hangup of the abandoned bridge call failed:', error);
         });
-        return claimed;
+        return entry.uuid;
       }
-      // The entry died while we were dialling. Fall through and report a
+      // A claim for a uuid the registry never had. Fall through and report a
       // normal outbound call, so the user is not left on a live call with no
       // native UI to end it.
       logger.debug(`Entry ${claimed} vanished during the bridge dial`);
@@ -484,7 +498,7 @@ export class CallKeepBridge {
     logger.debug(`Native end for ${callUUID}`);
     const entry = this.registry.entryForUuid(callUUID);
     if (entry?.state === 'pending-push') {
-      this.registry.applyIntent(callUUID, 'reject');
+      this.declineNatively(callUUID);
       return;
     }
     this.registry.endCall(callUUID);
@@ -706,9 +720,55 @@ export class CallKeepBridge {
     }
   }
 
-  private endReasonFor(reason: 'missed' | 'remote' | 'local'): number {
+  /** A decline the native UI made: its call is already ended there. */
+  private declineNatively(uuid: string): void {
+    this.endingNatively = uuid.toLowerCase();
+    try {
+      this.registry.applyIntent(uuid, 'reject');
+    } finally {
+      this.endingNatively = null;
+    }
+  }
+
+  /**
+   * Ends the native call for the registry.
+   *
+   * A decline goes through callkeep's `rejectCall`: CallKit's end action on
+   * iOS, `DisconnectCause.REJECTED` on Android. `reportEndCallWithUUID` has
+   * no declined (or rejected) reason on either platform. A decline the native
+   * UI made itself is already ended there, so it is not requested again.
+   */
+  private reportEnded(uuid: string, reason: CallEndReason): void {
+    if (reason === 'declined') {
+      if (this.endingNatively !== uuid && typeof RNCallKeep?.rejectCall === 'function') {
+        RNCallKeep.rejectCall(uuid);
+      }
+      return;
+    }
+    RNCallKeep.reportEndCallWithUUID(uuid, this.endReasonFor(reason));
+  }
+
+  /**
+   * callkeep's END_CALL_REASONS differ per platform, and so do the native
+   * sides that read them. iOS: 1 failed, 2 remoteEnded, 3 unanswered,
+   * 4 answeredElsewhere, 5 declinedElsewhere, and callkeep's MISSED is 2,
+   * remoteEnded. Android: 1 ERROR, 2 REMOTE, 3 BUSY, 4 ANSWERED_ELSEWHERE,
+   * 6 MISSED. So a missed call is UNANSWERED on iOS and MISSED on Android.
+   * A local end keeps REMOTE_ENDED: neither table has a local reason, and
+   * the native UI has usually ended the call already.
+   */
+  private endReasonFor(reason: Exclude<CallEndReason, 'declined'>): number {
     const reasons = CONSTANTS.END_CALL_REASONS;
-    return reason === 'missed' ? reasons.MISSED : reasons.REMOTE_ENDED;
+    switch (reason) {
+      case 'missed':
+        return Platform.OS === 'ios' ? reasons.UNANSWERED : reasons.MISSED;
+      case 'failed':
+        return reasons.FAILED;
+      case 'duplicate':
+        return reasons.ANSWERED_ELSEWHERE;
+      default:
+        return reasons.REMOTE_ENDED;
+    }
   }
 }
 
@@ -733,7 +793,7 @@ function generateUuid(): string {
  * device as `uuid=<valid>, setup=false`. `globalThis` is the one scope every
  * copy shares.
  */
-const CALLKIT_GLOBAL = '__signalwireRNCallKitBridge';
+const CALLKIT_GLOBAL = CALLKIT_BRIDGE_KEY;
 
 type CallKitHolder = { [CALLKIT_GLOBAL]?: CallKeepBridge };
 
