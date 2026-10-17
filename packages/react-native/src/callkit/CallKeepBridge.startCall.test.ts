@@ -41,6 +41,14 @@ describe('Recents and Siri call-back', () => {
     expect((RNCallKeep.setup as jest.Mock).mock.calls[1][0].ios.includesCallsInRecents).toBe(false);
   });
 
+  it('declares the generic handle type its calls are reported with', async () => {
+    // callkeep's default is CXHandleTypePhoneNumber only. Calls are reported
+    // with generic handles, and iOS offers a call-back (Recents' call button,
+    // the contact card's) only for a handle type the provider supports.
+    await bridge.setup({ appName: 'Demo' });
+    expect((RNCallKeep.setup as jest.Mock).mock.calls[0][0].ios.handleType).toBe('generic');
+  });
+
   it('emits a call-back the user started from Recents or Siri', async () => {
     await bridge.setup({ appName: 'Demo' });
     const requests: StartCallRequest[] = [];

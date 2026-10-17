@@ -56,6 +56,12 @@ const TICK_INTERVAL_MS = 2000;
 const AUDIO_SESSION_TIMEOUT_MS = 3000;
 const HANDLE_TYPE = 'generic';
 
+/**
+ * callkeep's iOS setup options, plus `handleType`, which callkeep reads (the
+ * provider's `supportedHandleTypes`) but its typings leave out.
+ */
+type IosSetupOptions = Parameters<typeof RNCallKeep.setup>[0]['ios'] & { handleType: typeof HANDLE_TYPE };
+
 /** Runtime permissions callkeep's ConnectionService needs on Android. */
 const ANDROID_CALL_PERMISSIONS = ['android.permission.READ_PHONE_NUMBERS'];
 
@@ -185,16 +191,21 @@ export class CallKeepBridge {
 
     this.supportsVideo = options.supportsVideo ?? false;
 
+    const ios: IosSetupOptions = {
+      appName: options.appName,
+      imageName: options.imageName,
+      ringtoneSound: options.ringtoneSound,
+      supportsVideo: this.supportsVideo,
+      includesCallsInRecents: options.includesCallsInRecents ?? true,
+      // The provider's supportedHandleTypes. callkeep's default is phone
+      // numbers only; calls are reported generic, and iOS offers a call-back
+      // from Recents or the contact card only for a supported handle type.
+      handleType: HANDLE_TYPE,
+      maximumCallGroups: '1',
+      maximumCallsPerCallGroup: '1'
+    };
     await RNCallKeep.setup({
-      ios: {
-        appName: options.appName,
-        imageName: options.imageName,
-        ringtoneSound: options.ringtoneSound,
-        supportsVideo: this.supportsVideo,
-        includesCallsInRecents: options.includesCallsInRecents ?? true,
-        maximumCallGroups: '1',
-        maximumCallsPerCallGroup: '1'
-      },
+      ios,
       android: {
         alertTitle: 'Permissions required',
         alertDescription: `${options.appName} needs permission to manage phone calls.`,
