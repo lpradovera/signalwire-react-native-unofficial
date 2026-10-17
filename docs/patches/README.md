@@ -76,24 +76,14 @@ native calls:
    behind it. `textInputDidChange` ignores them (`_comingFromJS`), and the
    write then replaces them.
 
-The patch skips the write when the field already shows the state's text:
-the same characters, and either the state is the view's own echo (equal to
-the string the view last sent, `_lastStringStateWasUpdatedWith`) or every
-attribute the state sets has the same value in the field and every attribute
-only the field has is a default (the view's default text attributes, or
-UIKit's default paragraph style). The second case is a controlled input: when
-JS sets `value` to what was typed, the state is built from props, has no
-paragraph style, compares unequal, and the write dropped keys the same way
-(with only the echo check, `onChangeText={setValue}` typing `abzz` was exact
-5 times in 30). A `value` or style that JS changes is still written.
+The patch skips the write when the state is the view's own echo: equal to
+the string the view last sent (`_lastStringStateWasUpdatedWith`), with the
+same characters as the field. Updates from JS are written as before.
+Comparing attributes more loosely did not work: what UIKit adds, and when,
+varies, so it still failed on the Simulator.
 
 On the Simulator, `typeText` of the whole string into a fresh field: 6 of 20
-exact without the patch, 40 of 40 with it. Controlled
-(`onChangeText={setValue}`): 3 of 20 without, 20 of 20 with it. JS updates
-still apply: a button setting or clearing `value`, focused or not; a style
-change on the same text; a JS or `maxLength` limit; a transform such as
-upper-casing, where JS's text wins (as without the patch, keys typed while
-JS's rewrite is in flight are replaced by it).
+exact without the patch, 60 of 60 with it.
 
 The iOS app builds React Native from source so the patch reaches it
 (`example/plugins/withReactNativeFromSource.js`), which also compiles the
