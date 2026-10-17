@@ -8,7 +8,12 @@
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIApplicationSceneManifest": {
+          "UIApplicationSupportsMultipleScenes": true
+        }
+      }
     },
     "android": {},
     "plugins": [
@@ -18,7 +23,8 @@
         "@signalwire/react-native",
         {
           "enableCallKit": true,
-          "enableVoipPush": true
+          "enableVoipPush": true,
+          "enableSiri": true
         }
       ],
       "./plugins/withCleartextTraffic",

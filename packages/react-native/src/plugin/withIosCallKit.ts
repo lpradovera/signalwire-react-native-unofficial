@@ -7,12 +7,18 @@ export interface IosOptions {
   cameraPermission?: string;
   enableVoipPush: boolean;
   enableCallKit: boolean;
+  /** Siri's "call <name> with <app>": `INIntentsSupported`, `NSSiriUsageDescription`, the Siri entitlement. */
+  enableSiri?: boolean;
+  siriPermission?: string;
 }
 
 /** What Recents and Siri open the app with to call back. */
 const CALL_ACTIVITY_TYPES = ['INStartCallIntent', 'INStartAudioCallIntent', 'INStartVideoCallIntent'];
 const DEFAULT_MIC = 'This app uses the microphone for calls.';
 const DEFAULT_CAMERA = 'This app uses the camera for video calls.';
+const DEFAULT_SIRI = 'Siri can call the people you call with this app.';
+/** What the app handles itself (in-app intent handling): Siri's start-call request. */
+const SIRI_INTENTS = ['INStartCallIntent'];
 
 /**
  * Adds the usage strings, background modes and push entitlement a calling app
@@ -27,15 +33,22 @@ const DEFAULT_CAMERA = 'This app uses the camera for video calls.';
 export const withIosCallKit: ConfigPlugin<IosOptions> = (config, options) => {
   const withPlist = withInfoPlistEntries(config, options);
 
-  if (!options.enableVoipPush) {
+  if (!options.enableVoipPush && !options.enableSiri) {
     return withPlist;
   }
 
   return withEntitlementsPlist(withPlist, (entitlementsConfig) => {
-    // `development` is correct for debug builds, which are signed against the
-    // APNs sandbox. Release builds need `production`; Xcode rewrites this
-    // during a distribution build, so it is not pinned here.
-    entitlementsConfig.modResults['aps-environment'] ??= 'development';
+    if (options.enableVoipPush) {
+      // `development` is correct for debug builds, which are signed against the
+      // APNs sandbox. Release builds need `production`; Xcode rewrites this
+      // during a distribution build, so it is not pinned here.
+      entitlementsConfig.modResults['aps-environment'] ??= 'development';
+    }
+    if (options.enableSiri) {
+      // The Siri capability. Only a paid Apple Developer Program team can sign
+      // it: a free personal team's build fails provisioning with it.
+      entitlementsConfig.modResults['com.apple.developer.siri'] = true;
+    }
     return entitlementsConfig;
   });
 };
@@ -65,6 +78,15 @@ const withInfoPlistEntries: ConfigPlugin<IosOptions> = (config, options) =>
         types.add(type);
       }
       plist.NSUserActivityTypes = [...types];
+    }
+
+    if (options.enableSiri) {
+      const intents = new Set<string>((plist.INIntentsSupported as string[] | undefined) ?? []);
+      for (const intent of SIRI_INTENTS) {
+        intents.add(intent);
+      }
+      plist.INIntentsSupported = [...intents];
+      plist.NSSiriUsageDescription = options.siriPermission || plist.NSSiriUsageDescription || DEFAULT_SIRI;
     }
 
     return plistConfig;

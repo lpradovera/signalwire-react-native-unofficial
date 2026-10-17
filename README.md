@@ -764,10 +764,14 @@ If the process dies mid-call (killed by the system or by the user), nothing
 on the device can send a bye; see
 [device testing](docs/device-testing.md) for what the server does then.
 
-Calls appear in the Phone app's Recents. To call back from there, or from
-Siri, dial what `getCallKit().startCallRequested$` emits (`handle`,
-`displayName`, `video`); the Expo plugin generates the native forwarder it
-needs. See [native setup](docs/native-setup.md#ios-calling-back-from-recents-and-siri).
+Calls appear in the Phone app's Recents. To call back from there, dial what
+`getCallKit().startCallRequested$` emits (`handle`, `displayName`, `video`);
+the Expo plugin generates the native forwarder it needs. See
+[native setup](docs/native-setup.md#ios-calling-back-from-recents). Siri
+("call Alice with My App", "call back") takes the plugin's `enableSiri`, a
+paid Apple team, multiple scenes and `requestSiriAuthorization()`, and
+dials through the same `startCallRequested$`; see
+[native setup](docs/native-setup.md#ios-calling-with-siri-enablesiri).
 
 Then, from your own push handler:
 
