@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
 
+import { pickForPlatform } from './env';
+
 /**
  * Which subscriber this device signs in as.
  *
@@ -8,11 +10,13 @@ import { Platform } from 'react-native';
  * testing one platform, because every push rings the other device too. Set
  * `EXPO_PUBLIC_SW_SUBSCRIBER_REF_ANDROID` to give Android its own identity.
  *
- * Used for both the token request and the device registration: they must
- * agree, or the device registers under one subscriber and receives tokens for
- * another, and pushes go somewhere the app is not listening.
+ * This is the reference the app *asks* the support server for. The device
+ * registers for push under the one the server answers with (it decides whose
+ * token it mints), so the two always agree; see App.tsx.
  */
 export const SUBSCRIBER_REFERENCE =
-  (Platform.OS === 'android' ? process.env.EXPO_PUBLIC_SW_SUBSCRIBER_REF_ANDROID : undefined) ??
-  process.env.EXPO_PUBLIC_SW_SUBSCRIBER_REF ??
-  'rn-example';
+  pickForPlatform(
+    Platform.OS,
+    process.env.EXPO_PUBLIC_SW_SUBSCRIBER_REF,
+    process.env.EXPO_PUBLIC_SW_SUBSCRIBER_REF_ANDROID
+  ) ?? 'rn-example';

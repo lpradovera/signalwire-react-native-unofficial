@@ -1,0 +1,21 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- Lets the incoming-call notification open the call over the lock screen. -->
+  <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+  <!-- The microphone foreground service for calls outside Telecom (callKit off):
+       Android 14+ silences the microphone of a background app without one. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+  <application>
+    <receiver
+      android:name="com.signalwire.reactnative.IncomingCallActionReceiver"
+      android:exported="false" />
+    <!-- Started only while a call that is not in Telecom is in progress.
+         Microphone only: phoneCall needs MANAGE_OWN_CALLS (a Telecom call), and
+         Android 14+ refuses a start with a type the app may not use. -->
+    <service
+      android:name="com.signalwire.reactnative.CallForegroundService"
+      android:foregroundServiceType="microphone"
+      android:exported="false" />
+  </application>
+</manifest>

@@ -77,21 +77,3 @@ export function signGoogleAssertion(options: {
     'sha256'
   );
 }
-
-/** Decodes a JWT's claims without verifying. For tests and diagnostics only. */
-export function decodeClaims(token: string): Record<string, unknown> {
-  const part = token.split('.')[1];
-  if (!part) {
-    throw new Error('Malformed JWT');
-  }
-  return JSON.parse(Buffer.from(part, 'base64url').toString('utf8')) as Record<string, unknown>;
-}
-
-/** Decodes a JWT's header without verifying. For tests and diagnostics only. */
-export function decodeHeader(token: string): Record<string, unknown> {
-  const part = token.split('.')[0];
-  if (!part) {
-    throw new Error('Malformed JWT');
-  }
-  return JSON.parse(Buffer.from(part, 'base64url').toString('utf8')) as Record<string, unknown>;
-}

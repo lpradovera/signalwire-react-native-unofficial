@@ -1,7 +1,7 @@
 # Device-test checklist
 
 Everything in this list requires real hardware. None of it is covered by the
-192 unit tests, which mock every native module — those tests prove the logic is
+unit tests, which mock every native module — those tests prove the logic is
 right, not that the OS integration is.
 
 Run against the example app (`example/`) with a real SignalWire subscriber
@@ -40,9 +40,13 @@ is why `example/.env` points at a `*.ts.net` hostname and why the script pins
 the Mac's loopback and may not share its WiFi. A cable is only for reinstalling
 the app or streaming the device console.
 
-**Turn the funnel off when you stop.** It publishes port 3000 to the public
-internet while `ALLOW_UNAUTHENTICATED_TOKENS=1` mints a subscriber token for
-anyone who asks. `scripts/dev.sh down` disables it first, before anything else.
+**Turn the funnel off when you stop.** It publishes port 3000, the whole
+server, to the public internet. With the development settings in
+`server/.env`, `ALLOW_UNAUTHENTICATED_TOKENS=1` mints a subscriber token for anyone who asks,
+and with `API_TOKEN` unset (the example app registers without it) `/notify`,
+`/devices` and `/webhooks/signalwire` are open too: anyone can push a call to
+any user, list every device token, and register or delete devices.
+`scripts/dev.sh down` disables the funnel first, before anything else.
 
 Two failure modes worth recognising rather than re-debugging:
 
@@ -64,10 +68,14 @@ native call UI shows an active call.
 
 **2. Outbound video call.**
 Dial with `{ audio: true, video: true }`.
-Expect: the local self-view is mirrored, remote video renders. **Then switch
-cameras mid-call** — video must keep rendering. This exercises the in-place
-track replacement that `SignalWireVideoView` handles by re-reading `toURL()`
-every render; a regression here shows as a frozen last frame.
+Expect: the local self-view is mirrored, remote video renders. **Then turn
+video off and on, and switch to the back camera and back, mid-call** — the
+self-view must go blank while video is off and show live video after each
+change, mirrored on the front camera and not on the back. The SDK swaps the
+track inside the same `MediaStream` (same `toURL()`) in all of these, and
+`SignalWireVideoView` remounts its native view on the new track; a regression
+here shows as a frozen last frame or a black self-view while the far end sees
+video.
 
 **3. In-app inbound, foreground.**
 Place a call to the subscriber while the app is open.
@@ -75,21 +83,91 @@ Expect: the native call UI appears; Answer connects; audio flows.
 
 **4. Inbound while backgrounded but alive.**
 Background the app, keep it running, then call the subscriber.
-Expect: the native UI appears; answering from the lock screen connects and
-brings the app forward.
+Expect: on Android the incoming-call notification rings with Answer and
+Decline (heads-up when unlocked; over the lock screen, the app opens on top of
+it); answering connects. On iOS the CallKit screen appears and answering from
+the lock screen connects.
+
+**5. Call waiting (`callWaiting: 'full'`, the default).**
+During a call, place a second call to the subscriber.
+Expect: it rings over the call (iOS: CallKit's waiting-call screen with Hold &
+Accept, End & Accept, Decline; Android: the in-app sheet with the same three,
+or the notification in the background). Hold & Accept connects the second call
+and holds the first: with the example's `EXPO_PUBLIC_SW_DEV_STATS=1`, the held
+call's `in` and `out` counters stop and its sender shows `paused`. Swap
+resumes the first and holds the second. Ending either leaves the other
+running. End & Accept ends the first. Dialling during a call holds the live
+call. A third call is refused as busy. With `'endAndAccept'` only End &
+Accept and Decline are offered and dialling throws `CallInProgressError`;
+with `'single'` the second call is busy and never rings.
+
+Run on the Android emulator (API 35, 2026-10-16), each mode its own build
+(the launch log reads `CallKit ready (callWaiting: <mode>, …)`):
+
+- `'full'`: Decline of a second call while the first is live. The caller's
+  leg ended 8 s after it was placed (`[WebRTCManager] Inbound call rejected by
+  user.`); the first call carried on, its RTP counters rising, with no hold.
+- `'endAndAccept'`: the sheet offered only Decline and End & Accept. Dial
+  again showed `CallInProgressError: A call is already in progress (<uuid>)`
+  and placed nothing. Decline ended the second call and left the first
+  running; End & Accept on a third ended the first and connected the third.
+- `'single'`: Dial again threw `CallInProgressError`; a second inbound call
+  never showed (no sheet) and its leg ended in 0.7 s (`Refusing inbound call
+  <id> as busy: <uuid> is live; not showing it`); Telecom listed one call,
+  ACTIVE.
+
+**6. Back during a call (Android).**
+Press Back on the root screen during a call.
+Expect: the call goes on (audio, the ongoing-call notification); tapping the
+notification brings the call screen back. With `endCallsOnHostDestroy: true`,
+Back ends the call instead.
+
+**7. Lock screen without the native call UI (Android 14+).**
+With `callKit` off (the example's `EXPO_PUBLIC_SW_CALLKIT=0`), place a call,
+then lock the phone for 20 s and talk.
+Expect: the far end hears you the whole time. During the call `adb shell
+dumpsys activity services <package>` lists
+`com.signalwire.reactnative.CallForegroundService` with `isForeground=true`
+and `types=0x00000080` (microphone), the "Call in progress" notification shows,
+and both go when the call ends. `adb shell dumpsys audio` shows the app's
+`VOICE_COMMUNICATION` recording with `silenced:false` while locked.
+On the emulator (2026-10-16): with the service, `silenced:false` in all 7
+samples over 15 s locked, and the server counted as many packets from the app
+as to it (1386 / 1390). With the service disabled, the recording went
+`silenced:true` about 6 s after the lock, in 5 of 7 samples, and the server got
+918 packets from the app against 1364 to it.
+
+**Process death.** If the process dies mid-call (the system kills it, or the
+user force-stops it), nothing on the device sends a bye. The call's leg on
+SignalWire is left up until the server notices: on the iPhone (2026-10-16) a
+killed app's call stayed `answered`, with its uplink stopped, until it was
+ended by REST 10 s later; the server's own timeout was not reached. On the
+Android emulator (2026-10-16, `adb shell am force-stop` 25 s into an outbound
+call to `/private/rn-device-test`, then the call's status read by REST every 2 s):
+the leg stayed `answered` for the 29 s watched (the test's 60 s call cap), and
+was ended by REST. The server received 1195 packets from the app in all (the
+app had sent 1136 a second before the kill) while it sent 2659: it kept
+sending to a device that was gone. Treat it as a server-side limit; a backend that must bound such
+a leg can end it by REST from its own watchdog.
 
 ## Push path
 
 **5. Cold-start VoIP push.**
 Force-quit the app. Send a VoIP push carrying `call_id`.
 Expect: the native call UI appears within about 2 seconds; answering launches
-the app and connects. If the UI does not appear, the `AppDelegate` hook in
-`docs/native-setup.md` is missing or the payload lacks `call_id`.
+the app and connects. The generated hook reports every VoIP push to CallKit,
+with or without `call_id`, so if the UI does not appear the hook is not in the
+build (`SignalWireVoipPush.m` not generated or not compiled — run
+`npm run verify:prebuild`), the build lacks `aps-environment`, or the push never
+reached the device (check the `[SignalWireVoipPush]` lines in the device
+console). A missing `call_id` shows later, as a call that rings but never
+fuses.
 
 **6. Push with no matching call.**
 Send a push whose `call_id` never produces an SDK call.
-Expect: the native call ends itself as a missed call within the fusion timeout
-(20s by default) and leaves no stuck entry in the call log. A stuck CallKit
+Expect: the native call ends itself as a missed call at the fusion timeout
+(45 s by default, plus up to one 2 s tick) and leaves no stuck entry in the call
+log. A stuck CallKit
 entry is what iOS penalises hardest — if you see one, the registry's `tick()`
 is not running.
 
@@ -101,9 +179,21 @@ arrives; no ghost call remains; the caller sees a decline, not a timeout.
 ## Audio and resilience
 
 **8. Audio routing.**
-Toggle speaker and earpiece mid-call. Then connect a Bluetooth headset mid-call.
-Expect: output follows each change. Note that `'bluetooth'` is a request — the
-OS makes the final choice, so verify by ear rather than by the reported route.
+Toggle speaker and earpiece mid-call. Plug in wired or USB-C headphones
+mid-call (the label should read "Headset"). Then connect a Bluetooth headset mid-call,
+pick a route in the system route menu, and tap CallKit's speaker button.
+Expect: output follows each change, and with incall-manager's iOS routes
+`route` (the speaker button's label) names where the audio actually is: check
+both by ear and against the label. With released incall-manager on iOS,
+`'bluetooth'` is ignored with a warning and `route` is what was asked for.
+Also: tap the speaker while an outbound call is still ringing (it should apply
+when the call connects), and start a video call with AirPods connected (it
+should stay on the AirPods). Tap the speaker while an outbound call rings and
+cancel the call: the next call must not start on the speaker. On Android,
+start a video call with a Bluetooth headset connected: the label should read
+"Bluetooth" (from incall-manager's device report), and speaker on then off
+should come back to the headset, not the earpiece (the Android behaviour is
+derived from incall-manager's Java, not yet seen on a device).
 
 **9. Backgrounded call audio.**
 Background the app mid-call.
@@ -112,8 +202,9 @@ Expect: audio continues. Failure means the `audio` background mode is missing.
 **10. Network loss and recovery.**
 Enable airplane mode for 10 seconds mid-call, then disable it.
 Expect: the SDK notices the drop and reconnects. If nothing happens, the NetInfo
-shim is not installed — check that `@react-native-community/netinfo` is present
-and `platform={{ netInfo: true }}`.
+shim did not start — look for `Network monitoring unavailable` in the log (it
+carries the reason) and check the provider is not given
+`platform={{ netInfo: false }}`.
 
 **11. Mute and DTMF from the native UI.**
 Use the CallKit keypad and the mute button rather than the in-app controls.
@@ -197,10 +288,101 @@ React Native layer: same SDK, same core, browser WebRTC, same silence. If a
 call reaches "invite successful" and then nothing, check the m-lines offered
 before suspecting the network.
 
-**Still unverified: everything else requiring hardware.** No camera captured,
-no CallKit UI confirmed, and no push delivered.
+**What the Simulator left unverified** was everything requiring hardware: no
+camera captured, no CallKit UI confirmed, and no push delivered. The iPad
+session later the same day signed off rows 1, 3, 5 and 6 below; the remaining
+rows are still open.
+
+## The Android emulator suite (automated)
+
+`example/device-tests/` drives the example on an Android emulator with UI
+Automator and checks every call's audio, so the Android rows above can be
+re-run without a person. It does not replace the phone: the emulator has no
+earpiece, no Bluetooth, no real FCM and a stock lock screen (see "Not covered"
+below).
+
+**How it works.** `android/` is a self-instrumenting test APK
+(`com.signalwire.devicetests`, androidx UI Automator 2.3). The tests drive
+the example from outside its process: React Native's `testID` is the view's
+resource-id (`By.res("sw-hangup")`), system UI (the heads-up, the shade, the
+lock screen) is found by text or content description, and nothing is tapped
+by coordinates. They lock the screen, toggle the network and force-stop the
+app through the shell. `host/hostd.py` runs on the Mac (the emulator reaches
+it as `10.0.2.2`): it proxies the app's `/token` to the example server (and
+can answer 401), places inbound calls by REST, reads each leg's packet
+counts, runs emulator console commands (the proximity sensor), and ends any
+test call older than 55 s, polling every 2 s. `suite.sh` builds the example
+in each configuration (full, `endAndAccept`, `single`, end-on-Back,
+`EXPO_PUBLIC_SW_CALLKIT=0`, and a push build with a simulated FCM receiver),
+clearing Metro's cache before each, runs the groups and sweeps the calls.
+
+**Audio evidence.** The builds set `EXPO_PUBLIC_SW_DEV_STATS=1`. After every
+switch (answer, Hold & Accept, each Swap, End of the other call, End &
+Accept, resume, unlock, return from the notification) a test reads two
+`[DEVSTATS]` samples and requires at least 20 packets/s each way on the live
+call and none, with its sender `audio:paused`, on a held one. React Native
+pauses JS timers while the app is in the background or the screen is off,
+so across those windows the cumulative counters before and after give the
+rate. Each run directory has `legs.txt`: the samples between the test's
+markers, and each REST leg's packets from and to the app.
+
+**Running it.** Boot an API 35 emulator, copy
+`example/device-tests/suite.env.example` to `suite.env` and fill it in
+(credentials stay in the server's env file, which nothing prints), then:
+
+```bash
+npm ci
+example/device-tests/suite.sh                 # every group, about 23 calls
+example/device-tests/suite.sh calls cw        # some groups
+```
+
+Groups: `launch`, `calls`, `cw`, `back`, `connection`, `endonback`, `modes`,
+`nocallkit`, `push` (call counts in `suite.sh`). Output goes to
+`example/device-tests/.out/` (`runs/<test>-<build>-<time>/` with
+`logcat.txt`, `legs.txt`, screenshots and window dumps; `calls.txt` with
+every call and the minutes). On a Mac where adb's mDNS code crashes, export
+`ADB_MDNS=0` (the script does).
+
+**What it found (2026-10-17, API 35, react-native-webrtc 155).** Two defects,
+both fixed in the package's Android code:
+
+- Answering an inbound call could leave the caller ringing: libwebrtc's
+  Android network monitor restarts with the answer's ICE gathering session
+  and, until the platform's callbacks arrive, reports no network, so no
+  candidate was gathered and the SDK never sent its answer (2 of 4 answers
+  before, 5 of 5 after). The package now sets the
+  `WebRTC-AndroidNetworkMonitor-IsAdapterAvailable/Disabled/` field trial.
+- A pushed call's Answer did nothing with the app killed: the Answer intent
+  arrived as a new intent before React had an activity and was dropped.
+
+And one platform limit: about 5 s after the app goes to the background,
+Android cuts its sockets ("Destroyed live tcp sockets for uids=…"), so with
+push off a call placed minutes later never reaches the device. Calls to a
+backgrounded app need push; the `push` group covers that path.
+
+One observation was not the app: once, after returning from the
+ongoing-call notification, the app received 21 and 72 packets in two 2 s
+windows while SignalWire sent 50/s. Its own send counter kept pace, yet
+SignalWire got about 100 packets (2 s) fewer than the app sent, where
+other legs match the app's counters within a few packets: about 2 s of
+loss both ways below the app (the emulator's network or the Mac's), not
+its receive path. The same scenario run three more times kept 50/s each
+way across the return, with at most 3 packets lost. `[DEVSTATS]` now logs
+`lost` (inbound packetsLost) and `legs.txt` shows it, so a gap with
+`lost` growing is packets that never arrived, and one without is the app.
+
+**Not covered** (the emulator can't): the earpiece route and proximity
+screen-off on it (the emulator offers only the speaker; the sensor reaches
+incall-manager, which correctly keeps the screen on for the speaker),
+Bluetooth, a real FCM delivery (the simulated receiver plus the temporary
+allowlist Google Play services grants stand in for it), and OEM lock
+screens.
 
 ## Sign-off
+
+The Android column is empty: Android has been exercised on an emulator during
+development (see the README's "What is verified"), but no Android scenario has
+been run against this checklist and signed off yet.
 
 | # | Scenario | iOS | Android | Notes |
 | --- | --- | --- | --- | --- |

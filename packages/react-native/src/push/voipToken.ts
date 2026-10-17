@@ -4,6 +4,12 @@ import { logger } from '@signalwire/react';
 
 interface VoipPushModule {
   getToken(): Promise<string | null>;
+  getPendingCalls?(): Promise<unknown[] | null>;
+  forgetPendingCall?(uuid: string): Promise<void>;
+  /**
+   * The single-slot pair of a hook generated before pending calls were kept
+   * per call. A bare app may still carry a hand-copied one.
+   */
   getPendingCall?(): Promise<PendingCall | null>;
   clearPendingCall?(): Promise<void>;
 }
@@ -95,17 +101,26 @@ export function onVoipTokenChange(listener: (token: string) => void): () => void
  * The common shape: fire immediately if a token already exists, then again on
  * every refresh. Deduplicates, so a refresh matching the cached value does not
  * re-register.
+ *
+ * Subscribes before reading: the native module observes token changes only
+ * once a listener exists, so a token issued between a read that found none and
+ * the subscription would otherwise reach nobody until the next launch. After
+ * the returned function runs, nothing reaches the listener, including a read
+ * still in flight.
  */
 export function watchVoipToken(listener: (token: string) => void): () => void {
   let lastSeen: string | null = null;
+  let cancelled = false;
 
   const emit = (token: string): void => {
-    if (token === lastSeen) {
+    if (cancelled || token === lastSeen) {
       return;
     }
     lastSeen = token;
     listener(token);
   };
+
+  const unsubscribe = onVoipTokenChange(emit);
 
   void getVoipToken().then((token) => {
     if (token) {
@@ -113,43 +128,54 @@ export function watchVoipToken(listener: (token: string) => void): () => void {
     }
   });
 
-  return onVoipTokenChange(emit);
+  return () => {
+    cancelled = true;
+    unsubscribe();
+  };
 }
 
 /**
- * Reads the push this launch was woken by, if any.
+ * Reads the pushes JavaScript has not taken yet, oldest first.
  *
  * On a cold start the incoming call is reported to CallKit natively, long
  * before JavaScript exists. callkeep's `didDisplayIncomingCall` is delivered
  * only to listeners attached at the time, and its `didLoadWithEvents` replay
  * does not fire on iOS here — so the registry never learned about the call,
  * and the user's answer arrived with nothing to apply it to. The native side
- * caches the payload for exactly this reason, as it already does the token.
+ * caches each payload for exactly this reason, as it already does the token.
  */
-export async function getPendingVoipCall(): Promise<PendingCall | null> {
+export async function getPendingVoipCalls(): Promise<PendingCall[]> {
   if (Platform.OS !== 'ios') {
-    return null;
+    return [];
   }
   const module = nativeModule();
-  if (!module?.getPendingCall) {
-    return null;
-  }
   try {
-    return (await module.getPendingCall()) ?? null;
+    if (module?.getPendingCalls) {
+      const calls = (await module.getPendingCalls()) ?? [];
+      return calls.filter(
+        (call): call is PendingCall =>
+          typeof call === 'object' && call !== null && typeof (call as PendingCall).uuid === 'string'
+      );
+    }
+    if (module?.getPendingCall) {
+      const call = await module.getPendingCall();
+      return call?.uuid ? [call] : [];
+    }
   } catch (error) {
-    logger.warn('Failed to read the pending VoIP call:', error);
-    return null;
+    logger.warn('Failed to read the pending VoIP calls:', error);
   }
+  return [];
 }
 
-/** Clears the cached push, so a later launch does not adopt it again. */
-export async function clearPendingVoipCall(): Promise<void> {
+/** Forgets one cached push, so a later `setup()` does not adopt it again. */
+export async function forgetPendingVoipCall(uuid: string): Promise<void> {
   const module = nativeModule();
-  if (!module?.clearPendingCall) {
-    return;
-  }
   try {
-    await module.clearPendingCall();
+    if (module?.forgetPendingCall) {
+      await module.forgetPendingCall(uuid);
+    } else if (module?.clearPendingCall) {
+      await module.clearPendingCall();
+    }
   } catch (error) {
     logger.warn('Failed to clear the pending VoIP call:', error);
   }

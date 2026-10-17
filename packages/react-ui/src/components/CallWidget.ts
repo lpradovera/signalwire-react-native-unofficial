@@ -5,6 +5,18 @@
 // DOM at module scope — so this is a browser-only, client-side module.
 'use client';
 
+import '@signalwire/web-components/sw-call-controls';
+import '@signalwire/web-components/sw-call-media';
+import '@signalwire/web-components/sw-local-camera';
+import '@signalwire/web-components/sw-ui-call-layout';
+import '@signalwire/web-components/sw-ui-content-drawer';
+import '@signalwire/web-components/sw-ui-control-bar';
+import '@signalwire/web-components/sw-ui-dropup';
+import '@signalwire/web-components/sw-ui-icon';
+import '@signalwire/web-components/sw-ui-modal';
+import '@signalwire/web-components/sw-ui-responsive-container';
+import '@signalwire/web-components/sw-ui-split-button';
+import '@signalwire/web-components/sw-ui-transcript-view';
 import { SwCallWidget } from '@signalwire/web-components/sw-call-widget';
 
 import { createSwComponent } from '../createSwComponent';
@@ -19,6 +31,7 @@ export const CallWidget = createSwComponent({
   tagName: 'sw-call-widget',
   elementClass: SwCallWidget,
   events: {
+    onAddressEvent: 'signalwire-address:event',
     onCallEnded: 'sw-call-ended',
     onCallHangup: 'sw-call-hangup',
     onContentDrawerClose: 'sw-content-drawer-close',
@@ -27,6 +40,9 @@ export const CallWidget = createSwComponent({
     onFullscreenToggle: 'sw-fullscreen-toggle',
     onModalClose: 'sw-modal-close',
     onTranscriptToggle: 'sw-transcript-toggle'
+  },
+  eventOrigins: {
+    onCallHangup: 'sw-call-controls'
   }
 });
 

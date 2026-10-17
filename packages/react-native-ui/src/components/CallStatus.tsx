@@ -29,12 +29,16 @@ export interface CallStatusProps {
 /**
  * A status pill.
  *
- * Shows the call error when there is one — a `recovering` badge is misleading
- * if media has already failed underneath it.
+ * Shows a fatal call error over the status — a `recovering` badge is
+ * misleading if media has already failed underneath it. A non-fatal error
+ * (a keepalive pong that failed to send, a track that could not be restored)
+ * leaves the call running, so the status stays.
  */
 export function CallStatus({ call, style, testID }: CallStatusProps): React.JSX.Element {
   const theme = useSignalWireTheme();
-  const { status, error } = useCall(call);
+  const { status, error: lastError } = useCall(call);
+  // useCall keeps the most recent error for the life of the call.
+  const error = lastError?.fatal ? lastError : null;
 
   const label = error ? `${error.kind} error` : (LABELS[status] ?? status);
   const tone = error
@@ -46,6 +50,9 @@ export function CallStatus({ call, style, testID }: CallStatusProps): React.JSX.
   return (
     <View
       testID={testID}
+      // Without `accessible` an iOS View is not an element, and VoiceOver
+      // skips this label for the child Text.
+      accessible
       accessibilityRole="text"
       accessibilityLabel={`Call status: ${label}`}
       style={[

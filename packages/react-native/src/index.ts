@@ -10,12 +10,18 @@
 // ---------------------------------------------------------------------------
 // Re-exported from the universal core, so RN apps need only this package.
 // ---------------------------------------------------------------------------
-export { SignalWireContext, useSignalWire, useCall, useIncomingCalls, useDevices, useObservable } from '@signalwire/react';
+export { SignalWireContext, TokenFetchError, getCallHoldState, useSignalWire, useCall, useCalls, useIncomingCalls, useDevices, useObservable } from '@signalwire/react';
 export type {
   CallObserver,
+  FetchToken,
+  FetchedToken,
+  TokenState,
+  TokenStatus,
   SignalWireContextValue,
   SignalWirePlatform,
+  OtherCalls,
   UseCallResult,
+  UseCallsResult,
   UseDevicesResult,
   UseIncomingCallsResult,
   UseSignalWireResult
@@ -39,9 +45,12 @@ export { ReactNativeStorage } from './platform/storage';
 export type { AsyncStorageLike, StorageScope } from './platform/storage';
 export { installBaseGlobals } from './platform/baseGlobals';
 
+// Caller names: readable Fabric/SIP addresses, no "_undef_" placeholder
+export { displayableName } from './callkit/displayName';
+
 // Components
 export { SignalWireVideoView } from './components/SignalWireVideoView';
 export type { SignalWireVideoViewProps } from './components/SignalWireVideoView';
 
 // Errors
-export { MissingPeerDependencyError, PolyfillNotInstalledError } from './errors';
+export { CallInProgressError, MissingPeerDependencyError, PolyfillNotInstalledError } from './errors';

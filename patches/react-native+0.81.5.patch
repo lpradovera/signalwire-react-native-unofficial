@@ -1,0 +1,25 @@
+diff --git a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
+index 577bebe..f17427c 100644
+--- a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
++++ b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
+@@ -346,8 +346,19 @@ - (void)updateState:(const State::Shared &)state oldState:(const State::Shared &
+   }
+ 
+   if (_mostRecentEventCount == _state->getData().mostRecentEventCount) {
++    NSAttributedString *attributedString = RCTNSAttributedStringFromAttributedStringBox(data.attributedStringBox);
++    // The state echoes the text this view last sent (-_updateState), and the field still holds those characters:
++    // nothing to write. UIKit may have changed the field's attributes since (the first character typed into an
++    // empty field gets the default paragraph style, background color and event emitter only after it is
++    // inserted), so an attribute comparison would see a change and write the text back. Written into a focused
++    // field, that drops keystrokes: UIKit delivers the keys queued behind the write inside it, -textInputDidChange
++    // ignores them (_comingFromJS), and the write then replaces them.
++    if ([attributedString isEqual:_lastStringStateWasUpdatedWith] &&
++        [attributedString.string isEqualToString:_backedTextInputView.attributedText.string]) {
++      return;
++    }
+     _comingFromJS = YES;
+-    [self _setAttributedString:RCTNSAttributedStringFromAttributedStringBox(data.attributedStringBox)];
++    [self _setAttributedString:attributedString];
+     _comingFromJS = NO;
+   }
+ }

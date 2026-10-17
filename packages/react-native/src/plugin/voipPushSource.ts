@@ -33,7 +33,6 @@ export const VOIP_PUSH_SOURCE = `//
 //
 
 #import <Foundation/Foundation.h>
-#import <objc/runtime.h>
 #import <PushKit/PushKit.h>
 #import <UIKit/UIKit.h>
 
@@ -45,6 +44,50 @@ export const VOIP_PUSH_SOURCE = `//
 // Posted whenever the PushKit token changes, so JavaScript can register the
 // device with your server. Payload: @{ @"token": <hex string> }.
 NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotification";
+
+// The payload is JSON from whoever sent the push, so a field can be a number,
+// null or missing. Each one is used only when it is a non-empty string.
+static NSString *SWStringValue(id value) {
+  return [value isKindOfClass:[NSString class]] && [(NSString *)value length] > 0 ? value : nil;
+}
+
+// CallKit needs a real UUID: callkeep turns this string into an NSUUID, which
+// throws on a number and is nil for any other string, and either way no call
+// is reported and iOS terminates the app. Lowercase, because callkeep reports
+// its answer and end actions with [UUIDString lowercaseString] and JavaScript
+// matches them against this value.
+static NSString *SWCallUUID(id value) {
+  NSString *string = SWStringValue(value);
+  NSUUID *parsed = string != nil ? [[NSUUID alloc] initWithUUIDString:string] : nil;
+  return [(parsed ?: [NSUUID UUID]).UUIDString lowercaseString];
+}
+
+// callkeep keeps its CallKit configuration in NSUserDefaults from the first
+// time JavaScript runs RNCallKeep.setup(), and has no CXProvider before that.
+// RNCallKeep.h does not declare this, so it is checked with
+// respondsToSelector: before use.
+@interface RNCallKeep (SignalWireVoipPush)
++ (NSDictionary *)getSettings;
+@end
+
+// The token and the pending calls are written on PushKit's queue (main) and
+// read on React Native's module queue. Every access takes this one lock: an
+// unsynchronised read can be handed an object the other thread is releasing.
+static NSObject *SWCacheLock(void) {
+  static NSObject *lock = nil;
+  static dispatch_once_t onceToken;
+  dispatch_once(&onceToken, ^{
+    lock = [NSObject new];
+  });
+  return lock;
+}
+
+static NSString *sCachedToken = nil;
+static NSMutableArray<NSDictionary *> *sPendingCalls = nil;
+
+// More unread pushes than this means nothing is reading them (an app that
+// never runs getCallKit().setup()); the oldest are dropped first.
+static const NSUInteger SWMaxPendingCalls = 8;
 
 @interface SignalWireVoipPushDelegate : NSObject <PKPushRegistryDelegate>
 @property (nonatomic, strong) PKPushRegistry *registry;
@@ -75,11 +118,19 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
 }
 
 + (NSString *)cachedToken {
-  return objc_getAssociatedObject(self, @selector(cachedToken));
+  @synchronized (SWCacheLock()) {
+    return sCachedToken;
+  }
+}
+
++ (void)setCachedToken:(NSString *)token {
+  @synchronized (SWCacheLock()) {
+    sCachedToken = [token copy];
+  }
 }
 
 /**
- * The last push, kept for JavaScript that did not exist when it arrived.
+ * The pushes JavaScript has not taken yet, oldest first.
  *
  * callkeep reports the incoming call to CallKit natively, but its
  * didDisplayIncomingCall event is delivered to JavaScript listeners that, on
@@ -87,17 +138,37 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
  * not fire on iOS here. The registry therefore had no entry, and the user's
  * answer arrived with nothing to apply it to. This is the same problem the
  * token cache solves, and the same solution.
+ *
+ * One entry per call, not one slot: a second push inside the JS start-up
+ * window (call waiting) would otherwise replace the first, whose answer then
+ * reaches no registry entry while CallKit shows it connected.
  */
-+ (NSDictionary *)cachedCall {
-  return objc_getAssociatedObject(self, @selector(cachedCall));
++ (NSArray<NSDictionary *> *)pendingCalls {
+  @synchronized (SWCacheLock()) {
+    return sPendingCalls != nil ? [sPendingCalls copy] : @[];
+  }
 }
 
-+ (void)setCachedCall:(NSDictionary *)call {
-  objc_setAssociatedObject(self, @selector(cachedCall), call, OBJC_ASSOCIATION_COPY_NONATOMIC);
++ (void)addPendingCall:(NSDictionary *)call {
+  @synchronized (SWCacheLock()) {
+    if (sPendingCalls == nil) {
+      sPendingCalls = [NSMutableArray array];
+    }
+    [self removePendingCall:call[@"uuid"]];
+    [sPendingCalls addObject:[call copy]];
+    while (sPendingCalls.count > SWMaxPendingCalls) {
+      [sPendingCalls removeObjectAtIndex:0];
+    }
+  }
 }
 
-+ (void)setCachedToken:(NSString *)token {
-  objc_setAssociatedObject(self, @selector(cachedToken), token, OBJC_ASSOCIATION_COPY_NONATOMIC);
++ (void)removePendingCall:(NSString *)uuid {
+  @synchronized (SWCacheLock()) {
+    NSIndexSet *matches = [sPendingCalls indexesOfObjectsPassingTest:^BOOL(NSDictionary *call, NSUInteger idx, BOOL *stop) {
+      return [call[@"uuid"] isEqual:uuid];
+    }];
+    [sPendingCalls removeObjectsAtIndexes:matches];
+  }
 }
 
 - (void)pushRegistry:(PKPushRegistry *)registry
@@ -112,11 +183,57 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
   // has a bridge to deliver it over. Without this the first launch after
   // install registers no device and the first push silently goes nowhere.
   [SignalWireVoipPushDelegate setCachedToken:[hex copy]];
+  // Debug builds only: in a release build NSLog writes to the unified log
+  // (unredacted before iOS 26) and to stderr, where crash and log SDKs collect
+  // it, and the token is meant for the app's server alone.
+#if DEBUG
   NSLog(@"[SignalWireVoipPush] token %@", hex);
+#endif
 
   [[NSNotificationCenter defaultCenter] postNotificationName:SignalWireVoipTokenNotification
                                                       object:nil
                                                     userInfo:@{ @"token": [hex copy] }];
+}
+
+// PushKit's header: "use this method to notify your server not to send push
+// notifications using the matching push token". The cached copy goes, so a
+// later getToken() (a JS reload, a watcher re-run for another user) cannot
+// register the dead token again; the replacement arrives through
+// didUpdatePushCredentials as usual.
+- (void)pushRegistry:(PKPushRegistry *)registry didInvalidatePushTokenForType:(PKPushType)type {
+  [SignalWireVoipPushDelegate setCachedToken:nil];
+  NSLog(@"[SignalWireVoipPush] token invalidated");
+}
+
+/**
+ * Gives callkeep a CXProvider when JavaScript has never set it up.
+ *
+ * Until RNCallKeep.setup() has run once on this install callkeep has no
+ * settings and so no provider, and its reportNewIncomingCall messages nil: no
+ * call is shown, PushKit's completion never runs, and iOS terminates the app
+ * and eventually stops delivering VoIP pushes to it. That happens when a push
+ * arrives before the app's first setup() (a token registered before sign-in,
+ * a setup() that threw). The native setup is callkeep's own documented path,
+ * and it stores these settings, so it runs at most once per install. It makes
+ * callkeep ignore JavaScript's setup() for the rest of this process; the next
+ * launch's setup() stores the app's own options, which callkeep's provider
+ * picks up from the launch after (as with any change to them). The values
+ * are the fixed ones CallKeepBridge.setup() passes.
+ */
+- (void)ensureCallKeepProvider {
+  if (![RNCallKeep respondsToSelector:@selector(getSettings)] || [RNCallKeep getSettings] != nil) {
+    return;
+  }
+  NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
+  NSString *appName = SWStringValue(info[@"CFBundleDisplayName"]) ?: SWStringValue(info[@"CFBundleName"]) ?: @"Calls";
+  NSLog(@"[SignalWireVoipPush] RNCallKeep.setup() has not run on this install; setting callkeep up natively");
+  [RNCallKeep setup:@{
+    @"appName": appName,
+    @"supportsVideo": @NO,
+    @"maximumCallGroups": @"1",
+    @"maximumCallsPerCallGroup": @"1",
+    @"audioSession": @{ @"categoryOptions": @4, @"mode": @"AVAudioSessionModeVoiceChat" }
+  }];
 }
 
 /** callkeep hands this dictionary back to JS on didDisplayIncomingCall. */
@@ -135,10 +252,10 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
 
   // A UUID is required by CallKit. Prefer one the sender chose so the server
   // and the device agree; otherwise mint one here.
-  NSString *uuid = data[@"uuid"] ?: [[NSUUID UUID] UUIDString];
-  NSString *callId = data[@"call_id"] ?: @"";
-  NSString *handle = data[@"from"] ?: @"Unknown";
-  NSString *callerName = data[@"from_name"] ?: @"Unknown caller";
+  NSString *uuid = SWCallUUID(data[@"uuid"]);
+  NSString *callId = SWStringValue(data[@"call_id"]) ?: @"";
+  NSString *handle = SWStringValue(data[@"from"]) ?: @"Unknown";
+  NSString *callerName = SWStringValue(data[@"from_name"]) ?: @"Unknown caller";
 
   // Everything the sender added beyond the known keys is forwarded verbatim.
   // A bridge topology puts a single-use token here, and JavaScript cannot ask
@@ -159,11 +276,12 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
   pending[@"callId"] = callId;
   pending[@"handle"] = handle;
   pending[@"callerName"] = callerName;
-  [SignalWireVoipPushDelegate setCachedCall:pending];
+  [SignalWireVoipPushDelegate addPendingCall:pending];
 
   // Reported unconditionally, even when the payload is malformed: iOS kills an
   // app that takes a VoIP push without reporting a call, and a call that ends
   // itself as missed is far better than a terminated process.
+  [self ensureCallKeepProvider];
   [RNCallKeep reportNewIncomingCall:uuid
                              handle:handle
                          handleType:@"generic"
@@ -176,7 +294,9 @@ NSString *const SignalWireVoipTokenNotification = @"SignalWireVoipTokenNotificat
                         fromPushKit:YES
                             payload:[self payloadWithCallId:callId extras:extras]
               withCompletionHandler:completion];
+#if DEBUG
   NSLog(@"[SignalWireVoipPush] reported call %@ to CallKit", uuid);
+#endif
 }
 
 @end
@@ -227,18 +347,19 @@ RCT_EXPORT_METHOD(getToken
   resolve([SignalWireVoipPushDelegate cachedToken]);
 }
 
-/** The last push, so a cold-started app can rebuild the call it woke for. */
-RCT_EXPORT_METHOD(getPendingCall
+/** The pushes JavaScript has not taken, so a cold-started app can rebuild the calls it woke for. */
+RCT_EXPORT_METHOD(getPendingCalls
                   : (RCTPromiseResolveBlock)resolve reject
                   : (RCTPromiseRejectBlock)reject) {
-  resolve([SignalWireVoipPushDelegate cachedCall]);
+  resolve([SignalWireVoipPushDelegate pendingCalls]);
 }
 
-/** Clears it once JavaScript has taken it, so it is not adopted twice. */
-RCT_EXPORT_METHOD(clearPendingCall
+/** Forgets one once JavaScript has taken it, so it is not adopted twice. */
+RCT_EXPORT_METHOD(forgetPendingCall
+                  : (NSString *)uuid resolve
                   : (RCTPromiseResolveBlock)resolve reject
                   : (RCTPromiseRejectBlock)reject) {
-  [SignalWireVoipPushDelegate setCachedCall:nil];
+  [SignalWireVoipPushDelegate removePendingCall:uuid];
   resolve(nil);
 }
 

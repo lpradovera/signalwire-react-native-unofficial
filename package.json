@@ -9,18 +9,23 @@
   ],
   "scripts": {
     "build": "npm run build -w @signalwire/react && npm run build -w @signalwire/react-ui && npm run build -w @signalwire/react-native && npm run build -w @signalwire/react-native-ui",
-    "test": "npm run test -w @signalwire/react && npm run test -w @signalwire/react-ui && npm run test -w @signalwire/react-native && npm run test -w @signalwire/react-native-ui && npm run test -w @signalwire/rn-push-server",
+    "test": "npm run test -w @signalwire/react && npm run test -w @signalwire/react-ui && npm run test -w @signalwire/react-native && npm run test -w @signalwire/react-native-ui && npm run test -w @signalwire/rn-push-server && npm run test -w @signalwire/react-native-example && node --test scripts/gitignore.test.mjs scripts/dev-scripts.test.mjs scripts/metro-config.test.mjs scripts/callkeep-fork.test.mjs scripts/sdk-hold-patch.test.mjs scripts/android-call-service.test.mjs scripts/rn-textinput-patch.test.mjs",
     "type-check": "npm run type-check -w @signalwire/react && npm run type-check -w @signalwire/react-ui && npm run type-check -w @signalwire/react-native && npm run type-check -w @signalwire/react-native-ui && npm run type-check -w @signalwire/react-native-example && npm run type-check -w @signalwire/react-web-example && npm run type-check -w @signalwire/rn-push-server",
     "lint": "eslint packages/react/src packages/react-ui/src packages/react-native/src packages/react-native-ui/src",
     "bundle-check": "npm run bundle-check -w @signalwire/react-native-example && npm run build -w @signalwire/react-web-example",
-    "verify:prebuild": "node scripts/verify-prebuild.mjs",
-    "verify:package": "npm run build && cd packages/react-native && npx publint && npx @arethetypeswrong/cli --pack . --exclude-entrypoints app.plugin.js",
-    "verify": "npm run build && npm run lint && npm run type-check && npm test && npm run bundle-check"
+    "postinstall": "patch-package",
+    "verify:prebuild": "node scripts/verify-prebuild.mjs && node --test scripts/verify-prebuild.test.mjs",
+    "verify:package": "npm run build && node scripts/verify-packages.mjs && npm run lint:package -w @signalwire/react -w @signalwire/react-ui -w @signalwire/react-native -w @signalwire/react-native-ui",
+    "verify": "npm run build && node scripts/check-metro-deps.mjs && npm run lint && npm run type-check && npm test && npm run bundle-check"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
     "@eslint/js": "^9.17.0",
     "eslint": "^9.17.0",
     "eslint-plugin-react-hooks": "^5.2.0",
+    "patch-package": "^8.0.1",
+    "publint": "^0.3.25",
+    "semver": "^7.8.5",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.19.0"
   },

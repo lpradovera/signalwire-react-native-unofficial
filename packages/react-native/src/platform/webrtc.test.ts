@@ -3,9 +3,20 @@ import { mediaDevices, RTCPeerConnection, RTCRtpSender } from 'react-native-webr
 import { createWebRTCApiProvider } from './webrtc';
 
 describe('createWebRTCApiProvider', () => {
-  it('exposes react-native-webrtc RTCPeerConnection', () => {
+  it('exposes react-native-webrtc RTCPeerConnection, with getConfiguration added', () => {
     const provider = createWebRTCApiProvider();
-    expect(provider.RTCPeerConnection).toBe(RTCPeerConnection);
+    expect(provider.RTCPeerConnection.prototype).toBeInstanceOf(RTCPeerConnection);
+    expect(typeof provider.RTCPeerConnection.prototype.getConfiguration).toBe('function');
+  });
+
+  it('exposes react-native-webrtc RTCPeerConnection itself once it has getConfiguration', () => {
+    const proto = RTCPeerConnection.prototype as unknown as Record<string, unknown>;
+    proto.getConfiguration = jest.fn();
+    try {
+      expect(createWebRTCApiProvider().RTCPeerConnection).toBe(RTCPeerConnection);
+    } finally {
+      delete proto.getConfiguration;
+    }
   });
 
   it('forwards getUserMedia to react-native-webrtc', async () => {

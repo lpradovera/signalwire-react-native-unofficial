@@ -1,29 +1,55 @@
 import { SignalWireProvider as CoreProvider } from '@signalwire/react';
-import React, { useMemo } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 
+import { getCallKit } from '../callkit/CallKeepBridge';
 import { createCallKitObserver } from '../callkit/observer';
 import { createReactNativePlatform } from '../platform/createReactNativePlatform';
+import { CallForegroundService } from './CallForegroundService';
+import { PushWakeRenewal } from './PushWakeRenewal';
 
+import type { CallKitObserverOptions } from '../callkit/observer';
 import type { ReactNativePlatformOptions } from '../platform/createReactNativePlatform';
-import type { CallObserver, SignalWirePlatform } from '@signalwire/react';
+import type { CallObserver, FetchToken } from '@signalwire/react';
 import type { CredentialProvider, SignalWireOptions } from '@signalwire/js';
 
 export interface SignalWireProviderProps {
   /**
    * Supplies authentication credentials. Memoize it — a new identity tears
-   * down the client and builds a fresh one.
+   * down the client and builds a fresh one. Pass this or `fetchToken`.
    */
-  credentialProvider: CredentialProvider;
+  credentialProvider?: CredentialProvider;
+  /**
+   * Fetches a token from your server: `async () => ({ token, expiresAt })`.
+   * The client connects with it, renews it shortly before `expiresAt`, when
+   * the app returns to the foreground and when a call push arrives with the
+   * token near or past its expiry, retries failures with a backoff, and
+   * reports a 401 or 403 through `useSignalWire().tokenStatus` and `error`.
+   * Memoize it: a new identity rebuilds the client. Pass this or
+   * `credentialProvider`.
+   */
+  fetchToken?: FetchToken;
   /** React Native platform options (NetInfo and AppState shims). */
   platform?: ReactNativePlatformOptions;
   /** Extra SDK options, merged over the platform defaults. */
   options?: SignalWireOptions;
   /**
    * Route calls through the native call UI (CallKit / ConnectionService).
-   * Requires the optional peer `react-native-callkeep`, and
-   * `getCallKit().setup(...)` to have been called from your app entry.
+   * Requires callkeep (`@signalwire/react-native-callkeep`, or stock
+   * `react-native-callkeep`), and
+   * `getCallKit().setup(...)` to have been called from your app entry. Pass
+   * options instead of `true` to name outbound calls in the native UI.
+   *
+   * With it on, the provider keeps the client and its calls when it unmounts
+   * during a call (Back on Android closes the activity; the call goes on and
+   * the ongoing-call notification brings the app back), unless setup() was
+   * given `endCallsOnHostDestroy: true`.
+   *
+   * With it off, on Android, the provider runs a `microphone` foreground
+   * service while a call is in progress, so Android 14+ does not silence the
+   * microphone when the app goes to the background or the screen locks
+   * (with it on, the ConnectionService's own does that).
    */
-  callKit?: boolean;
+  callKit?: boolean | CallKitObserverOptions;
   children: React.ReactNode;
 }
 
@@ -36,27 +62,45 @@ export interface SignalWireProviderProps {
  */
 export function SignalWireProvider({
   credentialProvider,
+  fetchToken,
   platform,
   options,
   callKit = false,
   children
 }: SignalWireProviderProps): React.JSX.Element {
-  // Built once: a new platform identity would tear down and rebuild the client.
+  // One platform per client, built by the core provider when it builds the
+  // client and disposed after that client is destroyed: dispose() removes the
+  // NetInfo and AppState shims for good, so a platform shared by the next
+  // client (a new credentialProvider, or React.StrictMode's remount) would
+  // leave that client deaf to network and foreground changes. The factory's
+  // identity is stable and `platform` is read once, as before.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const rnPlatform = useMemo<SignalWirePlatform>(() => createReactNativePlatform(platform), []);
+  const platformFactory = useCallback(() => createReactNativePlatform(platform), []);
 
+  // Built once, like the platform: an inline options object must not rebuild
+  // it. The observer reads the options through this ref instead, so a changed
+  // `displayName` takes effect on the next call.
+  const callKitOptions = useRef<CallKitObserverOptions>({});
+  useLayoutEffect(() => {
+    callKitOptions.current = typeof callKit === 'object' ? callKit : {};
+  });
+  const callKitOn = Boolean(callKit);
   const observer = useMemo<CallObserver | undefined>(
-    () => (callKit ? createCallKitObserver() : undefined),
-    [callKit]
+    () => (callKitOn ? createCallKitObserver(() => callKitOptions.current) : undefined),
+    [callKitOn]
   );
 
   return (
     <CoreProvider
       credentialProvider={credentialProvider}
-      platform={rnPlatform}
+      fetchToken={fetchToken}
+      platform={platformFactory}
       observer={observer}
       options={options}
+      keepCallsOnUnmount={callKitOn && getCallKit().keepsCallsOnUnmount}
     >
+      {fetchToken && callKitOn ? <PushWakeRenewal /> : null}
+      {callKitOn ? null : <CallForegroundService />}
       {children}
     </CoreProvider>
   );

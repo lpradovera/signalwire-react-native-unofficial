@@ -8,6 +8,11 @@
  * up. Without it, the placeholder below is used, which is fine for
  * `expo export` and the unit tests but will not sign against a real team.
  *
+ * One value serves as both the iOS bundle identifier and the Android package,
+ * so it must be valid for both: letters, digits and dots, no hyphens (iOS
+ * allows them, Android's package-name check does not) and no underscores (the
+ * reverse).
+ *
  * The value is read at config-evaluation time, so it must be set for
  * `expo prebuild` and `expo run:ios`, not just at runtime. See TESTING.md.
  */
@@ -16,8 +21,8 @@ const PLACEHOLDER_APP_ID = 'com.example.swrnexample';
 /**
  * Lets the dev build talk to a Mac reached over Tailscale, in the clear.
  *
- * App Transport Security blocks plain HTTP by default. Expo's
- * `NSAllowsLocalNetworking` covers `.local` and the RFC1918 ranges, but a
+ * App Transport Security blocks plain HTTP by default. The template's
+ * `NSAllowsLocalNetworking` (kept below) covers `.local` and the RFC1918 ranges, but a
  * tailnet address is CGNAT (100.64/10), so it is not covered — and when the
  * device and the Mac are not on the same LAN, that is the only route there.
  *
@@ -31,24 +36,39 @@ const PLACEHOLDER_APP_ID = 'com.example.swrnexample';
  * do not copy it into a shipping app.
  */
 const TAILNET_ATS_EXCEPTION = {
-  NSExceptionDomains: {
-    'ts.net': {
-      NSIncludesSubdomains: true,
-      NSExceptionAllowsInsecureHTTPLoads: true
-    }
+  'ts.net': {
+    NSIncludesSubdomains: true,
+    NSExceptionAllowsInsecureHTTPLoads: true
   }
+};
+
+/**
+ * The template Info.plist's own App Transport Security settings.
+ *
+ * Expo lays `ios.infoPlist` over the template's Info.plist one level deep, so
+ * an `NSAppTransportSecurity` given here replaces the template's dict rather
+ * than adding to it, and `config.ios.infoPlist` does not hold the template's
+ * values to spread. Without these the exception above was the whole dict: no
+ * `NSAllowsLocalNetworking`, so iOS 17+ refused plain HTTP to a LAN IP (the
+ * token server, Metro). `npm run verify:prebuild` checks the generated file.
+ */
+const TEMPLATE_ATS = {
+  NSAllowsArbitraryLoads: false,
+  NSAllowsLocalNetworking: true
 };
 
 module.exports = ({ config }) => {
   const appId = process.env.SW_APP_ID || PLACEHOLDER_APP_ID;
 
-  // Firebase is Android-only here: iOS uses PushKit, not FCM. Adding the
-  // plugin unconditionally makes an iOS prebuild demand a
-  // GoogleService-Info.plist that this app has no use for, so an iOS-only
-  // consumer cannot prebuild at all. Applied only when Android push is
-  // actually configured.
+  // Firebase is Android-only here: iOS uses PushKit, not FCM. Firebase's own
+  // plugin configures iOS as well and fails an iOS prebuild without a
+  // GoogleService-Info.plist, and GOOGLE_SERVICES_JSON is set for the whole
+  // environment rather than per platform, so applying that plugin whenever
+  // the variable is set broke every iOS prebuild once Android push was set
+  // up. withFirebaseAndroid applies only its Android half. Applied only when
+  // Android push is actually configured.
   const plugins = process.env.GOOGLE_SERVICES_JSON
-    ? ['@react-native-firebase/app', ...(config.plugins ?? [])]
+    ? ['./plugins/withFirebaseAndroid', ...(config.plugins ?? [])]
     : (config.plugins ?? []);
 
   return {
@@ -60,8 +80,12 @@ module.exports = ({ config }) => {
       infoPlist: {
         ...config.ios?.infoPlist,
         NSAppTransportSecurity: {
+          ...TEMPLATE_ATS,
           ...config.ios?.infoPlist?.NSAppTransportSecurity,
-          ...TAILNET_ATS_EXCEPTION
+          NSExceptionDomains: {
+            ...config.ios?.infoPlist?.NSAppTransportSecurity?.NSExceptionDomains,
+            ...TAILNET_ATS_EXCEPTION
+          }
         }
       }
     },

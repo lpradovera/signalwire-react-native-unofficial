@@ -25,16 +25,32 @@ This package needs native modules, so **Expo Go will not work** — you build a
 dev client. That is what `expo-dev-client` is for.
 
 ```bash
-npm install @signalwire/react-native @signalwire/js rxjs \
-  react-native-webrtc \
+npm install @signalwire/react-native@alpha @signalwire/js rxjs \
+  react-native-webrtc @config-plugins/react-native-webrtc \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
   react-native-url-polyfill \
-  react-native-callkeep react-native-incall-manager
+  @signalwire/react-native-callkeep react-native-incall-manager \
+  @react-native-community/netinfo \
+  @signalwire/react-native-ui@alpha react-native-safe-area-context
 ```
 
-The last two are optional peers, but you want native call UI and audio routing,
-so install them now.
+The callkeep, incall-manager and netinfo lines are native call UI, audio
+routing and network-loss detection. `@signalwire/react-native`'s main entry
+imports incall-manager and netinfo, so the app does not bundle without them,
+and native call UI needs callkeep. `@signalwire/react-native-callkeep` is the
+SignalWire-maintained fork of react-native-callkeep; stock
+`react-native-callkeep` also works but lacks the fork's fixes (on Android,
+stock 4.3.16 crashes at launch on the New Architecture). Until the fork is on
+npm, install it with `npm install github:signalwire/react-native-callkeep#v4.4.0`. `@alpha` matters:
+without it npm installs `latest`, which is still SignalWire's unrelated 1.x SDK
+(see "Install" in the README). `@signalwire/react-native-ui` supplies the
+incoming-call sheet in step 6 (with `react-native-safe-area-context`, its
+peer). `@config-plugins/react-native-webrtc` is the webrtc config plugin that
+the `app.json` below lists; without it prebuild stops with `PLUGIN_NOT_FOUND`.
+Its major version follows the Expo SDK (13.x is the one for SDK 54; its `expo`
+peer names the SDK), so if npm picks one for a different SDK, install the
+matching major.
 
 Add the config plugin to `app.json`:
 
@@ -99,9 +115,10 @@ app.post('/token', async (req, res) => {
 });
 ```
 
-The important part is the first line: **you** decide who the caller is. The
-example server ships with `ALLOW_UNAUTHENTICATED_TOKENS=1` so it mints for
-anyone, which is fine on a laptop and a disaster in production.
+The important part is the first line: **you** decide who the caller is. For
+local testing, uncomment `ALLOW_UNAUTHENTICATED_TOKENS=1` in the example
+server's `.env` (copied from `server/.env.example`, where it is off) so it
+mints for anyone, which is fine on a laptop and a disaster in production.
 
 ## 4. Connect
 
@@ -114,10 +131,11 @@ import { Button, Text, View } from 'react-native';
 import type { CredentialProvider } from '@signalwire/js';
 
 function Dialer() {
-  const { isConnected, user, dial } = useSignalWire();
+  const { isConnected, user, error, dial } = useSignalWire();
   return (
     <View>
       <Text>{isConnected ? `Online as ${user?.displayName}` : 'Connecting…'}</Text>
+      {error && <Text>{error.message}</Text>}
       <Button title="Call" onPress={() => void dial('/public/your-resource', {
         audio: true,
         video: false
@@ -136,7 +154,7 @@ export default function App() {
   }, []);
 
   const credentials = useMemo<CredentialProvider | null>(
-    () => (token ? { getToken: async () => token } : null),
+    () => (token ? { authenticate: async () => ({ token }) } : null),
     [token]
   );
 
@@ -150,14 +168,25 @@ export default function App() {
 }
 ```
 
+A `CredentialProvider` is an object with `authenticate()`, which resolves
+`{ token }`; the SDK calls it once while the client starts. This one returns
+the token with no `expiry_at` and has no `refresh()`, so the SDK never renews
+it. For sessions that outlive the token, return `expiry_at` and supply
+`refresh()` (the `CredentialProvider` type in `@signalwire/js` documents both).
+
 `credentialProvider` is memoised deliberately: the provider rebuilds its client
 whenever that value changes, and an inline object literal is a new value on
-every render.
+every render. A rebuild destroys the old client, and with it hangs up any call
+in progress, so do not rotate a token by changing this value during a call:
+return `expiry_at` from `authenticate()` and implement `refresh()`, which the
+SDK calls before the credential expires while the session carries on.
 
-**Checkpoint:** the app says "Online as …". If it says "Connecting…" forever,
-your token endpoint is the first thing to check — on Android an emulator cannot
-resolve your Mac's hostname, so use `adb reverse tcp:3000 tcp:3000` and
-`http://localhost:3000`.
+**Checkpoint:** the app says "Online as …". If it stays on "Loading…", the
+token fetch failed, and your token endpoint is the first thing to check — on
+Android an emulator cannot resolve your Mac's hostname, so use
+`adb reverse tcp:3000 tcp:3000` and `http://localhost:3000`. If an error shows
+under "Connecting…", the app has a token and the client failed with it; the
+message says how.
 
 ## 5. Place a call, with audio
 
@@ -201,13 +230,29 @@ Both go in the entry file, outside React: a VoIP push can wake a killed app
 before any component mounts, and the call has to be reported to the OS before
 that happens.
 
-Then mount the incoming-call sheet:
+Then mount the incoming-call sheet, and a `CallOverlayHost` as the last child
+of your root view:
 
 ```tsx
-import { IncomingCallSheet } from '@signalwire/react-native-ui';
+import { CallOverlayHost, IncomingCallSheet } from '@signalwire/react-native-ui';
 
-<IncomingCallSheet onAnswered={setCall} />
+<View style={{ flex: 1 }}>
+  <SignalWireProvider credentialProvider={credentials} callKit>
+    {/* ...your screens... */}
+    <IncomingCallSheet onAnswered={setCall} />
+  </SignalWireProvider>
+  <CallOverlayHost />
+</View>
 ```
+
+With the host mounted the sheet draws there, over the app, rather than in a
+`Modal`: it is not a second native window, so it does not fight a Modal your
+app already has open, and it is padded clear of the home indicator and
+Android's navigation bar. To draw over one of your own Modals, mount another
+`CallOverlayHost` inside it; the most recently mounted host is used. Without a
+host the sheet falls back to a `Modal`, which works but is the less reliable
+path. The sheet needs `react-native-safe-area-context` (a peer of
+`@signalwire/react-native-ui`; Expo apps already have it).
 
 On iOS, CallKit draws the call itself — on the lock screen, over other apps —
 and this sheet covers the foreground case. **On Android nothing is drawn for
@@ -224,22 +269,48 @@ summary:
   `aps-environment` entitlement. The config plugin adds the entitlement; without
   it iOS still issues a token and APNs still reports `delivered`, and nothing
   arrives.
-- **Android:** Firebase, `@react-native-firebase` **v22** (v23+ needs the New
-  Architecture), a high-priority **data** message, and `registerAndroidCallPush()`.
+- **Android:** Firebase, `@react-native-firebase` 22 or later (the example
+  pins v22.4.0, the verified line), a high-priority **data** message, and
+  `registerAndroidCallPush()`.
 
-Register the device token wherever your app knows who the user is:
+Register the device token wherever your app knows who the user is.
+`externalUserId` is the subscriber reference the user's SignalWire token was
+minted for:
 
 ```ts
 import { watchPushToken } from '@signalwire/react-native/callkit';
+import * as Application from 'expo-application';   // npx expo install expo-application
 
 watchPushToken(({ platform, token }) => {
-  void fetch(`${SERVER}/devices`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ externalUserId: user.id, platform, token })
-  });
+  void (async () => {
+    // iOS only, and required: the server answers 400 without it. Read from the
+    // provisioning profile, because sandbox and production tokens are not
+    // interchangeable and __DEV__ cannot tell which one this build has.
+    const environment =
+      platform === 'ios'
+        ? (await Application.getIosPushNotificationServiceEnvironmentAsync()) === 'development'
+          ? 'sandbox'
+          : 'production'
+        : undefined;
+
+    const response = await fetch(`${SERVER}/devices`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        // Only when the server runs with API_TOKEN; it answers 401 otherwise.
+        authorization: `Bearer ${API_TOKEN}`
+      },
+      body: JSON.stringify({ externalUserId: subscriberReference, platform, token, environment })
+    });
+    if (!response.ok) {
+      console.warn(`Device registration failed: ${response.status} ${await response.text()}`);
+    }
+  })();
 });
 ```
+
+[push-setup.md §3](./push-setup.md#3-app-sending-the-token-to-your-server) has
+the same code as a module, and why each field matters.
 
 **Checkpoint:** your server can push and the phone rings with the app closed.
 
@@ -280,5 +351,5 @@ most time:
 | A fix "does nothing" on device | Metro served a cached bundle. `iOS Bundled 42ms (1 module)` is the tell; a real bundle is ~1200 modules |
 | Push reports `delivered`, nothing arrives | Missing `aps-environment`, or a token from a different install |
 | `Call create timeout` in a browser | An unanswered microphone prompt — the SDK takes media before sending the invite |
-| Android app dies just after connecting | `READ_PHONE_NUMBERS` declared but not granted |
+| Android app dies on the first incoming or outgoing call | `READ_PHONE_NUMBERS` declared but not granted (`setup()` asks once the app is on screen; check it was not refused) |
 | Everything works, no audio | Check the OS volume for the *voice-call* stream before suspecting the SDK |

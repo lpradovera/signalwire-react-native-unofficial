@@ -4,7 +4,8 @@ import type { NotificationService } from '../core/NotificationService.js';
 import type { CallNotification } from '../core/types.js';
 
 /**
- * The one SignalWire-aware file in this server.
+ * SignalWire's inbound-call webhook, one of the SignalWire adapters in
+ * `signalwire/`.
  *
  * Everything under `src/core/` is deliberately generic; this adapter maps a
  * SignalWire inbound-call webhook onto {@link CallNotification}. Keeping the
@@ -65,12 +66,18 @@ export function createSignalWireWebhook(
   const router = Router();
 
   router.post('/inbound', async (req, res) => {
-    const mapped = mapPayload(req.body as RawWebhookBody);
+    // Express 5 leaves the body undefined for anything but JSON.
+    const body = (req.body ?? {}) as RawWebhookBody;
+    const mapped = mapPayload(body);
 
     if ('error' in mapped) {
       // Log the whole body so the field names can be read off a real call.
-      log('Unmapped SignalWire webhook', { body: req.body, reason: mapped.error });
-      res.status(422).json({ error: mapped.error, received: req.body });
+      log('Unmapped SignalWire webhook', {
+        body: req.body,
+        contentType: req.header('content-type'),
+        reason: mapped.error
+      });
+      res.status(422).json({ error: mapped.error, received: req.body ?? null });
       return;
     }
 

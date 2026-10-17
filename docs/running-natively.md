@@ -30,9 +30,11 @@ avdmanager create avd -n sw-test -k "system-images;android-35;google_apis;x86_64
 emulator -avd sw-test -no-snapshot -no-boot-anim     # add -no-window if headless
 ```
 
-An emulator is fine for ConnectionService, permissions, and confirming the app
-boots. It is **not** useful for real audio or camera, so checklist items 1, 2, 8
-and 9 still need hardware.
+An emulator is fine for ConnectionService, permissions, confirming the app
+boots, and whether there is call audio at all: it passes the host microphone
+through and plays call audio back. Audio *routing* (earpiece, speaker,
+Bluetooth, audio focus) and the camera still want hardware. TESTING.md's
+"Tier 1" section has the detail.
 
 ## Android build
 
@@ -95,8 +97,9 @@ adb logcat -c && adb logcat | grep -iE "signalwire|ReactNative|AndroidRuntime"
 
 ## iOS build
 
-**Requires macOS.** This box is Linux, so none of the iOS path — CallKit, VoIP
-push, `Info.plist` behaviour at runtime — has been executed anywhere.
+**Requires macOS.** This box is Linux, so the iOS path was not run here. It has
+since been run on a Mac and an iPad: the sign-off table in
+[`device-testing.md`](device-testing.md) records what is confirmed on hardware.
 
 ```bash
 cd example
@@ -107,12 +110,14 @@ open SignalWireRNExample.xcworkspace
 
 Then, before checklist items 5–7 will work at all:
 
-1. Add the `AppDelegate` PushKit hook from `docs/native-setup.md`. Without it a
-   cold-start push cannot reach CallKit in time and iOS kills the process.
+1. Nothing to add for the PushKit hook: the Expo plugin generates
+   `SignalWireVoipPush.m` and adds it to Compile Sources on every prebuild
+   (`enableVoipPush`, which the example sets). `npm run verify:prebuild`
+   confirms it. Do not also add one to the `AppDelegate` by hand.
 2. In Xcode → Signing & Capabilities, add **Push Notifications** and
    **Background Modes** (Voice over IP + Audio).
-3. Create a VoIP services certificate in the Apple Developer portal and wire it
-   to whatever sends your pushes.
+3. Create an APNs auth key (`.p8`) in the Apple Developer portal and give it to
+   whatever sends your pushes (`docs/push-setup.md` §1a).
 
 CallKit does not work in the iOS Simulator. Items 3–7 need a real device.
 
@@ -128,8 +133,8 @@ curl -X POST https://<space>.signalwire.com/api/fabric/subscribers/tokens \
 ```
 
 For the push path the token is not enough — you also need a backend that
-registers the device token with SignalWire and sends a payload carrying
-`call_id`. That contract is described in the README under "Native call UI"; the
+stores the device's push token (SignalWire has no device-token endpoint; see
+[`push-setup.md`](push-setup.md)) and sends a payload carrying `call_id`. That contract is described in the README under "Native call UI"; the
 package deliberately owns neither half.
 
 ## What is worth checking first

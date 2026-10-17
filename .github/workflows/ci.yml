@@ -11,9 +11,13 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+      # Node 24: Node 20 reached end of life on 2026-04-30 and is outside the
+      # engines of @testing-library/react-native (^22.13.0 || >=24) and of
+      # @napi-rs/lzma-linux-x64-gnu (^22.20 || ^24.12 || >=25), which only this
+      # Linux runner installs. 24 satisfies every engines range in the lockfile.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -39,8 +43,9 @@ jobs:
       - name: Bundle both examples
         run: npm run bundle-check
 
-      # Catches broken exports maps and type-resolution regressions, which
-      # otherwise only surface inside a consumer's project.
+      # publint and attw on all four packages' tarballs, at the versions in
+      # the lockfile. Catches broken exports maps and type-resolution
+      # regressions, which otherwise only surface inside a consumer's project.
       - name: Package lint
         run: npm run verify:package
 
@@ -48,3 +53,36 @@ jobs:
       # withInfoPlist, so this is what proves the plugin actually applies.
       - name: Verify the Expo config plugin
         run: npm run verify:prebuild
+
+  # The example's Swift type-check (withSceneLifecycle's generated
+  # AppDelegate.swift under Swift 5, strict concurrency, Swift 6 and Xcode
+  # 27's new-app settings) needs Xcode, so it skips on the Linux job above.
+  # This job runs it where it can run; SW_REQUIRE_SWIFTC=1 turns a missing
+  # Xcode into a failure instead of a skip. `-default-isolation` needs
+  # Swift 6.2, i.e. Xcode 26 or later.
+  example-swift:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type-check the generated AppDelegate.swift
+        working-directory: example
+        env:
+          SW_REQUIRE_SWIFTC: '1'
+        run: node --test plugins/withSceneLifecycle.swift.test.js
+
+      # The plugin's generated Objective-C (the Recents forwarder, the Siri
+      # intent handler) and the pod's Siri files, compiled against the iOS
+      # Simulator SDK with warnings as errors; skipped on Linux.
+      - name: Compile the generated and pod Objective-C
+        working-directory: packages/react-native
+        env:
+          SW_REQUIRE_SWIFTC: '1'
+        run: npx jest src/plugin/nativeSources.test.ts

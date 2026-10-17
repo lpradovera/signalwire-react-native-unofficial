@@ -11,6 +11,19 @@ describe('MissingPeerDependencyError', () => {
     expect(error.message).toContain('npm install react-native-callkeep');
     expect(error.name).toBe('MissingPeerDependencyError');
   });
+
+  it('names an alternative package and why an installed one failed', () => {
+    const error = new MissingPeerDependencyError('@signalwire/react-native-callkeep', 'native call UI', {
+      alternative: 'react-native-callkeep',
+      detail: '@signalwire/react-native-callkeep failed to load: boom'
+    });
+    expect(error.packageName).toBe('@signalwire/react-native-callkeep');
+    expect(error.message).toContain(
+      'native call UI requires "@signalwire/react-native-callkeep" (or "react-native-callkeep")'
+    );
+    expect(error.message).toContain('npm install @signalwire/react-native-callkeep');
+    expect(error.message).toMatch(/\n@signalwire\/react-native-callkeep failed to load: boom$/);
+  });
 });
 
 describe('PolyfillNotInstalledError', () => {

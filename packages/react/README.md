@@ -1,7 +1,7 @@
 # `@signalwire/react`
 
-> **Unofficial.** This is a community project, not a SignalWire product, and is
-> not affiliated with or endorsed by SignalWire.
+> **Alpha.** The core of an SDK on its way to becoming SignalWire's supported
+> React and React Native SDK; APIs may change between alpha releases.
 
 Universal React bindings for [`@signalwire/js`](https://www.npmjs.com/package/@signalwire/js) v4.
 
@@ -11,7 +11,7 @@ platform-specific code. React Native users should install
 and re-exports everything here.
 
 ```bash
-npm install @signalwire/react @signalwire/js rxjs
+npm install @signalwire/react@alpha @signalwire/js rxjs
 ```
 
 ```tsx
@@ -26,13 +26,25 @@ function Dialer() {
 <SignalWireProvider credentialProvider={credentials}>
   <Dialer />
 </SignalWireProvider>;
+
+// Or let the provider fetch, renew and retry the token itself:
+<SignalWireProvider fetchToken={async () => ({ token, expiresAt })}>
+  <Dialer />
+</SignalWireProvider>;
 ```
+
+`fetchToken` renews the token ahead of `expiresAt` and when the page becomes
+visible again, retries failures with a backoff, and reports a 401 or 403 (an
+error with that `status`, such as `TokenFetchError`) through
+`useSignalWire().tokenStatus` and `error`. A host platform can supply
+`watchForeground` for its own foreground signal. See the repository's
+`docs/tokens.md`.
 
 ## Hooks
 
 | Hook | Returns |
 | --- | --- |
-| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `dial`, `disconnect` |
+| `useSignalWire()` | `client`, `isConnected`, `isRegistered`, `user`, `directory`, `error`, `tokenStatus`, `dial`, `connect`, `disconnect` |
 | `useCall(call)` | `status`, `participants`, `self`, streams, mute state, `error`, and call actions |
 | `useIncomingCalls()` | `calls`, `answer`, `reject` |
 | `useDevices()` | `audioInputs`, `videoInputs`, selection, `refresh` |
@@ -54,16 +66,47 @@ interface SignalWirePlatform {
 }
 
 interface CallObserver {
-  bindClient?(client: SignalWire): void;
+  bindClient?(client: SignalWire): void | (() => void); // returns an unbind
   onOutgoingCall?(call: Call, destination: string): void;
+  // Return true to take over an in-app answer/reject (useIncomingCalls).
+  onIncomingAnswer?(call: Call): boolean;
+  onIncomingReject?(call: Call): boolean;
+  // True for an inbound call it turned down (busy): useIncomingCalls omits it.
+  isIncomingRefused?(call: Call): boolean;
 }
 ```
 
 `@signalwire/react-native` uses the first for its WebRTC/storage/AppState layer
 and the second to attach CallKit. Browser apps need neither.
 
-This boundary is enforced by lint: an import of `react-native`, `react-native-*`
-or `@react-native-*` inside this package fails the build.
+When `bindClient` returns a function, the provider calls it when the client or
+the observer changes, or the provider unmounts, so the observer stops acting on
+that client. `bindClient` runs again for each new observer object, so memoize
+such an observer. One whose `bindClient` returns nothing can't be unbound: it is
+bound once per client, as in 0.1.0, and an observer passed for the same client
+after it is not bound.
+
+A host whose native UI rings an inbound call must implement `onIncomingAnswer`
+and `onIncomingReject`: `useIncomingCalls().answer` and `.reject` ask it first,
+and it answers or rejects through the native UI. Answering the SDK directly
+while CallKit still rings leaves a connected call with no audio and a stuck
+native screen.
+
+A host that refuses inbound calls itself (the CallKit observer refuses one over
+the call-waiting limit as busy) implements `isIncomingRefused`, and
+`useIncomingCalls()` never lists such a call. The SDK keeps a declined call
+listed, still `ringing`, until the decline completes, so without it an in-app
+sheet offers the call for that moment.
+
+`platform` may also be a function returning a `SignalWirePlatform`. The
+provider then calls it for every client it builds and disposes that platform
+after the client is destroyed, which is what a platform that cannot be used
+after `dispose()` needs (React Native's removes its NetInfo and AppState shims).
+A platform object is shared by every client and disposed when the provider
+unmounts; React.StrictMode's simulated unmount disposes it too.
+
+This boundary is enforced by lint: an import of `react-native`, `react-native-*`,
+`@react-native-*` or `@react-native/*` inside this package fails the build.
 
 ## Video
 

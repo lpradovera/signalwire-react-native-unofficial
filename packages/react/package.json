@@ -1,8 +1,12 @@
 {
   "name": "@signalwire/react",
-  "version": "0.1.0",
+  "version": "2.0.0-alpha.0",
   "description": "Universal React bindings for the SignalWire JS SDK — works in the browser and in React Native",
   "license": "MIT",
+  "publishConfig": {
+    "tag": "alpha",
+    "access": "public"
+  },
   "type": "commonjs",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -31,7 +35,8 @@
     "build": "tsup",
     "test": "jest",
     "type-check": "tsc --noEmit",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "lint:package": "publint && attw --pack ."
   },
   "keywords": [
     "signalwire",
@@ -41,12 +46,12 @@
     "hooks"
   ],
   "peerDependencies": {
-    "@signalwire/js": "^4.0.0-rc.2",
+    "@signalwire/js": "^4.0.0-rc.5",
     "react": ">=18.2.0",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
-    "@signalwire/js": "^4.0.0-rc.2",
+    "@signalwire/js": "^4.0.0-rc.5",
     "@testing-library/react": "^16.1.0",
     "@types/jest": "^29.5.14",
     "@types/react": "~19.1.10",

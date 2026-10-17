@@ -17,9 +17,9 @@
 #   4. vite            :5173   the web tab used as the second subscriber
 #
 # It is idempotent: a service already listening is left alone. That matters —
-# starting a second `tsx --watch` produced two supervisors racing for port 3000,
-# and the loser exiting mid-push cancelled the APNs stream, which read exactly
-# like a broken push.
+# starting a second `node --import tsx --watch` supervisor produced two racing
+# for port 3000, and the loser exiting mid-push cancelled the APNs stream,
+# which read exactly like a broken push.
 #
 # Usage:
 #   scripts/dev.sh up        start whatever is not running, then verify
@@ -29,19 +29,37 @@
 #
 # Logs land in .dev/ under the names scripts/trace.sh expects, so
 #   SW_SCRATCH=.dev scripts/trace.sh
-# merges them straight away.
+# merges them straight away. `up` exits non-zero when its checks fail.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOGS="${SW_SCRATCH:-$REPO/.dev}"
 mkdir -p "$LOGS"
+# Absolute from here on: the services start from subshells that cd into the
+# repo, so a relative SW_SCRATCH (".dev") would put their logs under that
+# directory instead, and Metro's redirection failed outright.
+LOGS="$(cd "$LOGS" && pwd)"
+
+# The services' ports (each one's default; nothing here changes them), and the
+# directory each runs from in this checkout. A listener counts as the service
+# only when its working directory is that one: a port held by anything else
+# (Docker Desktop likes 8081) is reported as held, never as "up", and never
+# stopped.
+SERVER_PORT=3000
+METRO_PORT=8081
+VITE_PORT=5173
+SERVER_DIR="$REPO/server"
+METRO_DIR="$REPO/example"
+VITE_DIR="$REPO/examples/web"
 
 # The tailnet name, used for both the funnel and Metro. A physical device is not
 # on the Mac's loopback and may not share its WiFi, so a tailnet hostname is the
 # one address that works from anywhere. Falls back to whatever tailscale reports.
-DEFAULT_HOST="$(tailscale status --json 2>/dev/null \
-  | python3 -c 'import sys,json;print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null || true)"
-SW_HOST="${SW_HOST:-${DEFAULT_HOST:-localhost}}"
+if [ -z "${SW_HOST:-}" ]; then
+  DEFAULT_HOST="$(tailscale status --json 2>/dev/null \
+    | python3 -c 'import sys,json;print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null || true)"
+  SW_HOST="${DEFAULT_HOST:-localhost}"
+fi
 
 green() { printf '\033[32m%s\033[0m\n' "$1"; }
 red()   { printf '\033[31m%s\033[0m\n' "$1"; }
@@ -49,16 +67,50 @@ warn()  { printf '\033[33m%s\033[0m\n' "$1"; }
 
 listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1; }
 
-# Stops whatever owns a port, plus the supervisor that would restart it.
+# Who holds a port: nothing (empty), "ours <pid>" when the listener runs from
+# the given directory of this checkout, or "foreign <pid> <command>".
+holder() {
+  local port="$1" dir="$2" pid cwd
+  pid="$(listening "$port")"
+  [ -z "$pid" ] && return
+  cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)"
+  if [ "$cwd" = "$dir" ]; then
+    echo "ours $pid"
+  else
+    echo "foreign $pid $(ps -o command= -p "$pid" 2>/dev/null | cut -c1-80)"
+  fi
+}
+
+# Reports a port that something else holds. Returns 0 when it did.
+report_foreign() {
+  local label="$1" port="$2" who="$3"
+  case "$who" in
+    foreign*)
+      set -- $who
+      shift
+      red "$label :$port  held by another process (pid $*), not this checkout's $label — free the port"
+      return 0 ;;
+  esac
+  return 1
+}
+
+# Stops this checkout's service on a port, plus the supervisor that would
+# restart it.
 #
 # By port rather than by `pkill -f <pattern>`: patterns like "expo start" or
 # "tsx --watch" match every project on the machine, and this script has no
 # business killing unrelated work. The parent is taken too because `npm run dev`
-# and `npx expo start` both leave a supervisor that respawns the child.
+# and `npx expo start` both leave a supervisor that respawns the child. A port
+# held by anything else is left alone.
 stop_port() {
-  local port="$1" label="$2" pid parent
-  pid="$(listening "$port")"
-  if [ -z "$pid" ]; then warn "$label not running"; return; fi
+  local port="$1" label="$2" dir="$3" who pid parent
+  who="$(holder "$port" "$dir")"
+  if [ -z "$who" ]; then warn "$label not running"; return; fi
+  if [ "${who%% *}" = "foreign" ]; then
+    warn "$label :$port is held by another process (pid ${who#foreign }); left alone"
+    return
+  fi
+  pid="${who#ours }"
   parent="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
   kill "$pid" 2>/dev/null
   # Only walk up to a supervisor that is still one of ours, never to the shell.
@@ -80,12 +132,30 @@ wait_for() {
   return 1
 }
 
+# The server's `node --import tsx --watch ... src/index.ts` supervisors that
+# belong to THIS checkout. Matched by command and then by working directory:
+# no process in the dev flow carries the package name (npm retitles itself to
+# `npm run dev`), and a bare command match would reach other checkouts.
+server_watchers() {
+  local pid cwd
+  for pid in $(pgrep -f -- '--watch.* src/index\.ts' 2>/dev/null); do
+    cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')"
+    [ "$cwd" = "$REPO/server" ] && echo "$pid"
+  done
+}
+
 start_server() {
-  if [ -n "$(listening 3000)" ]; then green "server  :3000  already up"; return; fi
-  # One supervisor only. A stray watcher from an earlier session restarts on
-  # every file save and fights for the port; see the header. Scoped to this
-  # package's own command line so no other project's watcher is touched.
-  pkill -f "rn-push-server" 2>/dev/null
+  local who; who="$(holder "$SERVER_PORT" "$SERVER_DIR")"
+  report_foreign server "$SERVER_PORT" "$who" && return 1
+  if [ -n "$who" ]; then green "server  :3000  already up"; return; fi
+  # One supervisor only. A watcher whose child crashed holds no port, so the
+  # check above misses it, and it restarts on the next save to fight the new
+  # one for :3000; see the header. Found by its command and its cwd, so no
+  # other project's watcher is touched.
+  local stray
+  for stray in $(server_watchers); do
+    kill "$stray" 2>/dev/null && warn "stopped a stray server watcher (pid $stray)"
+  done
   (cd "$REPO" && nohup npm run dev -w @signalwire/rn-push-server >"$LOGS/server.log" 2>&1 &)
   wait_for "http://127.0.0.1:3000/health" 30 \
     && green "server  :3000  started" \
@@ -93,7 +163,7 @@ start_server() {
 }
 
 start_funnel() {
-  if tailscale funnel status 2>/dev/null | grep -q 'proxy http://127.0.0.1:3000'; then
+  if funnel_up; then
     green "funnel  :443   already up"; return
   fi
   tailscale funnel --bg 3000 >>"$LOGS/funnel.log" 2>&1 \
@@ -101,10 +171,15 @@ start_funnel() {
     || red "funnel  :443   FAILED — run 'tailscale funnel --bg 3000' yourself; it needs your approval"
 }
 
+funnel_up() { tailscale funnel status 2>/dev/null | grep -q 'proxy http://127.0.0.1:3000'; }
+
 start_metro() {
-  if [ -n "$(listening 8081)" ]; then green "metro   :8081  already up"; return; fi
-  # Docker Desktop also likes 8081. If it holds the port, Metro silently never
-  # binds and the app keeps showing "No development server found".
+  # Docker Desktop also likes 8081. If it holds the port, Metro never binds and
+  # the app keeps showing "No development server found", so a foreign holder
+  # is an error here, not "already up".
+  local who; who="$(holder "$METRO_PORT" "$METRO_DIR")"
+  report_foreign metro "$METRO_PORT" "$who" && return 1
+  if [ -n "$who" ]; then green "metro   :8081  already up"; return; fi
   (cd "$REPO/example" && REACT_NATIVE_PACKAGER_HOSTNAME="$SW_HOST" \
     nohup npx expo start --dev-client >"$LOGS/metro.log" 2>&1 &)
   wait_for "http://127.0.0.1:8081/status" 60 \
@@ -113,7 +188,9 @@ start_metro() {
 }
 
 start_vite() {
-  if [ -n "$(listening 5173)" ]; then green "vite    :5173  already up"; return; fi
+  local who; who="$(holder "$VITE_PORT" "$VITE_DIR")"
+  report_foreign vite "$VITE_PORT" "$who" && return 1
+  if [ -n "$who" ]; then green "vite    :5173  already up"; return; fi
   (cd "$REPO" && nohup npm run dev -w @signalwire/react-web-example >"$LOGS/vite.log" 2>&1 &)
   wait_for "http://127.0.0.1:5173/" 30 \
     && green "vite    :5173  started" \
@@ -125,7 +202,14 @@ start_vite() {
 verify() {
   echo
   echo "=== verifying the chain ==="
-  local ok=0
+  local ok=0 entry
+
+  # Each port must be held by this checkout's service, or a check below can
+  # pass against something else (or, for Vite, nothing below looks at all).
+  for entry in "server $SERVER_PORT $SERVER_DIR" "metro $METRO_PORT $METRO_DIR" "vite $VITE_PORT $VITE_DIR"; do
+    set -- $entry
+    report_foreign "$1" "$2" "$(holder "$2" "$3")" && ok=1
+  done
 
   curl -fsS -o /dev/null -m 5 "http://127.0.0.1:3000/health" \
     && green "server responds locally" || { red "server /health is down"; ok=1; }
@@ -161,10 +245,15 @@ verify() {
 
 status() {
   echo "=== ports ==="
-  for entry in "3000 server" "5173 vite" "8081 metro"; do
+  local entry who
+  for entry in "$SERVER_PORT server $SERVER_DIR" "$VITE_PORT vite $VITE_DIR" "$METRO_PORT metro $METRO_DIR"; do
     set -- $entry
-    local pid; pid="$(listening "$1")"
-    [ -n "$pid" ] && green "$2 ($1) up — pid $pid" || red "$2 ($1) down"
+    who="$(holder "$1" "$3")"
+    case "$who" in
+      ours*) green "$2 ($1) up — pid ${who#ours }" ;;
+      foreign*) red "$2 ($1) down — the port is held by another process: pid ${who#foreign }" ;;
+      *) red "$2 ($1) down" ;;
+    esac
   done
   echo "=== funnel ==="
   tailscale funnel status 2>/dev/null | head -5 || echo "unavailable"
@@ -177,29 +266,50 @@ down() {
   # ALLOW_UNAUTHENTICATED_TOKENS=1, which mints a subscriber token for anyone
   # who asks. Leaving it up after a test session is the real hazard here.
   tailscale funnel --https=443 off >/dev/null 2>&1 && green "funnel down" || warn "funnel already off"
-  stop_port 3000 "server"
-  stop_port 8081 "metro"
-  stop_port 5173 "vite"
+  stop_port "$SERVER_PORT" "server" "$SERVER_DIR"
+  stop_port "$METRO_PORT" "metro" "$METRO_DIR"
+  stop_port "$VITE_PORT" "vite" "$VITE_DIR"
   echo
-  warn "device-console.log is not captured here — for the full trace.sh timeline,"
-  warn "stream it from a paired iPad:  log stream --device-name '<iPad name>' > $LOGS/device-console.log"
+  device_log_hint
 }
 
-case "${1:-up}" in
-  up)
-    echo "host: $SW_HOST   logs: $LOGS"
-    echo
-    start_server
-    start_funnel
-    start_metro
-    start_vite
-    verify
-    echo
-    warn "the funnel publishes :3000 to the internet with unauthenticated token"
-    warn "minting enabled — run 'scripts/dev.sh down' when you stop testing."
-    ;;
-  down)   down ;;
-  status) status ;;
-  verify) verify ;;
-  *) echo "usage: scripts/dev.sh [up|down|status|verify]" >&2; exit 2 ;;
-esac
+# `log stream` has no device option; only `log collect` reads an attached
+# device, as root, into an archive that `log show` then prints. trace.sh
+# reads the timestamps of `log show`'s compact and default styles.
+device_log_hint() {
+  warn "device-console.log is not captured here — for the full trace.sh timeline,"
+  warn "collect it from the paired iPad after the attempt:"
+  warn "  sudo rm -rf '$LOGS/device.logarchive'"
+  warn "  sudo log collect --device-name '<iPad name>' --last 10m --output '$LOGS/device.logarchive'"
+  warn "  sudo log show --archive '$LOGS/device.logarchive' --style compact > '$LOGS/device-console.log'"
+}
+
+main() {
+  case "${1:-up}" in
+    up)
+      echo "host: $SW_HOST   logs: $LOGS"
+      echo
+      start_server
+      start_funnel
+      start_metro
+      start_vite
+      local ok=0
+      verify || ok=$?
+      if funnel_up; then
+        echo
+        warn "the funnel publishes :3000 to the internet with unauthenticated token"
+        warn "minting enabled — run 'scripts/dev.sh down' when you stop testing."
+      fi
+      return "$ok"
+      ;;
+    down)   down ;;
+    status) status ;;
+    verify) verify ;;
+    *) echo "usage: scripts/dev.sh [up|down|status|verify]" >&2; return 2 ;;
+  esac
+}
+
+# Sourcing the script (its tests do) defines the functions without running.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
 
+import { pickForPlatform } from './env';
+
 /**
  * Where the app reaches the support server.
  *
@@ -13,7 +15,7 @@ import { Platform } from 'react-native';
  * loopback, and that path works.
  */
 function pick(base: string | undefined, android: string | undefined): string | undefined {
-  return (Platform.OS === 'android' ? android : undefined) ?? base;
+  return pickForPlatform(Platform.OS, base, android);
 }
 
 export const TOKEN_URL = pick(

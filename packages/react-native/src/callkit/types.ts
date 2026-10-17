@@ -39,18 +39,41 @@ export interface CallEntry {
   readonly fuseDeadline: number | null;
 }
 
+/**
+ * Why a native call ended, as the registry reports it to its host.
+ *
+ * - `'missed'`: a push rang until the fusion deadline, unanswered.
+ * - `'remote'`: the SDK call ended from the other side.
+ * - `'local'`: ended on this device (the native UI, or the app's `endCall`).
+ * - `'failed'`: the app gave up on it (`endCall(uuid, 'failed')`), or an
+ *   answered push never got its call.
+ * - `'declined'`: the user declined a push before its SDK call existed.
+ * - `'duplicate'`: a second native display of a call already shown.
+ */
+/** `'busy'`: refused because another call is live (one call at a time). */
+export type CallEndReason = 'missed' | 'remote' | 'local' | 'failed' | 'declined' | 'duplicate' | 'busy';
+
 /** Everything the registry needs from the native layer. */
 export interface CallRegistryHost {
   displayIncomingCall(uuid: string, handle: string, displayName: string): void;
   startOutgoingCall(uuid: string, handle: string, displayName: string): void;
   reportOutgoingConnected(uuid: string): void;
-  reportCallEnded(uuid: string, reason: 'missed' | 'remote' | 'local'): void;
+  reportCallEnded(uuid: string, reason: CallEndReason): void;
   generateUuid(): string;
   now(): number;
 }
 
 export interface CallRegistryOptions {
   host: CallRegistryHost;
-  /** How long a push entry may wait for its SDK call. Default 20000. */
+  /** How long a push entry may wait for its SDK call, in ms. Default 45000. */
   fusionTimeoutMs?: number;
+  /**
+   * How many calls may be live at once, a ringing one included. An incoming
+   * call or push beyond it is refused as busy (USER_BUSY) and never shown.
+   * Default: no limit. The CallKit bridge sets it from `callWaiting`: 1 for
+   * `'single'`, 2 otherwise (one call, and one waiting or on hold).
+   */
+  callLimit?: number;
+  /** Same as `callLimit: 1`. Kept for compatibility. */
+  refuseIncomingWhileBusy?: boolean;
 }

@@ -1,7 +1,8 @@
 # `@signalwire/react-ui`
 
-> **Unofficial.** This is a community project, not a SignalWire product, and is
-> not affiliated with or endorsed by SignalWire.
+> **Alpha.** The browser component kit of an SDK on its way to becoming
+> SignalWire's supported React and React Native SDK; APIs may change between
+> alpha releases.
 
 React components for the SignalWire [web components](https://www.npmjs.com/package/@signalwire/web-components).
 **Browser only** — React Native has its own component kit.
@@ -10,7 +11,7 @@ These are thin wrappers, not reimplementations. The SDK already ships 26 Lit
 components; this package makes the SDK-aware ones idiomatic in React.
 
 ```bash
-npm install @signalwire/react-ui @signalwire/web-components @lit/react @signalwire/react
+npm install @signalwire/react-ui@alpha @signalwire/web-components @lit/react @signalwire/react@alpha
 ```
 
 ```tsx
@@ -55,6 +56,17 @@ barrel registers all fourteen. For the same reason this package is deliberately
 **not** marked `sideEffects: false`; doing so would let bundlers drop the
 `customElements.define` call and the element would silently never upgrade.
 
+Each subpath also registers what its element renders. A
+`@signalwire/web-components` subpath defines only its own tag, so
+`<sw-call-controls>` on its own would render a bare, never-upgraded
+`<sw-ui-control-bar>` with no buttons. `/call-controls` therefore also imports
+the control bar, split button, drop-up and icon; `/call-widget` and
+`/click-to-call` import everything the widget renders.
+
+`/device-selector` loads the whole `@signalwire/web-components` package: the
+upstream `sw-device-selector` subpath points at a file that no 4.0.0 RC ships,
+so the selector can only be imported from the package root.
+
 ## Components
 
 | Import path | Element | Events |
@@ -64,23 +76,37 @@ barrel registers all fourteen. For the same reason this package is deliberately
 | `/local-camera` | `sw-local-camera` | — |
 | `/call-status` | `sw-call-status` | — |
 | `/call-provider` | `sw-call-provider` | — |
-| `/call-dialpad` | `sw-call-dialpad` | — |
+| `/call-dialpad` | `sw-call-dialpad` | `onDigitPress`, `onDial` |
 | `/audio-level` | `sw-audio-level` | — |
-| `/click-to-call` | `sw-click-to-call` | — |
+| `/click-to-call` | `sw-click-to-call` | `onCallEnded`, `onCallHangup`, `onDial` |
 | `/call-controls` | `sw-call-controls` | `onCallHangup` |
 | `/participants` | `sw-participants` | `onParticipantMuteAudio`, `onParticipantMuteVideo`, `onParticipantRemove` |
 | `/participant-controls` | `sw-participant-controls` | `onParticipantPinToggle`, `onParticipantVolumeChange` |
 | `/directory` | `sw-directory` | `onAddressSelect`, `onDial` |
 | `/device-selector` | `sw-device-selector` | `onDeviceChange` |
-| `/call-widget` | `sw-call-widget` | `onCallEnded`, `onCallHangup`, `onContentDrawerClose`, `onDial`, `onDisplayContent`, `onFullscreenToggle`, `onModalClose`, `onTranscriptToggle` |
+| `/call-widget` | `sw-call-widget` | `onAddressEvent` (`signalwire-address:event`), `onCallEnded`, `onCallHangup`, `onContentDrawerClose`, `onDial`, `onDisplayContent`, `onFullscreenToggle`, `onModalClose`, `onTranscriptToggle` |
+
+`onCallHangup` runs once per hang-up click. The elements' events bubble out of
+their shadow roots, so the click reaches the host both from the inner control
+bar and from `<sw-call-controls>`, which re-dispatches it; the wrappers pass on
+only the `<sw-call-controls>` one.
 
 The SDK's twelve `sw-ui-*` primitives are intentionally **not** wrapped. They
 are presentational internals of the Lit library rather than API most apps reach
 for, and they remain usable as plain custom elements.
 
+## ES modules only
+
+The package ships ES modules only. `@signalwire/web-components` is an ES module
+package whose subpaths define only the `import` condition, so a CommonJS build
+of these wrappers could never `require()` them. Bundlers load it as is. A Node
+that can `require()` ES modules (20.19+, 22.12+) loads it through `require()`
+too; Jest in a CommonJS project needs these packages transformed, as for any ES
+module dependency.
+
 ## Server rendering
 
-Every component module carries `'use client'`. Lit elements call
+Every component module, and the barrel, carries `'use client'`. Lit elements call
 `customElements.define` and touch the DOM at import time, so they cannot run in
 a React Server Component or during SSR. In Next.js App Router, import them from
 a client component; with a classic SSR setup, render them behind a mounted check.
@@ -91,19 +117,31 @@ a client component; with a classic SSR setup, render them behind a mounted check
 import '@signalwire/react-ui/theme.css';
 ```
 
-Re-exported from `@signalwire/web-components` so apps do not reach into another
-package's internals. Override the CSS custom properties it defines to restyle.
+A copy of `@signalwire/web-components`' own `theme.css` export, from the
+version this package is built and tested against (a test fails when the two
+differ). An app that installs a different `@signalwire/web-components` version
+can import that package's copy instead, which always matches its elements:
+
+```ts
+import '@signalwire/web-components/theme.css';
+```
+
+Override the CSS custom properties it defines to restyle.
 
 ## Adding a component
 
 Wrappers are generated, not hand-written — fourteen near-identical files drift
 otherwise:
 
-1. Add an entry to `scripts/components.json`.
+1. Add an entry to `scripts/components.json`. `registers` lists the other
+   `@signalwire/web-components` elements it renders.
 2. `npm run generate` — writes the wrapper, the barrel, and the `exports` map.
 3. Commit the output. Consumers never run codegen.
 
 `src/manifest.test.ts` fails if the manifest, the generated files and the
-`exports` map fall out of step.
+`exports` map fall out of step. `test/entries.test.mjs` loads every built entry
+point against the installed `@signalwire/web-components` and fails when an
+entry cannot be imported or leaves an element it renders unregistered, which
+is also what to rerun after upgrading `@signalwire/web-components`.
 
 MIT

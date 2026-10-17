@@ -1,22 +1,23 @@
 import { useCallback, useRef, useSyncExternalStore } from 'react';
 
+import { peekProcessGlobal } from '../platform/processGlobal';
+import { CALLKIT_BRIDGE_KEY } from './bridgeKey';
+
 import type { CallKeepBridge } from './CallKeepBridge';
 import type { CallEntry } from './types';
 
 /**
- * Where the bridge singleton lives; see `getCallKit`.
+ * The bridge singleton, if one exists; see `getCallKit`.
  *
  * Read off `globalThis` rather than imported, deliberately. Importing
- * `CallKeepBridge` pulls in `react-native-callkeep`, which constructs a
+ * `CallKeepBridge` pulls in callkeep, which constructs a
  * NativeEventEmitter at import time — so merely importing this hook would
  * make an optional peer mandatory, and would crash any app that uses the UI
  * kit without native call UI. If no bridge exists, nothing is ringing
  * natively, which is exactly the answer to give.
  */
-const CALLKIT_GLOBAL = '__signalwireRNCallKitBridge';
-
 function existingBridge(): CallKeepBridge | undefined {
-  return (globalThis as Record<string, unknown>)[CALLKIT_GLOBAL] as CallKeepBridge | undefined;
+  return peekProcessGlobal<CallKeepBridge>(CALLKIT_BRIDGE_KEY);
 }
 
 /** A call that is ringing natively but has no SDK call yet. */
@@ -29,7 +30,12 @@ export interface RingingPush {
 
 export interface RingingPushes {
   ringing: RingingPush[];
-  answer: (uuid: string) => void;
+  /**
+   * Answers the push. A call already live is put on hold first (Hold &
+   * Accept), or ended with `'end'` (End & Accept); outside `'full'` call
+   * waiting it is always ended.
+   */
+  answer: (uuid: string, others?: 'hold' | 'end') => void;
   reject: (uuid: string) => void;
 }
 
@@ -103,7 +109,14 @@ export function useRingingPushes(): RingingPushes {
   const ringing = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   const answer = useCallback(
-    (uuid: string) => registry?.applyIntent(uuid, 'answer'),
+    (uuid: string, others: 'hold' | 'end' = 'hold') => {
+      const bridge = existingBridge();
+      if (bridge && typeof bridge.answerPushFromApp === 'function') {
+        bridge.answerPushFromApp(uuid, others);
+      } else {
+        registry?.applyIntent(uuid, 'answer');
+      }
+    },
     [registry]
   );
   const reject = useCallback(
