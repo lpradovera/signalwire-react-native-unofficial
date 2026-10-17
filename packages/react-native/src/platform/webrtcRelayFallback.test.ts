@@ -122,3 +122,68 @@ describe("the SDK's relay-only ICE fallback on react-native-webrtc", () => {
     }
   });
 });
+
+/*
+ * The same fallback against the installed react-native-webrtc's real
+ * RTCPeerConnection class (the jest mock stands in for the package entry, so
+ * this loads the class file directly), with its native module stubbed. It
+ * catches a react-native-webrtc upgrade that adds its own getConfiguration,
+ * or changes how setConfiguration and restartIce reach native code.
+ */
+describe("the SDK's relay-only ICE fallback on react-native-webrtc's real RTCPeerConnection", () => {
+  const { NativeModules } = require('react-native') as {
+    NativeModules: Record<string, unknown>;
+  };
+  const native = {
+    peerConnectionInit: jest.fn(() => true),
+    peerConnectionSetConfiguration: jest.fn(),
+    peerConnectionRestartIce: jest.fn(),
+    peerConnectionClose: jest.fn(),
+    peerConnectionDispose: jest.fn(),
+    addListener: jest.fn(),
+    removeListeners: jest.fn()
+  };
+  let previous: unknown;
+
+  beforeAll(() => {
+    previous = NativeModules.WebRTCModule;
+    NativeModules.WebRTCModule = native;
+  });
+
+  afterAll(() => {
+    NativeModules.WebRTCModule = previous;
+  });
+
+  it('has no getConfiguration of its own, and switches to relay with the shim', () => {
+    const RealPC = require('react-native-webrtc/lib/commonjs/RTCPeerConnection').default as new (
+      configuration?: RTCConfiguration
+    ) => {
+      iceGatheringState: string;
+      setConfiguration(configuration: RTCConfiguration): void;
+    };
+    expect(typeof (RealPC.prototype as { getConfiguration?: unknown }).getConfiguration).toBe(
+      'undefined'
+    );
+
+    const Patched = withGetConfiguration(RealPC);
+    const iceServers = [{ urls: 'turn:turn.example:3478', username: 'u', credential: 'p' }];
+    const pc = new Patched({ iceServers });
+    pc.iceGatheringState = 'gathering';
+    const { ICEGatheringController, BehaviorSubject } = loadSdkInternals();
+    const controller = new ICEGatheringController(pc, new BehaviorSubject(false));
+    try {
+      expect(() => controller.handleICECandidateTimeout()).not.toThrow();
+      expect(controller.relayOnly).toBe(true);
+      expect(native.peerConnectionSetConfiguration).toHaveBeenCalledTimes(1);
+      const [configuration, id] = native.peerConnectionSetConfiguration.mock
+        .calls[0] as unknown as [RTCConfiguration, number];
+      expect(configuration).toMatchObject({
+        iceTransportPolicy: 'relay',
+        iceServers: [{ urls: ['turn:turn.example:3478'], username: 'u', credential: 'p' }]
+      });
+      expect(native.peerConnectionRestartIce).toHaveBeenCalledWith(id);
+    } finally {
+      controller.destroy();
+    }
+  });
+});
