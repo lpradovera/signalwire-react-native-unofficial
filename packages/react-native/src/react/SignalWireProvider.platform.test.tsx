@@ -15,6 +15,9 @@ jest.mock('@signalwire/js', () => {
     SignalWire: class {
       // A started client: the provider destroys it at once (see destroyClient).
       session = {};
+      // The SDK client's shape that useCalls() reads (the provider runs it
+      // for the Android call service when callKit is off).
+      isConnected$ = EMPTY;
       errors$ = EMPTY;
       destroy(): void {}
     },
