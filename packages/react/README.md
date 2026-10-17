@@ -71,6 +71,8 @@ interface CallObserver {
   // Return true to take over an in-app answer/reject (useIncomingCalls).
   onIncomingAnswer?(call: Call): boolean;
   onIncomingReject?(call: Call): boolean;
+  // True for an inbound call it turned down (busy): useIncomingCalls omits it.
+  isIncomingRefused?(call: Call): boolean;
 }
 ```
 
@@ -89,6 +91,12 @@ and `onIncomingReject`: `useIncomingCalls().answer` and `.reject` ask it first,
 and it answers or rejects through the native UI. Answering the SDK directly
 while CallKit still rings leaves a connected call with no audio and a stuck
 native screen.
+
+A host that refuses inbound calls itself (the CallKit observer refuses one over
+the call-waiting limit as busy) implements `isIncomingRefused`, and
+`useIncomingCalls()` never lists such a call. The SDK keeps a declined call
+listed, still `ringing`, until the decline completes, so without it an in-app
+sheet offers the call for that moment.
 
 `platform` may also be a function returning a `SignalWirePlatform`. The
 provider then calls it for every client it builds and disposes that platform

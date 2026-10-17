@@ -29,6 +29,8 @@ export interface UseIncomingCallsResult {
  *
  * With CallKit enabled the native UI usually handles these first; this hook
  * remains useful for in-app inbound UI and for apps that do not use CallKit.
+ * A call the observer turned down (`CallObserver.isIncomingRefused`: refused
+ * as busy by the call-waiting policy) is never listed.
  */
 export function useIncomingCalls(): UseIncomingCallsResult {
   const context = useContext(SignalWireContext);
@@ -45,7 +47,17 @@ export function useIncomingCalls(): UseIncomingCallsResult {
       ),
     [client]
   );
-  const calls = useObservable(incomingCalls$, client?.session?.incomingCalls ?? NO_CALLS);
+  const listed = useObservable(incomingCalls$, client?.session?.incomingCalls ?? NO_CALLS);
+  // A call the observer refused (busy) is never offered, not even for the
+  // moment its decline takes to complete.
+  const calls = useMemo(() => {
+    const isRefused = observer?.isIncomingRefused?.bind(observer);
+    if (!isRefused) {
+      return listed;
+    }
+    const offered = listed.filter((call) => !isRefused(call));
+    return offered.length === listed.length ? listed : offered;
+  }, [listed, observer]);
 
   const answerWith = useCallback(
     async (call: Call, options: MediaOptions | undefined, others: OtherCalls): Promise<void> => {
