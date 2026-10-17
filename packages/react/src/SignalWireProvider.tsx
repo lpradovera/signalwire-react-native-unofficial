@@ -1,6 +1,6 @@
 import { SignalWire } from '@signalwire/js';
 import React, { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { filter, merge } from 'rxjs';
+import { filter, firstValueFrom, merge } from 'rxjs';
 
 import { logger } from './logger';
 import { TokenSource } from './tokenSource';
@@ -8,6 +8,7 @@ import { TokenSource } from './tokenSource';
 import type { FetchToken, TokenStatus } from './tokenSource';
 import type { CallObserver, SignalWirePlatform } from './types';
 import type { CredentialProvider, SignalWireOptions } from '@signalwire/js';
+import type { Observable } from 'rxjs';
 
 /** The SDK's errors for a lost connection, by name: it exports none of the classes. */
 const CONNECTION_ERRORS = new Set([
@@ -158,6 +159,68 @@ function destroyClient(instance: SignalWire, skipRegister: boolean): void {
   });
 }
 
+/** Statuses after which a call has nothing left to send. */
+const ENDED_STATUSES = new Set(['disconnected', 'failed', 'destroyed']);
+/** How long teardown waits for live calls' byes before destroying the client anyway. */
+const HANGUP_ON_TEARDOWN_MS = 4000;
+
+interface TeardownCall {
+  readonly status?: string;
+  readonly status$?: Observable<string>;
+  hangup(): Promise<unknown>;
+}
+
+/**
+ * Ends the client's live calls and resolves when each has (or after
+ * {@link HANGUP_ON_TEARDOWN_MS}). A call already hanging up is waited for,
+ * not hung up again. Resolves at once when there is no live call.
+ */
+function endLiveCalls(instance: SignalWire): Promise<void> | null {
+  const calls = ((instance.session as { calls?: TeardownCall[] } | undefined)?.calls ?? []).filter(
+    (call) => typeof call?.status === 'string' && !ENDED_STATUSES.has(call.status)
+  );
+  if (calls.length === 0) {
+    return null;
+  }
+  logger.info(`Ending ${calls.length} live call(s) before tearing the client down`);
+  const ended = calls.map((call) => {
+    if (call.status === 'disconnecting' && call.status$) {
+      return firstValueFrom(call.status$.pipe(filter((status) => ENDED_STATUSES.has(status)))).catch(
+        () => undefined
+      );
+    }
+    return call.hangup().catch((error: unknown) => logger.debug('Hangup on teardown failed:', error));
+  });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((done) => {
+    timer = setTimeout(() => {
+      logger.warn('Live calls did not end in time; tearing the client down anyway');
+      done();
+    }, HANGUP_ON_TEARDOWN_MS);
+  });
+  return Promise.race([Promise.all(ended).then(() => undefined), timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Tears the client down after its live calls have ended, then runs `after`.
+ *
+ * Destroying the client closes its socket, so a call still up could no longer
+ * send its bye and would stay up on SignalWire: on React Native, Back on the
+ * root screen destroys the activity, which unmounts this provider mid-call.
+ */
+function teardownClient(instance: SignalWire, skipRegister: boolean, after: () => void): Promise<void> | null {
+  const ending = endLiveCalls(instance);
+  if (!ending) {
+    destroyClient(instance, skipRegister);
+    after();
+    return null;
+  }
+  return ending.then(() => {
+    destroyClient(instance, skipRegister);
+    after();
+  });
+}
+
 /**
  * Owns the SignalWire client lifecycle and publishes it through context.
  *
@@ -191,8 +254,11 @@ export function SignalWireProvider({
   const boundForGood = useRef<SignalWire | null>(null);
   const [tokenStatus, setTokenStatus] = useState<TokenStatus | null>(null);
   const sourceRef = useRef<TokenSource | null>(null);
+  /** Clients being torn down after their live calls end; see teardownClient. */
+  const teardownsRef = useRef(new Set<Promise<void>>());
 
   useEffect(() => {
+    const teardowns = teardownsRef.current;
     let discarded = false;
     const ownPlatform = typeof platform === 'function' ? platform() : undefined;
     const clientPlatform = typeof platform === 'function' ? ownPlatform : platform;
@@ -255,9 +321,12 @@ export function SignalWireProvider({
         sourceRef.current = null;
       }
       setClient(null);
-      destroyClient(instance, clientOptions.skipRegister === true);
       // After destroy: the SDK's teardown may still touch platform globals.
-      ownPlatform?.dispose();
+      const teardown = teardownClient(instance, clientOptions.skipRegister === true, () => ownPlatform?.dispose());
+      if (teardown) {
+        teardowns.add(teardown);
+        void teardown.finally(() => teardowns.delete(teardown));
+      }
     };
     // `platform`, `observer` and `options` are intentionally excluded:
     // rebuilding the client on every render of an inline object literal would
@@ -292,7 +361,16 @@ export function SignalWireProvider({
     if (!platform || typeof platform === 'function') {
       return undefined;
     }
-    return () => platform.dispose();
+    const teardowns = teardownsRef.current;
+    return () => {
+      // A client still ending its calls is destroyed later; the platform waits for it.
+      const pending = [...teardowns];
+      if (pending.length === 0) {
+        platform.dispose();
+      } else {
+        void Promise.all(pending).finally(() => platform.dispose());
+      }
+    };
   }, [platform]);
 
   const clearCallError = useCallback(() => {

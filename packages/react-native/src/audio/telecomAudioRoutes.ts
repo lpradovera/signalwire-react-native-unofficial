@@ -13,7 +13,9 @@ import type { AudioDeviceName, AudioDeviceStatus } from './nativeAudioRoutes';
  * Telecom routes such a call itself: the receiver, the speaker, a wired
  * headset or Bluetooth (SCO included), and it sets the audio mode and takes
  * audio focus for it. It reports each change through the connection's
- * onCallAudioStateChanged, which callkeep forwards as `didChangeAudioRoute`.
+ * onCallAudioStateChanged, which callkeep forwards as `didChangeAudioRoute`
+ * (with the routes and the Bluetooth device in the SignalWire fork; the route
+ * alone in stock callkeep).
  * incall-manager's start() would route the same call through AudioManager
  * behind Telecom's back (its own speaker default, and its Bluetooth manager,
  * which starts SCO whatever its `auto` flag says), and the two disagree: Telecom
@@ -106,18 +108,53 @@ function routeOnly(selected: AudioDeviceName): TelecomAudioStatus {
   return { available: [], availableKnown: false, selected, selectedName: '' };
 }
 
+/** callkeep's `didChangeAudioRoute` payload on Android. */
+interface RouteChangedEvent {
+  callUUID?: unknown;
+  output?: unknown;
+  /** The SignalWire callkeep fork (4.4.0-signalwire): Telecom's routes for the call. */
+  supportedRoutes?: unknown;
+  /** The fork, API 28+: the call's active Bluetooth device. */
+  bluetoothDevice?: { name?: unknown } | null;
+}
+
+/**
+ * The status a report carries in full: the fork's callkeep sends the routes
+ * Telecom offers and the Bluetooth device with the route. `null` for
+ * 4.3.16's route-only report.
+ */
+function fullReport(payload: RouteChangedEvent): TelecomAudioStatus | null {
+  const selected = deviceFor(payload.output);
+  if (!selected || !Array.isArray(payload.supportedRoutes)) {
+    return null;
+  }
+  const name = payload.bluetoothDevice?.name;
+  return {
+    available: payload.supportedRoutes.map(deviceFor).filter((device): device is AudioDeviceName => device !== null),
+    availableKnown: true,
+    selected,
+    selectedName: selected === 'BLUETOOTH' && typeof name === 'string' ? name : ''
+  };
+}
+
 /**
  * The call's Telecom status after each `didChangeAudioRoute` for it: a
  * choice in the system's output switcher, a headset or car connecting or
- * dropping, the app's own request. callkeep sends only the route, so each
- * report is read through the package's reader when it is linked.
+ * dropping, the app's own request. The fork's callkeep sends the whole
+ * status; 4.3.16 sends only the route, so then each report is read through
+ * the package's reader when it is linked.
  */
 export function telecomAudioReports$(uuid: string): Observable<TelecomAudioStatus> {
   return new Observable<TelecomAudioStatus>((subscriber) => {
     let open = true;
     const listener = DeviceEventEmitter.addListener(ROUTE_CHANGED, (event: unknown) => {
-      const payload = (event ?? {}) as { callUUID?: unknown; output?: unknown };
+      const payload = (event ?? {}) as RouteChangedEvent;
       if (!sameCall(payload.callUUID, uuid)) {
+        return;
+      }
+      const full = fullReport(payload);
+      if (full) {
+        subscriber.next(full);
         return;
       }
       const reported = deviceFor(payload.output);
@@ -153,7 +190,7 @@ export function telecomAudioReports$(uuid: string): Observable<TelecomAudioStatu
 /**
  * Asks Telecom to move the call (Connection.setAudioRoute, through callkeep);
  * what Telecom does arrives as a report. Nothing waits on callkeep's promise:
- * 4.3.16 never settles it when it has no such connection.
+ * 4.3.16 never settles it when it has no such connection (the fork rejects).
  */
 export function requestTelecomRoute(uuid: string, device: AudioDeviceName): void {
   const native = nativeModule<CallKeepNative>('RNCallKeep', 'setAudioRoute');
