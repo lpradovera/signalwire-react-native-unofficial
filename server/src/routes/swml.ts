@@ -3,6 +3,8 @@ import { Router } from 'express';
 import { requireSignalWireSignature } from '../signalwire/signature.js';
 
 import type { BridgeTokenStore } from '../core/BridgeTokenStore.js';
+import { UNENDABLE_LEG_HINT } from '../signalwire/endCall.js';
+
 import type { CallEnder } from '../signalwire/endCall.js';
 import type { NotificationService } from '../core/NotificationService.js';
 import type { NotifyResult } from '../core/types.js';
@@ -102,6 +104,21 @@ function firstString(candidates: readonly unknown[]): string | undefined {
 function callSidFrom(body: Record<string, unknown>): string | undefined {
   const { params, call } = paramsAndCall(body);
   return firstString([call.call_id, call.id, params.call_id, params.callSid, params.CallSid]);
+}
+
+/**
+ * Whether the park is running on an internal leg rather than the caller's
+ * own: SignalWire addresses that leg as `sip:steer@<internal host>`. See
+ * {@link UNENDABLE_LEG_HINT}.
+ */
+function isInternalLeg(body: Record<string, unknown>): boolean {
+  const { call } = paramsAndCall(body);
+  return typeof call.to === 'string' && /^sip:steer@/i.test(call.to);
+}
+
+/** The hint for a failed end, when the failure is SignalWire not knowing the id. */
+function endFailureHint(result: { ok: false; status?: number }): { hint?: string } {
+  return result.status === 404 ? { hint: UNENDABLE_LEG_HINT } : {};
 }
 
 /** Reads the caller's identity, which becomes the name on the CallKit screen. */
@@ -284,6 +301,19 @@ export function createSwmlRoutes({
 
     const caller = callerFrom(body);
     const token = tokens.mint(callSid, externalUserId);
+
+    if (isInternalLeg(body)) {
+      // The call will ring and bridge as usual, but when it is over nothing
+      // can end this caller: said now, where a test setup will see it.
+      console.warn(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          message: 'Parked on an internal leg',
+          callSid,
+          hint: UNENDABLE_LEG_HINT
+        })
+      );
+    }
 
     // Push before the SWML is returned, so the device is already waking while
     // the caller hears the first ring — but wait only so long: the caller
@@ -622,7 +652,7 @@ export function createSwmlRoutes({
         message: result.ok ? 'Ended caller leg' : 'Failed to end caller leg',
         callSid: paired.callSid,
         connectState: state,
-        ...(result.ok ? {} : { error: result.error })
+        ...(result.ok ? {} : { error: result.error, ...endFailureHint(result) })
       })
     );
   });
@@ -670,7 +700,7 @@ export function createSwmlRoutes({
         at: new Date().toISOString(),
         message: result.ok ? 'Declined; ended caller leg' : 'Declined; failed to end caller leg',
         callSid: declined.callSid,
-        ...(result.ok ? {} : { error: result.error })
+        ...(result.ok ? {} : { error: result.error, ...endFailureHint(result) })
       })
     );
     if (result.ok) {
