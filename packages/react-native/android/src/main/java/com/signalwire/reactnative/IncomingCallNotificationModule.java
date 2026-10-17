@@ -54,10 +54,10 @@ public class IncomingCallNotificationModule extends ReactContextBaseJavaModule
   static final String NAME = "SignalWireIncomingCall";
   static final String TAG = "SignalWireIncomingCall";
   static final String CHANNEL_ID = "signalwire-incoming-calls";
-  static final String EXTRA_CALL_UUID = "com.signalwire.reactnative.CALL_UUID";
-  static final String EXTRA_ACTION = "com.signalwire.reactnative.CALL_ACTION";
-  static final String ACTION_SHOW = "show";
-  static final String ACTION_ANSWER = "answer";
+  static final String EXTRA_CALL_UUID = NotificationIntent.EXTRA_CALL_UUID;
+  static final String EXTRA_ACTION = NotificationIntent.EXTRA_ACTION;
+  static final String ACTION_SHOW = NotificationIntent.ACTION_SHOW;
+  static final String ACTION_ANSWER = NotificationIntent.ACTION_ANSWER;
   static final String ACTION_DECLINE = "decline";
 
   /**
@@ -215,17 +215,19 @@ public class IncomingCallNotificationModule extends ReactContextBaseJavaModule
   public void onHostResume() {
     Activity activity = getCurrentActivity();
     if (activity != null) {
-      handleIntent(activity, activity.getIntent());
+      NotificationIntent.handle(activity.getIntent(), "launch", answerer(activity));
     }
   }
 
   @Override
   public void onNewIntent(Intent intent) {
-    Activity activity = getCurrentActivity();
-    if (activity != null) {
-      // singleTask: a tap while the activity exists arrives here, on resume.
-      handleIntent(activity, intent);
-    }
+    // singleTask: a tap while the app's task exists arrives here. Not gated
+    // on React's current activity: when a push started the process and the
+    // task was left in Recents, Android recreates the activity from the
+    // task's original intent and delivers the Answer here before the
+    // activity is resumed, so there is no current activity yet, and the
+    // resumed activity's own intent carries no call.
+    NotificationIntent.handle(intent, "new intent", answerer(getReactApplicationContext()));
   }
 
   @Override
@@ -237,24 +239,15 @@ public class IncomingCallNotificationModule extends ReactContextBaseJavaModule
   @Override
   public void onActivityResult(Activity activity, int requestCode, int resultCode, @Nullable Intent data) {}
 
-  /** Acts on a tap on the notification or its Answer button, once. */
-  private static void handleIntent(Activity activity, @Nullable Intent intent) {
-    if (intent == null || !intent.hasExtra(EXTRA_CALL_UUID)) {
-      return;
-    }
-    String uuid = intent.getStringExtra(EXTRA_CALL_UUID);
-    String action = intent.getStringExtra(EXTRA_ACTION);
-    Log.d(TAG, "Opened from the notification for " + uuid + " (" + action + ")");
-    intent.removeExtra(EXTRA_CALL_UUID);
-    intent.removeExtra(EXTRA_ACTION);
-    if (ACTION_ANSWER.equals(action)) {
-      Log.d(TAG, "Answer tapped for " + uuid);
-      NotificationManagerCompat.from(activity).cancel(uuid, NOTIFICATION_ID);
+  /** Answer: the notification goes, and the Telecom call is answered. */
+  private static NotificationIntent.Actions answerer(Context context) {
+    return uuid -> {
+      NotificationManagerCompat.from(context).cancel(uuid, NOTIFICATION_ID);
       Connection connection = connectionFor(uuid);
       if (connection != null) {
         connection.onAnswer();
       }
-    }
+    };
   }
 
   // ------------------------------------------------------------ helpers
