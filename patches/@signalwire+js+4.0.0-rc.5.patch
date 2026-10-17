@@ -1,0 +1,120 @@
+diff --git a/node_modules/@signalwire/js/dist/index.cjs b/node_modules/@signalwire/js/dist/index.cjs
+index b3e1f39..a990632 100644
+--- a/node_modules/@signalwire/js/dist/index.cjs
++++ b/node_modules/@signalwire/js/dist/index.cjs
+@@ -8392,6 +8392,42 @@ var WebRTCCall = class extends Destroyable {
+ 		if (this._holdState) await this.vertoManager.unhold();
+ 		else await this.vertoManager.hold();
+ 		this._holdState = !this._holdState;
++		// [@signalwire/react-native patch: hold] verto.modify hold stops the
++		// server's media to this call, but nothing stopped ours: a held call
++		// kept sending the microphone (outbound-rtp packetsSent kept rising).
++		// Pause the senders while held (replaceTrack(null) sends no RTP and
++		// needs no renegotiation) and restore their tracks on unhold.
++		await this._pauseLocalMediaForHold(this._holdState);
++		// Stats seen while held say "no inbound audio" by design; give the
++		// resumed media a moment before they count again (see the recovery
++		// gate in initResilienceSubsystems).
++		if (!this._holdState) this._holdReleasedAt = Date.now();
++	}
++	/** [@signalwire/react-native patch: hold] Pauses or restores the main peer connection's senders. */
++	async _pauseLocalMediaForHold(paused) {
++		let pc;
++		try {
++			pc = this.rtcPeerConnection;
++		} catch {
++			return;
++		}
++		if (!pc || typeof pc.getSenders !== "function") return;
++		if (paused) {
++			this._heldSenderTracks = /* @__PURE__ */ new Map();
++			for (const sender of pc.getSenders()) {
++				if (!sender.track) continue;
++				this._heldSenderTracks.set(sender, sender.track);
++				await sender.replaceTrack(null).catch(() => {});
++			}
++			return;
++		}
++		const held = this._heldSenderTracks;
++		this._heldSenderTracks = void 0;
++		if (!held) return;
++		for (const [sender, track] of held) {
++			if (track.readyState === "ended") continue;
++			await sender.replaceTrack(track).catch(() => {});
++		}
+ 	}
+ 	/** @throws {UnimplementedError} Not yet implemented. Status tracked via {@link recording$}. */
+ 	async startRecording() {
+@@ -8816,6 +8852,12 @@ var WebRTCCall = class extends Destroyable {
+ 				}
+ 			});
+ 			this.subscribeTo(this._statsMonitor.criticalIssue$, (issue) => {
++				// [@signalwire/react-native patch: hold] A held call receives no
++				// media, so the monitor reports no_inbound_audio and recovery ran
++				// ICE restarts (verto.modify with a new offer) against a healthy
++				// held call, again after every cooldown. Not while held, nor for
++				// 5 s after unhold while the server's media resumes.
++				if (this._holdState || this._holdReleasedAt !== void 0 && Date.now() - this._holdReleasedAt < 5e3) return;
+ 				this._recoveryManager?.pushTrigger({
+ 					source: "stats",
+ 					detail: `${issue.type}: ${issue.severity}`,
+diff --git a/node_modules/@signalwire/js/dist/index.mjs b/node_modules/@signalwire/js/dist/index.mjs
+index 911a321..411e5dd 100644
+--- a/node_modules/@signalwire/js/dist/index.mjs
++++ b/node_modules/@signalwire/js/dist/index.mjs
+@@ -8392,6 +8392,42 @@ var WebRTCCall = class extends Destroyable {
+ 		if (this._holdState) await this.vertoManager.unhold();
+ 		else await this.vertoManager.hold();
+ 		this._holdState = !this._holdState;
++		// [@signalwire/react-native patch: hold] verto.modify hold stops the
++		// server's media to this call, but nothing stopped ours: a held call
++		// kept sending the microphone (outbound-rtp packetsSent kept rising).
++		// Pause the senders while held (replaceTrack(null) sends no RTP and
++		// needs no renegotiation) and restore their tracks on unhold.
++		await this._pauseLocalMediaForHold(this._holdState);
++		// Stats seen while held say "no inbound audio" by design; give the
++		// resumed media a moment before they count again (see the recovery
++		// gate in initResilienceSubsystems).
++		if (!this._holdState) this._holdReleasedAt = Date.now();
++	}
++	/** [@signalwire/react-native patch: hold] Pauses or restores the main peer connection's senders. */
++	async _pauseLocalMediaForHold(paused) {
++		let pc;
++		try {
++			pc = this.rtcPeerConnection;
++		} catch {
++			return;
++		}
++		if (!pc || typeof pc.getSenders !== "function") return;
++		if (paused) {
++			this._heldSenderTracks = /* @__PURE__ */ new Map();
++			for (const sender of pc.getSenders()) {
++				if (!sender.track) continue;
++				this._heldSenderTracks.set(sender, sender.track);
++				await sender.replaceTrack(null).catch(() => {});
++			}
++			return;
++		}
++		const held = this._heldSenderTracks;
++		this._heldSenderTracks = void 0;
++		if (!held) return;
++		for (const [sender, track] of held) {
++			if (track.readyState === "ended") continue;
++			await sender.replaceTrack(track).catch(() => {});
++		}
+ 	}
+ 	/** @throws {UnimplementedError} Not yet implemented. Status tracked via {@link recording$}. */
+ 	async startRecording() {
+@@ -8816,6 +8852,12 @@ var WebRTCCall = class extends Destroyable {
+ 				}
+ 			});
+ 			this.subscribeTo(this._statsMonitor.criticalIssue$, (issue) => {
++				// [@signalwire/react-native patch: hold] A held call receives no
++				// media, so the monitor reports no_inbound_audio and recovery ran
++				// ICE restarts (verto.modify with a new offer) against a healthy
++				// held call, again after every cooldown. Not while held, nor for
++				// 5 s after unhold while the server's media resumes.
++				if (this._holdState || this._holdReleasedAt !== void 0 && Date.now() - this._holdReleasedAt < 5e3) return;
+ 				this._recoveryManager?.pushTrigger({
+ 					source: "stats",
+ 					detail: `${issue.type}: ${issue.severity}`,

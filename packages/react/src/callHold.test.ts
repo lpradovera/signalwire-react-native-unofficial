@@ -1,4 +1,5 @@
 import { CallHoldState } from './callHold';
+import { logger } from './logger';
 
 import type { Call } from '@signalwire/js';
 
@@ -81,5 +82,19 @@ describe('CallHoldState', () => {
     await state.setHeld(call as unknown as Call, true);
     state.forget(call as unknown as Call);
     expect(state.held.size).toBe(0);
+  });
+
+  it('warns once when the SDK lacks the hold patch, and not when it has it', async () => {
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const state = new CallHoldState();
+    const patched = Object.assign(sdkCall('p'), { _pauseLocalMediaForHold: jest.fn() });
+    await state.setHeld(patched as unknown as Call, true);
+    expect(warn).not.toHaveBeenCalled();
+
+    await state.setHeld(sdkCall('u1') as unknown as Call, true);
+    await state.setHeld(sdkCall('u2') as unknown as Call, true);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('hold patch');
+    warn.mockRestore();
   });
 });
