@@ -124,6 +124,8 @@ describe('generated SignalWireVoipPush.m', () => {
       expect(body).toContain('[RNCallKeep getSettings] != nil');
       expect(body).toContain('[RNCallKeep setup:');
       expect(body).toContain('@"appName"');
+      // The audio session CallKeepBridge.setup() passes (BUG-I2): Bluetooth HFP, voice chat.
+      expect(body).toContain('@"audioSession": @{ @"categoryOptions": @4, @"mode": @"AVAudioSessionModeVoiceChat" }');
     });
   });
 });
