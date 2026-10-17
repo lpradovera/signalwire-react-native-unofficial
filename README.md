@@ -695,7 +695,17 @@ Where the choice is offered:
 
 The audio session follows the active call: it is never stopped while a held
 call is left, and on Android the active call's Telecom connection routes the
-audio. A held call sends no media and receives none.
+audio. A held call sends no media and receives none, **with the
+@signalwire/js hold patch** below.
+
+**Apply the SDK hold patch.** @signalwire/js 4.0.0-rc.5 holds a call on the
+server only: without the patch a held call keeps sending your microphone, and
+the SDK's network recovery restarts ICE on the held call because it receives
+nothing. Copy [`patches/@signalwire+js+4.0.0-rc.5.patch`](patches/@signalwire+js+4.0.0-rc.5.patch)
+into your app's `patches/` directory and apply it with
+[patch-package](https://github.com/ds300/patch-package)
+(`"postinstall": "patch-package"`). The library logs a warning once if a call
+is held without it. See [docs/patches](docs/patches/README.md).
 
 ```tsx
 const { activeCall, heldCalls, swap } = useCalls();

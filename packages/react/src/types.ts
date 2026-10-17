@@ -56,6 +56,9 @@ export interface CallObserver {
    * the OS activates the audio session and dismisses its ringing screen.
    * Answering the SDK directly while CallKit still rings leaves iOS holding
    * the audio session — a connected call with no audio and a stuck native UI.
+   * `others` says what to do with the calls already in progress (`'hold'`
+   * for `answer()`, `'end'` for `endAndAnswer()`); an observer that takes
+   * over does that too.
    */
   onIncomingAnswer?(call: Call, others?: OtherCalls): boolean;
   /** Same coordination for an in-app reject. Return `true` to take over. */
