@@ -2,7 +2,8 @@ require 'json'
 
 package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
 
-# The system audio route button (AVRoutePickerView). Autolinked: an app picks this up
+# The system audio route button (AVRoutePickerView) and WebRTC's manual-audio
+# switches for CallKit (SWWebRTCAudioSession). Autolinked: an app picks this up
 # on its next `pod install` (Expo: `expo prebuild` / `expo run:ios`).
 Pod::Spec.new do |s|
   s.name         = 'SignalWireReactNative'
