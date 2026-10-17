@@ -45,4 +45,16 @@ describe('example TextInputs', () => {
       }
     });
   }
+
+  it('the address field uses the URL keyboard, without smart insert/delete', () => {
+    const home = readFileSync(join(root, 'src', 'screens', 'HomeScreen.tsx'), 'utf8');
+    const address = [...home.matchAll(/<TextInput\b([\s\S]*?)\/>/g)]
+      .map((match) => match[1] ?? '')
+      .find((props) => props.includes('testID="sw-destination"'));
+    assert.ok(address, 'the address field (testID sw-destination) is in HomeScreen.tsx');
+    assert.match(address, /\bkeyboardType="url"/);
+    assert.match(address, /\bsmartInsertDelete=\{false\}/);
+    assert.match(address, /\bautoCapitalize="none"/);
+    assert.match(address, /\bautoCorrect=\{false\}/);
+  });
 });
