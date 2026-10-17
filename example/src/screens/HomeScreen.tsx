@@ -102,6 +102,11 @@ export function HomeScreen({
           placeholderTextColor="#64748b"
           autoCapitalize="none"
           autoCorrect={false}
+          // An address is a path (/public/…, /private/…): the URL keyboard
+          // has "/" and "." on its first plane, and has no space bar. Smart
+          // insert/delete would add or remove spaces around a pasted address.
+          keyboardType="url"
+          smartInsertDelete={false}
           onSubmitEditing={() => void start(destination.current)}
           testID="sw-destination"
         />
