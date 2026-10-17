@@ -107,6 +107,23 @@ describe('IncomingCallSheet over a call in progress', () => {
     expect(screen.getByTestId('sw-decline')).toBeTruthy();
   });
 
+  it.each(['single', 'endAndAccept', 'full'])(
+    "draws nothing for a call the call-waiting policy refused ('%s'), while its decline is in flight",
+    async (mode) => {
+      mockMode = mode;
+      // Refused as busy: the SDK still lists it, ringing, until the bye completes.
+      const refused = call('b', 'inbound', 'ringing');
+      setCalls(call('a', 'outbound', 'connected'), refused);
+      const observer = { isIncomingRefused: jest.fn((c: unknown) => c === refused) };
+      await renderSheet(observer);
+      await act(async () => undefined);
+
+      expect(screen.queryByTestId('sw-hold-accept')).toBeNull();
+      expect(screen.queryByTestId('sw-end-accept')).toBeNull();
+      expect(screen.queryByTestId('sw-decline')).toBeNull();
+    }
+  );
+
   it('keeps the plain Answer with no call in progress', async () => {
     setCalls(call('b', 'inbound', 'ringing'));
     await renderSheet();
