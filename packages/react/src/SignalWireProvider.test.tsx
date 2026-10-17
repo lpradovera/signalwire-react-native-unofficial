@@ -364,6 +364,62 @@ describe('SignalWireProvider observer wiring', () => {
     expect(observer.onOutgoingCall).not.toHaveBeenCalled();
   });
 
+  describe('when onOutgoingCall throws after the SDK placed the call', () => {
+    // The SDK has a live call by then; dial() rejects, so the app never gets
+    // it and could never hang it up. The leg would stay up on SignalWire.
+    function placedCall(status: string) {
+      return { id: 'call-1', status, hangup: jest.fn(async () => undefined) };
+    }
+
+    async function dialWithThrowingObserver(call: ReturnType<typeof placedCall>) {
+      const failure = new Error('native call UI refused');
+      harness.dial.mockResolvedValueOnce(call as never);
+      const observer: CallObserver = {
+        onOutgoingCall: jest.fn(() => {
+          throw failure;
+        })
+      };
+      let dial: ((destination: string) => Promise<unknown>) | undefined;
+
+      function DialProbe(): React.JSX.Element {
+        dial = useSignalWire().dial;
+        return <span>ok</span>;
+      }
+
+      render(
+        <SignalWireProvider credentialProvider={credentialProvider as never} observer={observer}>
+          <DialProbe />
+        </SignalWireProvider>
+      );
+
+      await act(async () => {
+        await expect(dial?.('/public/room')).rejects.toBe(failure);
+      });
+    }
+
+    it('hangs the call up and rejects with the observer error', async () => {
+      const call = placedCall('connecting');
+      await dialWithThrowingObserver(call);
+      expect(call.hangup).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['disconnecting', 'disconnected', 'destroyed', 'failed'])(
+      'leaves a call that is already %s alone (the observer ended it)',
+      async (status) => {
+        const call = placedCall(status);
+        await dialWithThrowingObserver(call);
+        expect(call.hangup).not.toHaveBeenCalled();
+      }
+    );
+
+    it('still rejects with the observer error when the hangup fails', async () => {
+      const call = placedCall('connected');
+      call.hangup.mockRejectedValueOnce(new Error('socket closed'));
+      await dialWithThrowingObserver(call);
+      expect(call.hangup).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('dials fine with no observer, which is the web case', async () => {
     let dial: ((destination: string) => Promise<unknown>) | undefined;
 
