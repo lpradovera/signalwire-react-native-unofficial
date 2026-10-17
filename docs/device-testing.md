@@ -88,6 +88,33 @@ Decline (heads-up when unlocked; over the lock screen, the app opens on top of
 it); answering connects. On iOS the CallKit screen appears and answering from
 the lock screen connects.
 
+**5. Call waiting (`callWaiting: 'full'`, the default).**
+During a call, place a second call to the subscriber.
+Expect: it rings over the call (iOS: CallKit's waiting-call screen with Hold &
+Accept, End & Accept, Decline; Android: the in-app sheet with the same three,
+or the notification in the background). Hold & Accept connects the second call
+and holds the first: with the example's `EXPO_PUBLIC_SW_DEV_STATS=1`, the held
+call's `in` and `out` counters stop and its sender shows `paused`. Swap
+resumes the first and holds the second. Ending either leaves the other
+running. End & Accept ends the first. Dialling during a call holds the live
+call. A third call is refused as busy. With `'endAndAccept'` only End &
+Accept and Decline are offered and dialling throws `CallInProgressError`;
+with `'single'` the second call is busy and never rings.
+
+**6. Back during a call (Android).**
+Press Back on the root screen during a call.
+Expect: the call goes on (audio, the ongoing-call notification); tapping the
+notification brings the call screen back. With `endCallsOnHostDestroy: true`,
+Back ends the call instead.
+
+**Process death.** If the process dies mid-call (the system kills it, or the
+user force-stops it), nothing on the device sends a bye. The call's leg on
+SignalWire is left up until the server notices: on the iPhone (2026-10-16) a
+killed app's call stayed `answered`, with its uplink stopped, until it was
+ended by REST 10 s later; the server's own timeout was not reached. Treat it as
+a server-side limit; a backend that must bound such a leg can end it by REST
+from its own watchdog.
+
 ## Push path
 
 **5. Cold-start VoIP push.**

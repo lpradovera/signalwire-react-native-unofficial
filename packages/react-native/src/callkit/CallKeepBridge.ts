@@ -20,7 +20,7 @@ import {
 
 import { getAudioRouteController } from '../audio/AudioRouteController';
 import type { AudioRouteController } from '../audio/AudioRouteController';
-import { logger } from '@signalwire/react';
+import { getCallHoldState, logger } from '@signalwire/react';
 import { CallInProgressError } from '../errors';
 import { assertPeerModule } from '../platform/peers';
 import { dropProcessGlobal, peekProcessGlobal, processGlobal } from '../platform/processGlobal';
@@ -31,7 +31,9 @@ import { CallRegistry, DEFAULT_FUSION_TIMEOUT_MS, INBOUND_ANSWER } from './CallR
 
 import type { PendingCall } from '../push/voipToken';
 import type { CallKeep } from './callkeepModule';
-import type { CallEndReason, CallRegistryHost, PushPayload } from './types';
+import type { CallWaitingMode } from './callWaitingMode';
+import type { CallEndReason, CallEntry, CallRegistryHost, PushPayload } from './types';
+import type { OtherCalls } from '@signalwire/react';
 
 /**
  * callkeep's module: `@signalwire/react-native-callkeep`, else stock
@@ -196,8 +198,23 @@ function androidCallPermissions(): string[] {
 // exhausted), and a remote bye always reaches 'destroyed'.
 const TERMINAL_STATUSES = new Set<string>(['ended', 'disconnecting', 'destroyed', 'failed']);
 
+
+export type { CallWaitingMode } from './callWaitingMode';
+
 export interface CallKitSetupOptions {
   appName: string;
+  /** See {@link CallWaitingMode}. Default `'full'`. */
+  callWaiting?: CallWaitingMode;
+  /**
+   * End the calls when the app's activity is destroyed (Android: Back on the
+   * root screen, or the app swiped away). Default `false`: the call goes on,
+   * the ongoing-call notification brings the app back, and
+   * `SignalWireProvider` keeps the client and its calls while the app is
+   * unmounted (`keepCallsOnUnmount`). The provider does the same on iOS.
+   * `true` is the old behaviour: Back ends the call, and an unmounted
+   * provider hangs its calls up.
+   */
+  endCallsOnHostDestroy?: boolean;
   imageName?: string;
   ringtoneSound?: string;
   /** Whether the native UI offers a video button. Default `false`. */
@@ -328,10 +345,15 @@ export class CallKeepBridge {
    * participant appears. See {@link handleSetMuted}.
    */
   private readonly pendingMute = new Map<string, boolean>();
-  /** Native hold requests per call, applied one after another. */
-  private readonly holdQueue = new Map<Call, Promise<void>>();
-  /** The hold state the bridge last applied, for an SDK that hides its own. */
-  private readonly heldByBridge = new Map<Call, boolean>();
+  private _callWaiting: CallWaitingMode = 'full';
+  private endCallsOnHostDestroy = false;
+  /**
+   * The hold state last asked for, per entry, by the native UI or the app.
+   * The SDK's own state changes only when its request resolves, so this is
+   * what keeps a hold asked for twice (CallKit's Hold & Accept, then its
+   * answer) from being requested twice.
+   */
+  private readonly wantHeld = new Map<string, boolean>();
 
   constructor(options: { fusionTimeoutMs?: number } = {}) {
     this.holdTimeoutMs = options.fusionTimeoutMs ?? DEFAULT_FUSION_TIMEOUT_MS;
@@ -358,10 +380,9 @@ export class CallKeepBridge {
     this.registry = new CallRegistry({
       host,
       fusionTimeoutMs: options.fusionTimeoutMs,
-      // One call at a time on Android: a second incoming call was held
-      // RINGING by Telecom with nothing on screen. iOS keeps CallKit's
-      // waiting-call screen (End & Accept).
-      refuseIncomingWhileBusy: Platform.OS === 'android'
+      // 'full', the default, until setup() says otherwise: a call, and one
+      // waiting or on hold.
+      callLimit: callLimitFor('full')
     });
 
     // A call can end in the native UI, from the SDK, or in the registry
@@ -373,6 +394,7 @@ export class CallKeepBridge {
     this.registry.entries$
       .pipe(takeUntil(this.destroyed$))
       .subscribe(() => {
+        this.forgetEndedHolds();
         this.releaseAudioIfOwnerEnded();
         this.withdrawSettledNotifications();
       });
@@ -424,6 +446,9 @@ export class CallKeepBridge {
     );
 
     this.supportsVideo = options.supportsVideo ?? false;
+    this._callWaiting = options.callWaiting ?? 'full';
+    this.endCallsOnHostDestroy = options.endCallsOnHostDestroy ?? false;
+    this.registry.setCallLimit(callLimitFor(this._callWaiting));
     this.incomingChannelName = options.androidIncomingChannelName ?? 'Incoming calls';
     // The registry was built before setup() by getCallKit(), with no options.
     if (options.fusionTimeoutMs !== undefined) {
@@ -437,7 +462,10 @@ export class CallKeepBridge {
         ringtoneSound: options.ringtoneSound,
         supportsVideo: this.supportsVideo,
         includesCallsInRecents: options.includesCallsInRecents ?? true,
-        maximumCallGroups: '1',
+        // Two groups for call waiting: CallKit then offers Hold & Accept
+        // beside End & Accept, and holds and swaps the two calls. One group
+        // offers End & Accept only. A group is one call: no merging.
+        maximumCallGroups: this._callWaiting === 'full' ? '2' : '1',
         maximumCallsPerCallGroup: '1'
       },
       android: {
@@ -449,13 +477,14 @@ export class CallKeepBridge {
         // callkeep requests no permissions in self-managed mode, so
         // `additionalPermissions` would do nothing; see requestAndroidPermissions.
         selfManaged: true,
-        // The activity closing mid-call (Back on the root screen) ends the
-        // call: callkeep disconnects each connection and sends endCall, which
-        // hangs up the SDK call (handleEndCall). Stock callkeep 4.3.10+ killed
-        // the process right after, before that endCall reached JavaScript, and
-        // the call stayed up on SignalWire; the fork doesn't (and reads this
-        // option; false would keep the call running without the activity).
-        endCallsOnHostDestroy: true,
+        // false (the default): the activity closing mid-call (Back on the
+        // root screen) leaves the call running, with its ongoing-call
+        // notification, and the provider keeps the client. true: callkeep
+        // disconnects each connection and sends endCall, which hangs up the
+        // SDK call (handleEndCall). Stock callkeep 4.3.10+ kills the process
+        // right after, before that endCall reaches JavaScript, so the call
+        // stayed up on SignalWire; the fork doesn't, and reads this option.
+        endCallsOnHostDestroy: this.endCallsOnHostDestroy,
         foregroundService: {
           channelId: options.androidChannelId ?? 'signalwire-calls',
           channelName: options.androidChannelName ?? 'Ongoing calls',
@@ -491,7 +520,7 @@ export class CallKeepBridge {
     } finally {
       this.adoptingLaunchPush = false;
     }
-    logger.debug('CallKit ready');
+    logger.info(`CallKit ready (callWaiting: ${this._callWaiting}, endCallsOnHostDestroy: ${String(this.endCallsOnHostDestroy)})`);
   }
 
   /**
@@ -512,6 +541,19 @@ export class CallKeepBridge {
       this.heldStartRequests = [];
       return concat(from(held), this._startCallRequested$);
     });
+  }
+
+  /** The call-waiting mode `setup()` was given; see {@link CallWaitingMode}. */
+  get callWaiting(): CallWaitingMode {
+    return this._callWaiting;
+  }
+
+  /**
+   * Whether `SignalWireProvider` keeps the client and its calls when the app
+   * unmounts during a call: the opposite of `endCallsOnHostDestroy`.
+   */
+  get keepsCallsOnUnmount(): boolean {
+    return !this.endCallsOnHostDestroy;
   }
 
   /**
@@ -608,7 +650,7 @@ export class CallKeepBridge {
    * is unknown to the registry, in which case the caller must answer the SDK
    * directly.
    */
-  answerIncomingFromApp(call: Call): boolean {
+  answerIncomingFromApp(call: Call, others: OtherCalls = 'hold'): boolean {
     const uuid = this.registry.uuidForCall(call);
     if (!uuid || !this.isSetup || this.refused.has(uuid)) {
       // The fallback is the silent-call trap, so a decline must say why.
@@ -618,8 +660,41 @@ export class CallKeepBridge {
       return false;
     }
     logger.debug(`In-app answer routed through CallKit for ${uuid}`);
+    this.claimAudio(uuid);
+    this.settleOtherCalls(uuid, others);
     RNCallKeep.answerIncomingCall(uuid);
     return true;
+  }
+
+  /**
+   * Answers a ringing push (an entry with no SDK call yet) from the app's own
+   * UI, holding or ending the calls already live first, as
+   * {@link answerIncomingFromApp} does for an SDK call. The answer is the
+   * registry's intent: a call arriving for the push is answered, or the app
+   * dials its bridge (`answerRequested$`).
+   */
+  answerPushFromApp(uuid: string, others: OtherCalls = 'hold'): void {
+    if (!this.registry.isLive(uuid)) {
+      return;
+    }
+    this.settleOtherCalls(uuid, others);
+    this.registry.applyIntent(uuid, 'answer');
+  }
+
+  /**
+   * The app put a call on hold or took it off (`useCalls()`): CallKit and
+   * Telecom are told, so their screens agree. Their echo of it is a no-op.
+   */
+  mirrorHold(call: Call, held: boolean): void {
+    const uuid = this.registry.uuidForCall(call);
+    if (!uuid || !this.registry.isLive(uuid)) {
+      return;
+    }
+    this.wantHeld.set(uuid, held);
+    if (this.isSetup && !this.refused.has(uuid) && typeof RNCallKeep?.setOnHold === 'function') {
+      RNCallKeep.setOnHold(uuid, held);
+    }
+    this.followActiveCall();
   }
 
   /** The reject twin of {@link answerIncomingFromApp}. */
@@ -729,10 +804,21 @@ export class CallKeepBridge {
     if (claimed !== null && this.registry.isLive(claimed)) {
       return;
     }
-    const live = this.registry.entries.find((entry) => this.registry.isLive(entry.uuid));
-    if (live) {
-      throw new CallInProgressError(live.uuid);
+    const busy = this.dialBlocker();
+    if (busy) {
+      throw new CallInProgressError(busy.uuid);
     }
+  }
+
+  /**
+   * The live call that keeps another from being placed: any live entry
+   * (a ringing push included) unless call waiting is on, and then one once
+   * two calls are live.
+   */
+  private dialBlocker(): CallEntry | undefined {
+    const live = this.registry.liveEntries;
+    const limit = this._callWaiting === 'full' ? 2 : 1;
+    return live.length >= limit ? live[0] : undefined;
   }
 
   /**
@@ -789,7 +875,7 @@ export class CallKeepBridge {
     if (tracked) {
       return tracked;
     }
-    const live = this.registry.entries.find((entry) => this.registry.isLive(entry.uuid));
+    const live = this.dialBlocker();
     if (live) {
       logger.warn(`Refusing outbound call ${call.id}: ${live.uuid} is still live; hanging it up`);
       void call.hangup().catch((error: unknown) => {
@@ -829,6 +915,7 @@ export class CallKeepBridge {
       listener.remove();
     }
     this.heldActions.clear();
+    this.wantHeld.clear();
     this.registry.destroy();
     this._startCallRequested$.complete();
     this.heldStartRequests = [];
@@ -1024,6 +1111,12 @@ export class CallKeepBridge {
     // Applied synchronously — the registry buffers it when the SDK call has
     // not arrived yet. Only the audio start waits for the audio session.
     this.claimAudio(callUUID);
+    // A call answered while another is live: CallKit's Hold & Accept and End
+    // & Accept have already held or ended it, but an answer from Telecom or
+    // the incoming-call notification has not.
+    if (this.registry.isLive(callUUID)) {
+      this.settleOtherCalls(callUUID, 'hold');
+    }
     this.registry.applyIntent(callUUID, 'answer');
     void this.startAudioWhenSessionReady(callUUID);
   }
@@ -1348,54 +1441,105 @@ export class CallKeepBridge {
   }
 
   /**
-   * Applies the hold state CallKit asked for.
-   *
-   * The action carries the state (`hold: true|false`), and the SDK offers
-   * only `toggleHold()`, which flips a private flag once the hold RPC
-   * resolves. Toggling blindly applied the request inverted whenever the two
-   * disagreed: after an in-app hold (which CallKit never hears of), after a
-   * hold RPC that failed (callkeep fulfils the action at once), or for a hold
-   * and resume sent before the first RPC settled. So the state is compared
-   * first, and the requests for one call run one after another.
+   * Applies the hold state CallKit or Telecom asked for: the action carries it
+   * (`hold: true|false`), and the SDK only toggles, so the state goes through
+   * `getCallHoldState()`, which compares first and runs one request at a time
+   * per call. A hold that fails is reported back with the real state, since
+   * callkeep fulfils the action before the request is sent.
    */
   private handleSetHeld(uuid: string, hold: boolean): void {
     const call = this.registry.entryForUuid(uuid)?.call;
-    if (!call) {
+    if (!call || !this.registry.isLive(uuid)) {
       return;
     }
-    const previous = this.holdQueue.get(call) ?? Promise.resolve();
-    const next = previous.then(async () => {
-      const held = this.isHeld(call);
-      if (held === hold) {
-        return;
-      }
-      try {
-        await call.toggleHold();
-        this.heldByBridge.set(call, hold);
-      } catch (error) {
+    this.wantHeld.set(uuid, hold);
+    this.applyHold(uuid, call, hold);
+  }
+
+  /** Sets the SDK hold, then moves the session to whichever call is active. */
+  private applyHold(uuid: string, call: Call, hold: boolean): void {
+    const state = getCallHoldState();
+    state.setHeld(call, hold).then(
+      () => this.followActiveCall(),
+      (error: unknown) => {
         logger.warn(`Could not ${hold ? 'hold' : 'resume'} call ${uuid}:`, error);
-        // CallKit already shows the requested state; tell it the real one.
+        const held = state.isHeld(call);
+        this.wantHeld.set(uuid, held);
+        // The native UI already shows the requested state; tell it the real one.
         if (this.registry.isLive(uuid) && typeof RNCallKeep.setOnHold === 'function') {
           RNCallKeep.setOnHold(uuid, held);
         }
       }
-    });
-    this.holdQueue.set(call, next);
-    void next.finally(() => {
-      if (this.holdQueue.get(call) === next) {
-        this.holdQueue.delete(call);
-      }
-    });
+    );
   }
 
   /**
-   * The call's hold state. @signalwire/js keeps it in a private field that
-   * `toggleHold()` flips, which is also what an in-app hold changes; read it
-   * when it is there, else what this bridge last applied.
+   * Holds or ends the live calls other than `uuid`, which is being answered:
+   * Hold & Accept or End & Accept. Outside `'full'` call waiting there is no
+   * second live call, so an answer ends the other. A call already held, or
+   * asked to be, is left alone, and so is an entry whose call has not been
+   * placed yet.
    */
-  private isHeld(call: Call): boolean {
-    const own = (call as unknown as { _holdState?: unknown })._holdState;
-    return typeof own === 'boolean' ? own : (this.heldByBridge.get(call) ?? false);
+  private settleOtherCalls(uuid: string, others: OtherCalls): void {
+    const mode: OtherCalls = this._callWaiting === 'full' ? others : 'end';
+    const target = uuid.toLowerCase();
+    for (const entry of this.registry.liveEntries) {
+      if (entry.uuid === target) {
+        continue;
+      }
+      if (mode === 'end') {
+        logger.debug(`Ending ${entry.uuid} to answer ${target}`);
+        this.registry.endCall(entry.uuid);
+        continue;
+      }
+      const call = entry.call;
+      if (!call || this.wantHeld.get(entry.uuid) === true || getCallHoldState().isHeld(call)) {
+        continue;
+      }
+      logger.debug(`Holding ${entry.uuid} to answer ${target}`);
+      this.wantHeld.set(entry.uuid, true);
+      if (!this.refused.has(entry.uuid) && typeof RNCallKeep.setOnHold === 'function') {
+        RNCallKeep.setOnHold(entry.uuid, true);
+      }
+      this.applyHold(entry.uuid, call, true);
+    }
+  }
+
+  /**
+   * The live call with media: connected and not on hold (the newest, with
+   * more than one).
+   */
+  private activeEntry(): CallEntry | undefined {
+    const state = getCallHoldState();
+    const active = this.registry.liveEntries.filter(
+      (entry) =>
+        entry.call !== null &&
+        entry.call.status === 'connected' &&
+        this.wantHeld.get(entry.uuid) !== true &&
+        !state.isHeld(entry.call)
+    );
+    return active[active.length - 1];
+  }
+
+  /**
+   * Moves the audio session to the active call, once a hold or swap changed
+   * which call that is. One session serves both calls; on Android the
+   * active call's Telecom connection routes it (the controller follows that
+   * connection), on iOS CallKit routes the session for whichever is active.
+   */
+  private followActiveCall(): void {
+    if (this.audioUuid === null) {
+      return;
+    }
+    const active = this.activeEntry();
+    if (!active || active.uuid === this.audioUuid) {
+      return;
+    }
+    logger.debug(`Call ${active.uuid} is active; the audio session follows it from ${this.audioUuid}`);
+    this.audioUuid = active.uuid;
+    const media = this.audioMedia ?? 'audio';
+    const telecomCall = this.refused.has(active.uuid) ? undefined : active.uuid;
+    this.withAudioRoutes('debug', (controller) => controller.start(media, telecomCall));
   }
 
   /**
@@ -1582,7 +1726,7 @@ export class CallKeepBridge {
    * stop()'s setActive:NO would hit the session CallKit is handing over.
    */
   private startAudio(uuid: string, media: 'audio' | 'video'): void {
-    if (this.audioUuid !== null && this.audioUuid !== uuid && this.registry.isLive(this.audioUuid)) {
+    if (this.audioUuid !== null && this.audioUuid !== uuid && this.ownsSessionStill(this.audioUuid)) {
       logger.debug(`Audio session belongs to ${this.audioUuid}; not starting it for ${uuid}`);
       return;
     }
@@ -1601,6 +1745,20 @@ export class CallKeepBridge {
       controller.start(media, telecomCall);
       this.audioMedia = media;
     });
+  }
+
+  /**
+   * Whether the session's owner keeps it against another call starting its
+   * audio: it is live and not on hold. A call put on hold (Hold & Accept, a
+   * swap) hands the session to the call that becomes active.
+   */
+  private ownsSessionStill(owner: string): boolean {
+    if (!this.registry.isLive(owner)) {
+      return false;
+    }
+    const call = this.registry.entryForUuid(owner)?.call;
+    const held = this.wantHeld.get(owner) === true || (call ? getCallHoldState().isHeld(call) : false);
+    return !held;
   }
 
   /** `uuid` is taking the session; see {@link audioClaims}. */
@@ -1644,6 +1802,15 @@ export class CallKeepBridge {
     if (heir) {
       logger.debug(`Call ${owner} ended while ${heir.uuid} is taking the session; leaving it up for it`);
       this.clearHandoverTimer();
+      // A connected call (the one on hold, say) inherits the session now:
+      // nothing else will start it for that call. One still being answered
+      // takes it when its own audio starts (see startAudio).
+      if (heir.call?.status === 'connected') {
+        this.audioUuid = heir.uuid;
+        const media = this.audioMedia ?? 'audio';
+        const telecomCall = this.refused.has(heir.uuid) ? undefined : heir.uuid;
+        this.withAudioRoutes('debug', (controller) => controller.start(media, telecomCall));
+      }
       return;
     }
     if (others.length > 0) {
@@ -1664,6 +1831,19 @@ export class CallKeepBridge {
       return;
     }
     this.stopAudio(owner);
+  }
+
+  /** Drops the hold state of calls that have ended. */
+  private forgetEndedHolds(): void {
+    for (const uuid of [...this.wantHeld.keys()]) {
+      if (!this.registry.isLive(uuid)) {
+        this.wantHeld.delete(uuid);
+        const call = this.registry.entryForUuid(uuid)?.call;
+        if (call) {
+          getCallHoldState().forget(call);
+        }
+      }
+    }
   }
 
   private clearHandoverTimer(): void {
@@ -1834,6 +2014,11 @@ function decodeHandle(handle: string | undefined): string | undefined {
   } catch {
     return handle;
   }
+}
+
+/** How many calls may be live at once in each mode: one, or one plus one waiting or on hold. */
+function callLimitFor(mode: CallWaitingMode): number {
+  return mode === 'single' ? 1 : 2;
 }
 
 /** RFC 4122 v4 UUID. `crypto.getRandomValues` comes from the polyfills entry. */

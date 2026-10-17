@@ -41,7 +41,7 @@ type FakeCall = ReturnType<typeof createCall>;
  * where nobody could see it. It is now refused as busy (reject(): a verto.bye
  * with USER_BUSY, SIP 486) and never shown in CallKit or Telecom.
  */
-describe('a second incoming call while one is live (Android)', () => {
+describe("a second incoming call while one is live (Android, callWaiting 'single')", () => {
   let bridge: CallKeepBridge;
   let incoming$: Subject<unknown[]>;
 
@@ -49,7 +49,7 @@ describe('a second incoming call while one is live (Android)', () => {
     jest.clearAllMocks();
     callkeep.__reset();
     bridge = new CallKeepBridge();
-    await bridge.setup({ appName: 'Demo' });
+    await bridge.setup({ appName: 'Demo', callWaiting: 'single' });
     incoming$ = new Subject<unknown[]>();
     bridge.bindClient({ session: { incomingCalls$: incoming$, incomingCalls: [] } } as never);
   });
