@@ -344,13 +344,15 @@ describe('withSignalWire', () => {
       expect(result.ios?.infoPlist?.UIBackgroundModes).not.toContain('voip');
       expect(WarningAggregator.addWarningIOS).toHaveBeenCalledWith(
         '@signalwire/react-native',
-        expect.stringContaining('react-native-callkeep')
+        expect.stringContaining('Install @signalwire/react-native-callkeep')
       );
     });
 
     it('fails prebuild when VoIP push is asked for without callkeep', () => {
       mockCallKeepInstalled = false;
-      expect(() => apply({ enableVoipPush: true })).toThrow(/react-native-callkeep/);
+      expect(() => apply({ enableVoipPush: true })).toThrow(
+        /Install @signalwire\/react-native-callkeep \(or stock react-native-callkeep\)/
+      );
     });
 
     it('rejects an option name it does not know', () => {

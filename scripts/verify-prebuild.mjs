@@ -17,6 +17,7 @@
  * Usage: node scripts/verify-prebuild.mjs
  */
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -129,6 +130,28 @@ function check(label, contents, needles) {
 console.log('Verifying the Expo config plugin against a real prebuild:');
 
 prepareScratchCopy();
+
+// The example installs callkeep as the SignalWire fork. The plugin finds
+// either name (src/plugin/callKeep.ts, unit-tested for both); this proves the
+// prebuilt app resolves the fork, so the VoIP hook check below is the plugin
+// detecting @signalwire/react-native-callkeep, not stock callkeep.
+{
+  const resolve = createRequire(join(example, 'package.json')).resolve;
+  for (const [name, expected] of [
+    ['@signalwire/react-native-callkeep', true],
+    ['react-native-callkeep', false]
+  ]) {
+    let found = true;
+    try {
+      resolve(`${name}/package.json`);
+    } catch {
+      found = false;
+    }
+    if (found !== expected) {
+      failures.push(`example: ${name} ${expected ? 'does not resolve' : 'resolves, but the example should use the fork only'}`);
+    }
+  }
+}
 
 prebuild('android');
 {
