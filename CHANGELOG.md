@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### Call waiting, the same on iOS and Android
+
+- **New default, `callWaiting: 'full'`** (`getCallKit().setup()`), on both
+  platforms: a call that comes in during a call rings, with Hold & Accept, End
+  & Accept and Decline; the two calls swap, and either can be ended; dialling
+  during a call puts the live one on hold. Two calls at most: a third incoming
+  call is refused as busy, a third dial throws `CallInProgressError`. CallKit
+  is set up with `maximumCallGroups: 2`.
+- **Behaviour change.** Before, iOS behaved as `'endAndAccept'` (CallKit's End
+  & Accept) and Android as `'single'` (a second incoming call refused as
+  busy), and a second dial threw `CallInProgressError` on both. Apps that want
+  either keep it with `callWaiting: 'endAndAccept'` or `'single'`, which now
+  behave the same on both platforms.
+- New `useCalls()`: the calls in progress, `activeCall`, `heldCalls`,
+  `isHeld`, `hold`, `unhold` (holds the active call first) and `swap`.
+- `useIncomingCalls().answer()` puts a call in progress on hold first (Hold &
+  Accept); new `endAndAnswer()` ends it first (End & Accept).
+- `useSignalWire().dial()` puts a call in progress on hold first, and takes it
+  off hold again if the new call can't be placed.
+- New `getCallHoldState()`: one hold state per call. @signalwire/js rc.5 only
+  has `toggleHold()`, which flips a private flag, so a hold from CallKit,
+  Telecom or the app is compared with the state first and the requests for a
+  call run one at a time. CallKit's `didToggleHoldCallAction` used to toggle
+  blindly.
+- `CallObserver.onIncomingAnswer(call, others)` gets `'hold'` or `'end'`, and
+  new `onHoldChange(call, held)` lets the native call UI mirror an in-app
+  hold.
+- `IncomingCallSheet` shows over a call in progress, with Hold & Accept, End
+  & Accept and Decline (End & Accept and Decline in `'endAndAccept'`). On
+  Android, where Telecom draws nothing, a second call used to ring with
+  nothing on screen.
+- The audio session follows the active call: a held call keeps it alive for
+  the other, and on Android the active call's Telecom connection routes it.
+- `CallRegistryOptions.callLimit` (and `registry.setCallLimit()`) replaces
+  the Android-only `refuseIncomingWhileBusy`, which still works (limit 1).
+- `CallInProgressError` is thrown only outside `'full'`, or for a third call.
+
+### Back keeps the call running (Android)
+
+- **New default:** `CallKitSetupOptions.endCallsOnHostDestroy: false`. Back
+  on the root screen (or the app swiped away) no longer ends the call: callkeep
+  keeps its connection, and the ongoing-call notification brings the app back
+  to the call. `true` restores the old behaviour (Back ends the call cleanly).
+- New `SignalWireProvider` prop `keepCallsOnUnmount` (core; the React Native
+  provider turns it on with native call UI unless `endCallsOnHostDestroy`):
+  a provider that unmounts during a call keeps its client and calls for the
+  next provider to take back, instead of hanging up. A client whose calls all
+  end while it is kept is torn down.
+
 ### callkeep: `@signalwire/react-native-callkeep`, or stock
 
 - The package loads callkeep as `@signalwire/react-native-callkeep` (the

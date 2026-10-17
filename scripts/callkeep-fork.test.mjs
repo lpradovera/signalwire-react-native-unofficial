@@ -14,7 +14,7 @@
  * (src/callkit/callkeepModule.ts), so both are optional peers.
  */
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -93,6 +93,8 @@ test('only callkeepModule and the config plugin name a callkeep package in sourc
 
 test('no patch-package patch is left for callkeep', () => {
   const root_ = json('package.json');
-  assert.equal(root_.scripts.postinstall, undefined);
   assert.equal(root_['//patches'], undefined);
+  // patch-package runs for the @signalwire/js hold patch; none patches callkeep.
+  const patches = existsSync(join(root, 'patches')) ? readdirSync(join(root, 'patches')) : [];
+  assert.deepEqual(patches.filter((name) => name.includes('callkeep')), []);
 });

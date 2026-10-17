@@ -28,14 +28,16 @@ function createCall(id: string) {
 
 type FakeCall = ReturnType<typeof createCall>;
 
-describe('a second outbound call while one is live', () => {
+// One call at a time ('single' and 'endAndAccept'; 'full' allows a second,
+// see CallKeepBridge.callWaiting.test.ts).
+describe.each(['single', 'endAndAccept'] as const)('a second outbound call while one is live (%s)', (callWaiting) => {
   let bridge: CallKeepBridge;
 
   beforeEach(async () => {
     jest.clearAllMocks();
     callkeep.__reset();
     bridge = new CallKeepBridge();
-    await bridge.setup({ appName: 'Demo' });
+    await bridge.setup({ appName: 'Demo', callWaiting });
   });
 
   afterEach(() => {
@@ -103,14 +105,14 @@ describe('a second outbound call while one is live', () => {
 
 });
 
-describe('a second incoming call on iOS', () => {
+describe("a second incoming call on iOS ('endAndAccept')", () => {
   afterEach(() => resetAudioRouteControllerForTesting());
 
   it('is still shown in CallKit, which offers End & Accept and Decline itself', async () => {
     jest.clearAllMocks();
     callkeep.__reset();
     const bridge = new CallKeepBridge();
-    await bridge.setup({ appName: 'Demo' });
+    await bridge.setup({ appName: 'Demo', callWaiting: 'endAndAccept' });
     const incoming$ = new Subject<unknown[]>();
     bridge.bindClient({ session: { incomingCalls$: incoming$, incomingCalls: [] } } as never);
     bridge.trackCall(createCall('a') as never, '/private/alice', 'Alice');
@@ -127,11 +129,11 @@ describe('a second incoming call on iOS', () => {
 describe('the CallKit observer', () => {
   afterEach(() => resetCallKitForTesting());
 
-  it('refuses the dial before the SDK places it while a call is live', async () => {
+  it("refuses the dial before the SDK places it while a call is live ('single')", async () => {
     const observer = createCallKitObserver();
     expect(() => observer.beforeOutgoingCall?.('/private/alice')).not.toThrow();
 
-    await getCallKit().setup({ appName: 'Demo' });
+    await getCallKit().setup({ appName: 'Demo', callWaiting: 'single' });
     getCallKit().trackCall(createCall('a') as never, '/private/alice', 'Alice');
     expect(() => observer.beforeOutgoingCall?.('/private/bob')).toThrow(CallInProgressError);
   });

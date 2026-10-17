@@ -158,7 +158,7 @@ describe('IncomingCallSheet', () => {
     await renderSheet({ includeNativePushes: true });
     fireEvent.press(screen.getByTestId('sw-answer'));
 
-    expect(mockAnswerPush).toHaveBeenCalledWith('u2');
+    expect(mockAnswerPush).toHaveBeenCalledWith('u2', 'hold');
   });
 
   it('ignores native pushes when not asked for them', async () => {

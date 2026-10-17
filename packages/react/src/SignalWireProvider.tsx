@@ -1,6 +1,6 @@
 import { SignalWire } from '@signalwire/js';
 import React, { createContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { filter, firstValueFrom, merge } from 'rxjs';
+import { filter, firstValueFrom, merge, of, startWith, switchMap } from 'rxjs';
 
 import { logger } from './logger';
 import { TokenSource } from './tokenSource';
@@ -8,7 +8,7 @@ import { TokenSource } from './tokenSource';
 import type { FetchToken, TokenStatus } from './tokenSource';
 import type { CallObserver, SignalWirePlatform } from './types';
 import type { CredentialProvider, SignalWireOptions } from '@signalwire/js';
-import type { Observable } from 'rxjs';
+import type { Observable, Subscription } from 'rxjs';
 
 /** The SDK's errors for a lost connection, by name: it exports none of the classes. */
 const CONNECTION_ERRORS = new Set([
@@ -91,6 +91,16 @@ export interface SignalWireProviderProps {
   observer?: CallObserver;
   /** Extra SDK options, merged over the platform's. */
   options?: SignalWireOptions;
+  /**
+   * Keep the client, and its calls, when the provider unmounts while a call
+   * is in progress, instead of hanging the calls up. The next provider to
+   * mount takes that client back, calls and all; once its calls have ended
+   * with no provider mounted, it is torn down as usual. For React Native,
+   * where Back on Android destroys the activity and unmounts the app while
+   * the call goes on (`@signalwire/react-native` turns it on with native
+   * call UI). Default `false`: unmounting ends the calls.
+   */
+  keepCallsOnUnmount?: boolean;
   children: React.ReactNode;
 }
 
@@ -221,6 +231,142 @@ function teardownClient(instance: SignalWire, skipRegister: boolean, after: () =
   });
 }
 
+/** A client and what was built with it, torn down together. */
+interface ClientBundle {
+  readonly instance: SignalWire;
+  readonly source: TokenSource | null;
+  /** The platform built for this client (a factory's), disposed with it. */
+  readonly ownPlatform: SignalWirePlatform | undefined;
+  readonly clientPlatform: SignalWirePlatform | undefined;
+  readonly skipRegister: boolean;
+  /** Set once the client is torn down; parks its startup (see whileWanted). */
+  discarded: boolean;
+  /** Observer unbinds held while the client is kept; see keepClient. */
+  readonly unbinds: Array<() => void>;
+  /** Watches a kept client's calls; see keepClient. */
+  watch: Subscription | null;
+}
+
+function buildClient(
+  platform: SignalWirePlatform | (() => SignalWirePlatform) | undefined,
+  fetchToken: FetchToken | undefined,
+  credentialProvider: CredentialProvider | undefined,
+  options: SignalWireOptions | undefined
+): ClientBundle {
+  const ownPlatform = typeof platform === 'function' ? platform() : undefined;
+  const clientPlatform = typeof platform === 'function' ? ownPlatform : platform;
+  // Built with the client, inside the effect, so a StrictMode remount gets
+  // a fresh source instead of one its first cleanup disposed.
+  const source = fetchToken ? new TokenSource(fetchToken) : null;
+  const clientOptions = { ...clientPlatform?.options, ...options };
+  // One of the two is set: the provider checks.
+  const credentials = (source?.credentialProvider ?? credentialProvider) as CredentialProvider;
+  // The startup gate reads `discarded` from the bundle the client ends up in.
+  const state = { discarded: false };
+  const instance = new SignalWire(
+    whileWanted(credentials, () => state.discarded),
+    clientOptions
+  );
+  const bundle: ClientBundle = Object.assign(state, {
+    instance,
+    source,
+    ownPlatform,
+    clientPlatform,
+    skipRegister: clientOptions.skipRegister === true,
+    unbinds: [],
+    watch: null
+  });
+  return bundle;
+}
+
+/** Ends the client's calls, then destroys it and what was built with it. */
+function retireClient(bundle: ClientBundle, teardowns: Set<Promise<void>>): void {
+  bundle.discarded = true;
+  bundle.watch?.unsubscribe();
+  bundle.watch = null;
+  for (const unbind of bundle.unbinds.splice(0)) {
+    unbind();
+  }
+  bundle.source?.dispose();
+  // After destroy: the SDK's teardown may still touch platform globals.
+  const teardown = teardownClient(bundle.instance, bundle.skipRegister, () => bundle.ownPlatform?.dispose());
+  if (teardown) {
+    teardowns.add(teardown);
+    void teardown.finally(() => teardowns.delete(teardown));
+  }
+}
+
+/** Process-wide: the provider remounted after Back is a new component instance. */
+const KEPT_CLIENT_KEY = '__signalwireReactKeptClient';
+
+function keptClient(): ClientBundle | undefined {
+  return (globalThis as unknown as Record<string, ClientBundle | undefined>)[KEPT_CLIENT_KEY];
+}
+
+function setKeptClient(bundle: ClientBundle | undefined): void {
+  (globalThis as unknown as Record<string, ClientBundle | undefined>)[KEPT_CLIENT_KEY] = bundle;
+}
+
+/** Whether the client has a call that is not over: ringing, dialling or live. */
+function hasCallsInProgress(instance: SignalWire): boolean {
+  let calls: TeardownCall[] = [];
+  try {
+    calls = (instance.session as { calls?: TeardownCall[] } | undefined)?.calls ?? [];
+  } catch {
+    calls = [];
+  }
+  return calls.some((call) => typeof call?.status === 'string' && !ENDED_STATUSES.has(call.status));
+}
+
+/**
+ * Keeps a client whose provider unmounted during a call, for the next
+ * provider to take back. It is torn down once its calls have all ended with
+ * nobody taking it back. One client is kept at a time: an older one is torn
+ * down, its calls with it.
+ */
+function keepClient(bundle: ClientBundle, teardowns: Set<Promise<void>>): void {
+  const older = keptClient();
+  if (older && older !== bundle) {
+    setKeptClient(undefined);
+    retireClient(older, teardowns);
+  }
+  setKeptClient(bundle);
+  const calls$ = (bundle.instance.session as { calls$?: Observable<TeardownCall[]> } | undefined)?.calls$;
+  const check = (): void => {
+    if (keptClient() === bundle && !hasCallsInProgress(bundle.instance)) {
+      logger.info('The kept client has no call left; tearing it down');
+      setKeptClient(undefined);
+      retireClient(bundle, teardowns);
+    }
+  };
+  bundle.watch =
+    calls$
+      ?.pipe(
+        switchMap((calls) =>
+          calls.length === 0
+            ? of(calls)
+            : merge(...calls.map((call) => call.status$ ?? of(call.status))).pipe(startWith(calls))
+        )
+      )
+      .subscribe({ next: check, error: check }) ?? null;
+}
+
+/** Takes the kept client back, if there is one. */
+function takeKeptClient(): ClientBundle | null {
+  const bundle = keptClient();
+  if (!bundle) {
+    return null;
+  }
+  setKeptClient(undefined);
+  bundle.watch?.unsubscribe();
+  bundle.watch = null;
+  // The new provider binds its observer again.
+  for (const unbind of bundle.unbinds.splice(0)) {
+    unbind();
+  }
+  return bundle;
+}
+
 /**
  * Owns the SignalWire client lifecycle and publishes it through context.
  *
@@ -234,6 +380,7 @@ export function SignalWireProvider({
   platform,
   observer,
   options,
+  keepCallsOnUnmount = false,
   children
 }: SignalWireProviderProps): React.JSX.Element {
   if (!credentialProvider && !fetchToken) {
@@ -257,14 +404,31 @@ export function SignalWireProvider({
   /** Clients being torn down after their live calls end; see teardownClient. */
   const teardownsRef = useRef(new Set<Promise<void>>());
 
+  /** Set while the provider unmounts, as opposed to rebuilding its client. */
+  const unmountingRef = useRef(false);
+  const keepCallsRef = useRef(keepCallsOnUnmount);
+  keepCallsRef.current = keepCallsOnUnmount;
+  // Declared before the client effect: on unmount React runs the cleanups in
+  // declaration order, so the client's cleanup sees it set. A new
+  // credentialProvider or fetchToken re-runs the client effect alone.
+  useEffect(() => {
+    unmountingRef.current = false;
+    return () => {
+      unmountingRef.current = true;
+    };
+  }, []);
+
   useEffect(() => {
     const teardowns = teardownsRef.current;
-    let discarded = false;
-    const ownPlatform = typeof platform === 'function' ? platform() : undefined;
-    const clientPlatform = typeof platform === 'function' ? ownPlatform : platform;
-    // Built with the client, inside the effect, so a StrictMode remount gets
-    // a fresh source instead of one its first cleanup disposed.
-    const source = fetchToken ? new TokenSource(fetchToken) : null;
+    // A client kept with its calls when the last provider unmounted (Back on
+    // Android, during a call) is taken back as it is, calls and token source
+    // included, rather than building a second client beside it.
+    const kept = keepCallsRef.current ? takeKeptClient() : null;
+    const bundle = kept ?? buildClient(platform, fetchToken, credentialProvider, options);
+    if (kept) {
+      logger.info('Taking back the client kept for its calls in progress');
+    }
+    const { instance, source, clientPlatform } = bundle;
     sourceRef.current = source;
     const tokenSubscription = source?.status$.subscribe((status) => {
       setTokenStatus(status);
@@ -279,13 +443,6 @@ export function SignalWireProvider({
       ? (clientPlatform?.watchForeground ?? watchDocumentVisible)(() => source.renewIfDue())
       : undefined;
 
-    const clientOptions = { ...clientPlatform?.options, ...options };
-    // One of the two is set: checked above.
-    const credentials = (source?.credentialProvider ?? credentialProvider) as CredentialProvider;
-    const instance = new SignalWire(
-      whileWanted(credentials, () => discarded),
-      clientOptions
-    );
     boundForGood.current = null;
 
     setClient(instance);
@@ -312,21 +469,19 @@ export function SignalWireProvider({
     );
 
     return () => {
-      discarded = true;
       subscription.unsubscribe();
       tokenSubscription?.unsubscribe();
       stopWatching?.();
-      source?.dispose();
       if (sourceRef.current === source) {
         sourceRef.current = null;
       }
       setClient(null);
-      // After destroy: the SDK's teardown may still touch platform globals.
-      const teardown = teardownClient(instance, clientOptions.skipRegister === true, () => ownPlatform?.dispose());
-      if (teardown) {
-        teardowns.add(teardown);
-        void teardown.finally(() => teardowns.delete(teardown));
+      if (unmountingRef.current && keepCallsRef.current && hasCallsInProgress(instance)) {
+        logger.info('Unmounted during a call: keeping the client and its calls');
+        keepClient(bundle, teardowns);
+        return;
       }
+      retireClient(bundle, teardowns);
     };
     // `platform`, `observer` and `options` are intentionally excluded:
     // rebuilding the client on every render of an inline object literal would
@@ -342,14 +497,23 @@ export function SignalWireProvider({
   // is turned on, and drops it when callKit is turned off). The unbind it
   // returns runs when it changes or goes away, or the client is replaced, so
   // a dropped observer stops handling the client's calls. An observer that
-  // returns no unbind is bound once per client, as in 0.1.0.
+  // returns no unbind is bound once per client, as in 0.1.0. A client kept
+  // for its calls stays bound until it is taken back or torn down: its calls
+  // still reach the native call UI, and so does a call that comes in then.
   useEffect(() => {
     if (!client || boundForGood.current === client || !observer?.bindClient) {
       return undefined;
     }
     const unbind = observer.bindClient(client);
     if (typeof unbind === 'function') {
-      return unbind;
+      return () => {
+        const kept = keptClient();
+        if (kept?.instance === client) {
+          kept.unbinds.push(unbind);
+        } else {
+          unbind();
+        }
+      };
     }
     boundForGood.current = client;
     return undefined;

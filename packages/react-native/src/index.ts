@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 // Re-exported from the universal core, so RN apps need only this package.
 // ---------------------------------------------------------------------------
-export { SignalWireContext, TokenFetchError, useSignalWire, useCall, useIncomingCalls, useDevices, useObservable } from '@signalwire/react';
+export { SignalWireContext, TokenFetchError, getCallHoldState, useSignalWire, useCall, useCalls, useIncomingCalls, useDevices, useObservable } from '@signalwire/react';
 export type {
   CallObserver,
   FetchToken,
@@ -19,7 +19,9 @@ export type {
   TokenStatus,
   SignalWireContextValue,
   SignalWirePlatform,
+  OtherCalls,
   UseCallResult,
+  UseCallsResult,
   UseDevicesResult,
   UseIncomingCallsResult,
   UseSignalWireResult

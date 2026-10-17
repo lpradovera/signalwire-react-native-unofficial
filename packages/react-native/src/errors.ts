@@ -75,15 +75,18 @@ export class PolyfillNotInstalledError extends Error {
 }
 
 /**
- * Thrown when an outbound call is started while another call is live.
+ * Thrown when an outbound call is started and the native call UI has no room
+ * for it: outside `'full'` call waiting (`callWaiting: 'endAndAccept'` or
+ * `'single'`) while any call is live, a ringing push included, and in
+ * `'full'` mode while two calls are.
  *
- * CallKit is set up for one call at a time (`maximumCallGroups: 1`) and
- * refuses a second start transaction, but react-native-callkeep only logs
- * that refusal, so the second call would run with no native call UI and
- * nothing to end it from. `useSignalWire().dial()` therefore rejects with
- * this before the SDK places anything, while CallKit is on. Hang up (or wait
- * for) the live call first. Answering a push by dialling a bridge is not
- * refused: that call belongs to the entry already on screen.
+ * CallKit refuses a start transaction beyond its call groups, and
+ * react-native-callkeep only logs that refusal, so the call would run with no
+ * native call UI and nothing to end it from. `useSignalWire().dial()`
+ * therefore rejects with this before the SDK places anything, while CallKit
+ * is on. Hang up (or wait for) a live call first. Answering a push by
+ * dialling a bridge is not refused: that call belongs to the entry already
+ * on screen.
  */
 export class CallInProgressError extends Error {
   constructor(
@@ -92,7 +95,7 @@ export class CallInProgressError extends Error {
   ) {
     super(
       `A call is already in progress (${liveCallUuid}). End it before starting another: ` +
-        'native call UI runs one call at a time.'
+        'the native call UI has no room for another call.'
     );
     this.name = 'CallInProgressError';
   }

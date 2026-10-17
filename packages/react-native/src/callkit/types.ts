@@ -68,11 +68,12 @@ export interface CallRegistryOptions {
   /** How long a push entry may wait for its SDK call, in ms. Default 45000. */
   fusionTimeoutMs?: number;
   /**
-   * Refuse an incoming call as busy, without showing it, while another call
-   * is live. Default false. The CallKit bridge sets it on Android, where a
-   * second call held RINGING by a self-managed Telecom connection rang with
-   * nothing on screen. iOS keeps CallKit's own waiting-call screen (End &
-   * Accept / Decline).
+   * How many calls may be live at once, a ringing one included. An incoming
+   * call or push beyond it is refused as busy (USER_BUSY) and never shown.
+   * Default: no limit. The CallKit bridge sets it from `callWaiting`: 1 for
+   * `'single'`, 2 otherwise (one call, and one waiting or on hold).
    */
+  callLimit?: number;
+  /** Same as `callLimit: 1`. Kept for compatibility. */
   refuseIncomingWhileBusy?: boolean;
 }
