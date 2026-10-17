@@ -425,3 +425,98 @@ describe('POST /swml/decline', () => {
     assert.equal(response.status, 204);
   });
 });
+
+describe('a parked caller SignalWire cannot end (BUG-P2)', () => {
+  /** Console lines written while `run` runs, parsed. */
+  async function logged(run: () => Promise<unknown>): Promise<Array<Record<string, unknown>>> {
+    const lines: string[] = [];
+    const { log, warn } = console;
+    console.log = (line: unknown) => lines.push(String(line));
+    console.warn = (line: unknown) => lines.push(String(line));
+    try {
+      await run();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      console.log = log;
+      console.warn = warn;
+    }
+    return lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+  }
+
+  // What calling.end answered on the device tests, for a park that ran on an
+  // internal leg (a REST dial to the park's Fabric address).
+  const unknownCall: CallEnder = {
+    async end() {
+      return { ok: false, error: '404 Not Found', status: 404 };
+    }
+  };
+
+  it('says why, and how to test instead, when the bridge ends and calling.end 404s', async () => {
+    const h = await harness({ callEnder: unknownCall, publicUrl: 'https://example.test' });
+    const { token } = h.tokens.mint('steer-leg-sid', 'rn-example');
+    h.tokens.redeem(token, 'rn-example');
+
+    const lines = await logged(() =>
+      h.post(`/swml/bridge/status?token=${token}`, { params: { connect_state: 'disconnected' } })
+    );
+
+    const line = lines.find((entry) => entry.message === 'Failed to end caller leg');
+    assert.ok(line, `no failure line in ${JSON.stringify(lines)}`);
+    assert.equal(line.callSid, 'steer-leg-sid');
+    assert.match(String(line.hint), /internal leg/);
+    assert.match(String(line.hint), /phone number|top-level/);
+  });
+
+  it('says the same when a decline cannot end the caller', async () => {
+    const h = await harness({ callEnder: unknownCall });
+    const { token } = h.tokens.mint('steer-leg-sid', 'rn-example');
+
+    let status = 0;
+    const lines = await logged(async () => {
+      status = (await h.post('/swml/decline', { bridgeToken: token })).status;
+    });
+
+    assert.equal(status, 502);
+    const line = lines.find((entry) => entry.message === 'Declined; failed to end caller leg');
+    assert.match(String(line?.hint), /internal leg/);
+  });
+
+  it('adds no hint to other failures', async () => {
+    const h = await harness({
+      callEnder: { async end() { return { ok: false, error: '500 boom', status: 500 }; } },
+      publicUrl: 'https://example.test'
+    });
+    const { token } = h.tokens.mint('top-level-sid', 'rn-example');
+    h.tokens.redeem(token, 'rn-example');
+
+    const lines = await logged(() =>
+      h.post(`/swml/bridge/status?token=${token}`, { params: { connect_state: 'disconnected' } })
+    );
+    const line = lines.find((entry) => entry.message === 'Failed to end caller leg');
+    assert.ok(line);
+    assert.equal(line.hint, undefined);
+  });
+
+  it('warns at park time when the park runs on an internal leg', async () => {
+    const h = await harness();
+    const lines = await logged(() =>
+      h.post('/swml/park?subscriber=rn-example', {
+        call: { call_id: 'steer-leg-sid', from: 'sip:caller@example.com', to: 'sip:steer@10.0.0.1:5050' }
+      })
+    );
+    const line = lines.find((entry) => entry.message === 'Parked on an internal leg');
+    assert.ok(line, `no warning in ${JSON.stringify(lines.map((entry) => entry.message))}`);
+    assert.equal(line.callSid, 'steer-leg-sid');
+  });
+
+  it('does not warn for a caller on its own leg', async () => {
+    const h = await harness();
+    const lines = await logged(() =>
+      h.post('/swml/park?subscriber=rn-example', {
+        call: { call_id: 'top-level-sid', from: '+15551230000', to: '+15559870000' }
+      })
+    );
+    assert.equal(lines.some((entry) => entry.message === 'Parked on an internal leg'), false);
+    assert.ok(lines.some((entry) => entry.message === 'Parked caller and pushed'));
+  });
+});
