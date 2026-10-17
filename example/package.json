@@ -20,7 +20,7 @@
     "@signalwire/js": "^4.0.0-rc.5",
     "@signalwire/react": "^2.0.0-alpha.0",
     "@signalwire/react-native": "^2.0.0-alpha.0",
-    "@signalwire/react-native-callkeep": "github:signalwire/react-native-callkeep#9e71864a73a04f254c48a3650de8f2a15dcc5134",
+    "@signalwire/react-native-callkeep": "github:signalwire/react-native-callkeep#d7367fb88832b29578c02ebd380aaa4e357ee44c",
     "@signalwire/react-native-ui": "^2.0.0-alpha.0",
     "expo": "~54.0.0",
     "expo-application": "~7.0.8",
