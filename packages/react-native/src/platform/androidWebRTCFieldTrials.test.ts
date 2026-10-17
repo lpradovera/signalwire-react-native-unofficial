@@ -12,9 +12,21 @@
  * until it gives up. On the Android emulator 2 of 4 inbound answers failed so
  * (2026-10-17); with the trial, 5 of 5 connected.
  */
-import { execFileSync, spawnSync } from 'child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+// Node built-ins, typed here: this package's tsconfig has no Node types
+// (the same pattern as reactNativeWebRTCSurface.test.ts).
+declare const __dirname: string;
+const { execFileSync, spawnSync } = require('child_process') as {
+  execFileSync(file: string, args: string[], options?: { encoding: 'utf8' }): string;
+  spawnSync(file: string, args: string[]): { status: number | null };
+};
+const { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('fs') as {
+  mkdirSync(path: string, options?: { recursive: boolean }): void;
+  mkdtempSync(prefix: string): string;
+  readFileSync(path: string, enc: string): string;
+  rmSync(path: string, options?: { recursive: boolean; force: boolean }): void;
+  writeFileSync(path: string, data: string): void;
+};
+const { join } = require('path') as { join(...parts: string[]): string };
 
 const PKG = join(__dirname, '../../android/src/main/java/com/signalwire/reactnative');
 const SOURCE = join(PKG, 'WebRTCFieldTrials.java');
