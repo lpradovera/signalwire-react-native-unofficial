@@ -1,5 +1,5 @@
-import { logger, useIncomingCalls } from '@signalwire/react';
-import { displayableName, useRingingPushes } from '@signalwire/react-native/ringing';
+import { logger, useCalls, useIncomingCalls } from '@signalwire/react';
+import { callWaitingMode, displayableName, useRingingPushes } from '@signalwire/react-native/ringing';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import { initialWindowMetrics, SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -91,7 +91,9 @@ export function IncomingCallSheet({
   testID
 }: IncomingCallSheetProps): React.JSX.Element | null {
   const theme = useSignalWireTheme();
-  const { calls, answer, reject } = useIncomingCalls();
+  const { calls, answer, endAndAnswer, reject } = useIncomingCalls();
+  // A call in progress turns Answer into the call-waiting choices.
+  const { calls: inProgress } = useCalls();
   const { ringing: ringingCalls, markHandled, unmarkHandled } = useRingingCalls(calls);
   const { ringing, answer: answerPush, reject: rejectPush } = useRingingPushes();
   const call = ringingCalls[0];
@@ -110,11 +112,35 @@ export function IncomingCallSheet({
     displayableName(source?.from, 'IncomingCallSheet') ??
     'Unknown caller';
 
+  // Over a call in progress: Hold & Accept and End & Accept, as CallKit
+  // offers them, or End & Accept alone when the live call can't be held.
+  const waiting = inProgress.some((live) => live !== call);
+  const mode = waiting ? callWaitingMode() : null;
+
+  const accept = (others: 'hold' | 'end'): void => {
+    if (call) {
+      markHandled(call);
+      (others === 'hold' ? answer : endAndAnswer)(call, answerWith).then(
+        () => onAnswered?.(call),
+        (error: unknown) => {
+          // Offer it again if it is still ringing.
+          logger.warn('Answering the incoming call failed:', error);
+          unmarkHandled(call);
+        }
+      );
+    } else if (push) {
+      // The same intent a native answer applies, so both paths
+      // converge and whatever places the call picks it up.
+      answerPush(push.uuid, others);
+    }
+  };
+
   const sheet = (
     <ThemeContext.Provider value={theme}>
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <SheetBody
           callerName={callerName}
+          waiting={mode === null ? null : mode === 'full' ? 'hold-or-end' : 'end'}
           onDecline={() => {
             if (call) {
               markHandled(call);
@@ -123,23 +149,7 @@ export function IncomingCallSheet({
               rejectPush(push.uuid);
             }
           }}
-          onAnswer={() => {
-            if (call) {
-              markHandled(call);
-              answer(call, answerWith).then(
-                () => onAnswered?.(call),
-                (error: unknown) => {
-                  // Offer it again if it is still ringing.
-                  logger.warn('Answering the incoming call failed:', error);
-                  unmarkHandled(call);
-                }
-              );
-            } else if (push) {
-              // The same intent a native answer applies, so both paths
-              // converge and whatever places the call picks it up.
-              answerPush(push.uuid);
-            }
-          }}
+          onAnswer={accept}
         />
       </SafeAreaProvider>
     </ThemeContext.Provider>
@@ -192,11 +202,14 @@ function SheetPlacement({
 
 function SheetBody({
   callerName,
+  waiting,
   onAnswer,
   onDecline
 }: {
   callerName: string;
-  onAnswer: () => void;
+  /** A call is in progress: what answering may do with it. */
+  waiting: 'hold-or-end' | 'end' | null;
+  onAnswer: (others: 'hold' | 'end') => void;
   onDecline: () => void;
 }): React.JSX.Element {
   const theme = useSignalWireTheme();
@@ -220,7 +233,7 @@ function SheetBody({
         ]}
       >
         <Text style={{ color: theme.colors.textMuted, fontSize: theme.typography.label }}>
-          Incoming call
+          {waiting ? 'Call waiting' : 'Incoming call'}
         </Text>
         <Text
           accessibilityRole="header"
@@ -237,13 +250,33 @@ function SheetBody({
             style={styles.action}
             onPress={onDecline}
           />
-          <ControlButton
-            testID="sw-answer"
-            label="Answer"
-            variant="accent"
-            style={styles.action}
-            onPress={onAnswer}
-          />
+          {waiting === null ? (
+            <ControlButton
+              testID="sw-answer"
+              label="Answer"
+              variant="accent"
+              style={styles.action}
+              onPress={() => onAnswer('hold')}
+            />
+          ) : null}
+          {waiting !== null ? (
+            <ControlButton
+              testID="sw-end-accept"
+              label="End & Accept"
+              variant="accent"
+              style={styles.action}
+              onPress={() => onAnswer('end')}
+            />
+          ) : null}
+          {waiting === 'hold-or-end' ? (
+            <ControlButton
+              testID="sw-hold-accept"
+              label="Hold & Accept"
+              variant="accent"
+              style={styles.action}
+              onPress={() => onAnswer('hold')}
+            />
+          ) : null}
         </View>
       </View>
     </View>

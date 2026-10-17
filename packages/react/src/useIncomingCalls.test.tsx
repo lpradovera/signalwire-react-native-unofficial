@@ -105,7 +105,7 @@ describe('useIncomingCalls', () => {
       await result?.answer(call as never);
     });
 
-    expect(observer.onIncomingAnswer).toHaveBeenCalledWith(call);
+    expect(observer.onIncomingAnswer).toHaveBeenCalledWith(call, 'hold');
     expect(call.answer).not.toHaveBeenCalled();
   });
 

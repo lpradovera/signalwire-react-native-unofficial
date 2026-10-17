@@ -1,6 +1,7 @@
 import { SignalWireProvider as CoreProvider } from '@signalwire/react';
 import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 
+import { getCallKit } from '../callkit/CallKeepBridge';
 import { createCallKitObserver } from '../callkit/observer';
 import { createReactNativePlatform } from '../platform/createReactNativePlatform';
 import { PushWakeRenewal } from './PushWakeRenewal';
@@ -36,6 +37,11 @@ export interface SignalWireProviderProps {
    * `react-native-callkeep`), and
    * `getCallKit().setup(...)` to have been called from your app entry. Pass
    * options instead of `true` to name outbound calls in the native UI.
+   *
+   * With it on, the provider keeps the client and its calls when it unmounts
+   * during a call (Back on Android closes the activity; the call goes on and
+   * the ongoing-call notification brings the app back), unless setup() was
+   * given `endCallsOnHostDestroy: true`.
    */
   callKit?: boolean | CallKitObserverOptions;
   children: React.ReactNode;
@@ -85,6 +91,7 @@ export function SignalWireProvider({
       platform={platformFactory}
       observer={observer}
       options={options}
+      keepCallsOnUnmount={callKitOn && getCallKit().keepsCallsOnUnmount}
     >
       {fetchToken && callKitOn ? <PushWakeRenewal /> : null}
       {children}

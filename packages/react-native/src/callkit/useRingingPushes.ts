@@ -30,7 +30,12 @@ export interface RingingPush {
 
 export interface RingingPushes {
   ringing: RingingPush[];
-  answer: (uuid: string) => void;
+  /**
+   * Answers the push. A call already live is put on hold first (Hold &
+   * Accept), or ended with `'end'` (End & Accept); outside `'full'` call
+   * waiting it is always ended.
+   */
+  answer: (uuid: string, others?: 'hold' | 'end') => void;
   reject: (uuid: string) => void;
 }
 
@@ -104,7 +109,14 @@ export function useRingingPushes(): RingingPushes {
   const ringing = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   const answer = useCallback(
-    (uuid: string) => registry?.applyIntent(uuid, 'answer'),
+    (uuid: string, others: 'hold' | 'end' = 'hold') => {
+      const bridge = existingBridge();
+      if (bridge && typeof bridge.answerPushFromApp === 'function') {
+        bridge.answerPushFromApp(uuid, others);
+      } else {
+        registry?.applyIntent(uuid, 'answer');
+      }
+    },
     [registry]
   );
   const reject = useCallback(

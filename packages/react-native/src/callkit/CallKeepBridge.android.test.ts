@@ -130,8 +130,14 @@ describe('CallKeepBridge on Android', () => {
   });
 
   describe('the activity closing mid-call (Back on the root screen)', () => {
-    it('asks callkeep to end the calls when the activity is destroyed, not to keep them', async () => {
+    it('asks callkeep to keep the calls when the activity is destroyed (the default)', async () => {
       await bridge.setup({ appName: 'Demo' });
+      const options = (RNCallKeep.setup as jest.Mock).mock.calls[0][0];
+      expect(options.android.endCallsOnHostDestroy).toBe(false);
+    });
+
+    it('asks callkeep to end them when the app opts in', async () => {
+      await bridge.setup({ appName: 'Demo', endCallsOnHostDestroy: true });
       const options = (RNCallKeep.setup as jest.Mock).mock.calls[0][0];
       expect(options.android.endCallsOnHostDestroy).toBe(true);
     });
