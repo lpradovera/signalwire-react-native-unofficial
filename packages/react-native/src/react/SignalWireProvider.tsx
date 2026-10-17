@@ -4,6 +4,7 @@ import React, { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
 import { getCallKit } from '../callkit/CallKeepBridge';
 import { createCallKitObserver } from '../callkit/observer';
 import { createReactNativePlatform } from '../platform/createReactNativePlatform';
+import { CallForegroundService } from './CallForegroundService';
 import { PushWakeRenewal } from './PushWakeRenewal';
 
 import type { CallKitObserverOptions } from '../callkit/observer';
@@ -42,6 +43,11 @@ export interface SignalWireProviderProps {
    * during a call (Back on Android closes the activity; the call goes on and
    * the ongoing-call notification brings the app back), unless setup() was
    * given `endCallsOnHostDestroy: true`.
+   *
+   * With it off, on Android, the provider runs a `microphone` foreground
+   * service while a call is in progress, so Android 14+ does not silence the
+   * microphone when the app goes to the background or the screen locks
+   * (with it on, the ConnectionService's own does that).
    */
   callKit?: boolean | CallKitObserverOptions;
   children: React.ReactNode;
@@ -94,6 +100,7 @@ export function SignalWireProvider({
       keepCallsOnUnmount={callKitOn && getCallKit().keepsCallsOnUnmount}
     >
       {fetchToken && callKitOn ? <PushWakeRenewal /> : null}
+      {callKitOn ? null : <CallForegroundService />}
       {children}
     </CoreProvider>
   );

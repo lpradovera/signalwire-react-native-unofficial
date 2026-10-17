@@ -132,8 +132,75 @@ What the plugin applies (`src/plugin/withAndroidCallKit.ts`). For bare projects:
 ```
 
 The package's own Android library (the incoming-call notification, with
-`USE_FULL_SCREEN_INTENT`, and the reader of a call's Telecom audio routes) is
+`USE_FULL_SCREEN_INTENT`, the reader of a call's Telecom audio routes, and the
+microphone foreground service for calls without the native call UI, below) is
 autolinked; its manifest merges into the app's.
+
+## Android: runtime permissions
+
+Declaring a permission is not granting it. `RECORD_AUDIO`, `CAMERA`,
+`BLUETOOTH_CONNECT` (Android 12+), `READ_PHONE_NUMBERS` and
+`POST_NOTIFICATIONS` (Android 13+) are runtime permissions: the app must ask
+for them, and the user must allow them.
+
+**`BLUETOOTH_CONNECT` (Android 12+) must be requested at runtime.** Without the
+grant Android shows the app no Bluetooth device at all: incall-manager never
+starts its Bluetooth manager, a headset or car is never a route, and
+`setRoute('bluetooth')` has nothing to move to. Nothing fails or logs; the
+call just stays on the phone.
+
+- **With the native call UI** (`callKit` on), `getCallKit().setup()` asks for
+  it, with `READ_PHONE_NUMBERS`, `RECORD_AUDIO` and `POST_NOTIFICATIONS`, once
+  the app is on screen (the example does this from `index.js`). See
+  [push-setup.md](push-setup.md) for why each one.
+- **Without it**, nothing in the package asks. react-native-webrtc asks for
+  `RECORD_AUDIO` (and `CAMERA`) when a call first opens the microphone, but not
+  for `BLUETOOTH_CONNECT`. Ask for it yourself before the first call:
+
+  ```ts
+  import { PermissionsAndroid, Platform } from 'react-native';
+
+  if (Platform.OS === 'android' && Number(Platform.Version) >= 31) {
+    await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT);
+  }
+  ```
+
+## Android: calls without the native call UI
+
+A call in callkeep's ConnectionService (`callKit` on) runs a foreground service
+of type `phoneCall|microphone`. A plain WebRTC call (`callKit` off) has no
+ConnectionService, and from Android 14 an app in the background records
+silence unless a `microphone` foreground service is running: the user is
+muted when the screen locks or they press Home
+([react-native-webrtc #1774](https://github.com/react-native-webrtc/react-native-webrtc/issues/1774),
+[#1780](https://github.com/react-native-webrtc/react-native-webrtc/issues/1780);
+[react-native-incall-manager #204](https://github.com/react-native-webrtc/react-native-incall-manager/issues/204),
+[#208](https://github.com/react-native-webrtc/react-native-incall-manager/issues/208)).
+
+So without `callKit`, `SignalWireProvider` runs the package's own service on
+Android while a call is in progress (placed, or answered; a ringing inbound
+call does not count) and stops it when no call is left or the provider
+unmounts. It shows a low-priority "Call in progress" notification that opens
+the app. Nothing to configure: the library manifest declares the service
+(`com.signalwire.reactnative.CallForegroundService`,
+`foregroundServiceType="microphone"`) and `FOREGROUND_SERVICE` /
+`FOREGROUND_SERVICE_MICROPHONE`, and it merges into the app's.
+
+- **Microphone only.** `phoneCall` needs `MANAGE_OWN_CALLS` or the dialer
+  role, which is what a Telecom call is; `camera` needs a `CAMERA` grant an
+  audio-only app never asks for, and Android refuses the whole start if any
+  type passed is not allowed. Video is not kept in the background.
+- **Started while the app is in the foreground**, which is where calls are
+  placed and answered: Android refuses a microphone foreground service started
+  from the background, or before `RECORD_AUDIO` is granted. A refusal is
+  logged (`SignalWireCallService` in logcat) and does not crash the app; the
+  provider asks again as the call moves on, so a first call placed while the
+  microphone prompt is still up gets it once the user allows it.
+- **Google Play**: an app with a `microphone` foreground service declares it in
+  the Play Console (foreground service types), as one with callkeep's
+  `phoneCall|microphone` already does.
+- The ConnectionService's own service covers `callKit` calls; the provider does
+  not start this one for them.
 
 ## Android: waking on a data message
 

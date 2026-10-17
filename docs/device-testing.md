@@ -101,19 +101,54 @@ call. A third call is refused as busy. With `'endAndAccept'` only End &
 Accept and Decline are offered and dialling throws `CallInProgressError`;
 with `'single'` the second call is busy and never rings.
 
+Run on the Android emulator (API 35, 2026-10-16), each mode its own build
+(the launch log reads `CallKit ready (callWaiting: <mode>, …)`):
+
+- `'full'`: Decline of a second call while the first is live. The caller's
+  leg ended 8 s after it was placed (`[WebRTCManager] Inbound call rejected by
+  user.`); the first call carried on, its RTP counters rising, with no hold.
+- `'endAndAccept'`: the sheet offered only Decline and End & Accept. Dial
+  again showed `CallInProgressError: A call is already in progress (<uuid>)`
+  and placed nothing. Decline ended the second call and left the first
+  running; End & Accept on a third ended the first and connected the third.
+- `'single'`: Dial again threw `CallInProgressError`; a second inbound call
+  never showed (no sheet) and its leg ended in 0.7 s (`Refusing inbound call
+  <id> as busy: <uuid> is live; not showing it`); Telecom listed one call,
+  ACTIVE.
+
 **6. Back during a call (Android).**
 Press Back on the root screen during a call.
 Expect: the call goes on (audio, the ongoing-call notification); tapping the
 notification brings the call screen back. With `endCallsOnHostDestroy: true`,
 Back ends the call instead.
 
+**7. Lock screen without the native call UI (Android 14+).**
+With `callKit` off (the example's `EXPO_PUBLIC_SW_CALLKIT=0`), place a call,
+then lock the phone for 20 s and talk.
+Expect: the far end hears you the whole time. During the call `adb shell
+dumpsys activity services <package>` lists
+`com.signalwire.reactnative.CallForegroundService` with `isForeground=true`
+and `types=0x00000080` (microphone), the "Call in progress" notification shows,
+and both go when the call ends. `adb shell dumpsys audio` shows the app's
+`VOICE_COMMUNICATION` recording with `silenced:false` while locked.
+On the emulator (2026-10-16): with the service, `silenced:false` in all 7
+samples over 15 s locked, and the server counted as many packets from the app
+as to it (1386 / 1390). With the service disabled, the recording went
+`silenced:true` about 6 s after the lock, in 5 of 7 samples, and the server got
+918 packets from the app against 1364 to it.
+
 **Process death.** If the process dies mid-call (the system kills it, or the
 user force-stops it), nothing on the device sends a bye. The call's leg on
 SignalWire is left up until the server notices: on the iPhone (2026-10-16) a
 killed app's call stayed `answered`, with its uplink stopped, until it was
-ended by REST 10 s later; the server's own timeout was not reached. Treat it as
-a server-side limit; a backend that must bound such a leg can end it by REST
-from its own watchdog.
+ended by REST 10 s later; the server's own timeout was not reached. On the
+Android emulator (2026-10-16, `adb shell am force-stop` 25 s into an outbound
+call to `/private/rn-device-test`, then the call's status read by REST every 2 s):
+the leg stayed `answered` for the 29 s watched (the test's 60 s call cap), and
+was ended by REST. The server received 1195 packets from the app in all (the
+app had sent 1136 a second before the kill) while it sent 2659: it kept
+sending to a device that was gone. Treat it as a server-side limit; a backend that must bound such
+a leg can end it by REST from its own watchdog.
 
 ## Push path
 
