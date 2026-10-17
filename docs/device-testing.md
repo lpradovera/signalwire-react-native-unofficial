@@ -360,6 +360,17 @@ Android cuts its sockets ("Destroyed live tcp sockets for uids=…"), so with
 push off a call placed minutes later never reaches the device. Calls to a
 backgrounded app need push; the `push` group covers that path.
 
+One observation was not the app: once, after returning from the
+ongoing-call notification, the app received 21 and 72 packets in two 2 s
+windows while SignalWire sent 50/s. Its own send counter kept pace, yet
+SignalWire got about 100 packets (2 s) fewer than the app sent, where
+other legs match the app's counters within a few packets: about 2 s of
+loss both ways below the app (the emulator's network or the Mac's), not
+its receive path. The same scenario run three more times kept 50/s each
+way across the return, with at most 3 packets lost. `[DEVSTATS]` now logs
+`lost` (inbound packetsLost) and `legs.txt` shows it, so a gap with
+`lost` growing is packets that never arrived, and one without is the app.
+
 **Not covered** (the emulator can't): the earpiece route and proximity
 screen-off on it (the emulator offers only the speaker; the sensor reaches
 incall-manager, which correctly keeps the screen on for the speaker),

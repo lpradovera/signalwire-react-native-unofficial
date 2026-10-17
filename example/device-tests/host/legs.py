@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-DEV = re.compile(r'^\s*(\d+\.\d+)\s.*\[DEVSTATS\] call=(\S+) dir=(\S+) status=(\S+) held=(\S+) in=(\d+) out=(\d+) senders=([^\s\']*)')
+DEV = re.compile(r'^\s*(\d+\.\d+)\s.*\[DEVSTATS\] call=(\S+) dir=(\S+) status=(\S+) held=(\S+) in=(\d+) out=(\d+) senders=([^\s\']*)(?: lost=(-?\d+))?')
 MARK = re.compile(r'^\s*(\d+\.\d+)\s.*\sSWTEST\s*: (.*)$')
 APP = re.compile(r'^\s*(\d+\.\d+)\s.*ReactNativeJS: (.*(?:Token renewed|push is off|CallKit ready|Refusing inbound|CallInProgressError|rejected by user|Authentication).*)$')
 
@@ -32,9 +32,12 @@ def timeline(run):
         m = DEV.match(line)
         if m:
             t, c, d, st, held, i, o, snd = float(m.group(1)), m.group(2)[:8], m.group(3), m.group(4), m.group(5), int(m.group(6)), int(m.group(7)), m.group(8)
-            pi, po = last.get(c, (i, o))
-            last[c] = (i, o)
-            rows.append((t, f'S  {c} {d:<8} {st:<10} held={held:<5} in={i:>5} (+{i - pi:>3})  out={o:>5} (+{o - po:>3})  {snd}'))
+            lost = int(m.group(9)) if m.group(9) is not None else None
+            pi, po, pl = last.get(c, (i, o, lost))
+            last[c] = (i, o, lost)
+            # inbound packets SignalWire sent that never arrived (packetsLost), when the build logs it
+            lost_col = f'  lost={lost:>3} (+{lost - pl:>2})' if lost is not None and pl is not None else ''
+            rows.append((t, f'S  {c} {d:<8} {st:<10} held={held:<5} in={i:>5} (+{i - pi:>3})  out={o:>5} (+{o - po:>3})  {snd}{lost_col}'))
             continue
         m = APP.match(line)
         if m:
