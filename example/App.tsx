@@ -22,6 +22,13 @@ import { useDevStats } from './src/useDevStats';
 
 import type { Call, CredentialProvider } from '@signalwire/js';
 
+/**
+ * The native call UI (CallKit / Telecom). EXPO_PUBLIC_SW_CALLKIT=0 builds
+ * plain WebRTC calls instead; on Android the provider then runs its own
+ * microphone foreground service during a call.
+ */
+const CALL_KIT = process.env.EXPO_PUBLIC_SW_CALLKIT !== '0';
+
 /** A pasted subscriber token, and the subscriber it was minted for when known. */
 interface Credentials {
   token: string;
@@ -133,7 +140,11 @@ export default function App(): React.JSX.Element {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.root}>
-          <SignalWireProvider fetchToken={fetchServerToken} callKit platform={{ netInfo: true }}>
+          <SignalWireProvider
+            fetchToken={fetchServerToken}
+            callKit={CALL_KIT}
+            platform={{ netInfo: true }}
+          >
             <ServerShell />
           </SignalWireProvider>
           {/* Last in the root: the incoming-call sheet draws here, not in a Modal. */}
@@ -158,7 +169,7 @@ export default function App(): React.JSX.Element {
       <SafeAreaView style={styles.root}>
         <SignalWireProvider
           credentialProvider={credentialProvider}
-          callKit
+          callKit={CALL_KIT}
           platform={{ netInfo: true }}
         >
           <Shell reference={credentials?.reference ?? null} />
