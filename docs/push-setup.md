@@ -164,7 +164,8 @@ and eventually stops delivering VoIP pushes to it entirely.
 
 **With Expo, the config plugin now generates it.** `enableVoipPush` writes
 `SignalWireVoipPush.m` into the iOS project and adds it to the compile sources.
-It is on by default when `enableCallKit` is on and `react-native-callkeep` is
+It is on by default when `enableCallKit` is on and callkeep
+(`@signalwire/react-native-callkeep`, or stock `react-native-callkeep`) is
 installed: the hook reports every push through callkeep and cannot build
 without it, so without callkeep prebuild skips it with a warning, and an
 explicit `enableVoipPush: true` fails prebuild instead. It registers a `PKPushRegistry`, reports incoming pushes
@@ -369,7 +370,7 @@ Mount the `CallOverlayHost`: the sheet then draws in it instead of in a
 
 Rolling your own? Use `useRingingPushes` from
 `@signalwire/react-native/ringing` — a separate entry point, because the
-`./callkit` barrel pulls in `react-native-callkeep`, which builds a
+`./callkit` barrel pulls in callkeep, which builds a
 `NativeEventEmitter` at import time and would make an optional peer mandatory.
 Name the caller with `displayableName(push.fromName) ?? displayableName(push.from)`
 from the same entry: it drops the backend's `_undef_` placeholder and turns a

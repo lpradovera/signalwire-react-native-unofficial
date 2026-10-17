@@ -12,7 +12,7 @@ Supports iOS 15.1+ (React Native's own minimum from 0.76 on) and Android 8+,
 on React Native 0.76+ (bare or Expo), with
 **React Native's New Architecture only** (the default since 0.76; React
 Native 0.82 removes the old one). Apps that set `newArchEnabled: false` are
-not supported. The native peers (react-native-webrtc, react-native-callkeep,
+not supported. The native peers (react-native-webrtc, callkeep,
 react-native-incall-manager) run through React Native's interop layer for
 legacy modules and views.
 
@@ -130,10 +130,10 @@ so the two UI packages are siblings by name only and share no code.
 | `@signalwire/react-native/audio` | Speaker / earpiece / headset / Bluetooth routing |
 | `@signalwire/react-native/ringing` | `useRingingPushes` and `displayableName`, for drawing your own incoming-call UI |
 
-`./ringing` is deliberately separate from `./callkit`: the latter imports
-`react-native-callkeep`, which constructs a `NativeEventEmitter` at import
-time, and `./ringing` loads none of it. The main entry still imports
-callkeep (see [Install](#install)), so an app needs it installed either way.
+`./ringing` is deliberately separate from `./callkit`: the latter loads
+callkeep, which constructs a `NativeEventEmitter` at import time, and
+`./ringing` loads none of it. The main entry loads callkeep too (see
+[Install](#install)) when the app has it.
 
 ## Repository layout
 
@@ -231,19 +231,34 @@ npm install @signalwire/react-native@alpha @signalwire/js rxjs \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
   react-native-url-polyfill \
-  react-native-callkeep \
+  @signalwire/react-native-callkeep \
   react-native-incall-manager \
   @react-native-community/netinfo
 # for the call-screen components: also @signalwire/react-native-ui@alpha
 ```
 
 All of these are needed, the last three included: the main entry imports
-them. `SignalWireProvider` loads the native call bridge, which imports
-`react-native-callkeep` and, for audio routing, `react-native-incall-manager`;
+them. `SignalWireProvider` loads the native call bridge, which loads callkeep
+and, for audio routing, imports `react-native-incall-manager`;
 `createReactNativePlatform()` imports `@react-native-community/netinfo` for
-network-loss detection. Without one of them installed, Metro cannot bundle the
-app: `Unable to resolve module react-native-callkeep` (or the other two).
-They are native modules, so rebuild the app after installing them.
+network-loss detection. Without incall-manager or netinfo installed, Metro
+cannot bundle the app (`Unable to resolve module react-native-incall-manager`).
+Without callkeep the app bundles, but the native call UI's `setup()` throws
+`MissingPeerDependencyError`. They are native modules, so rebuild the app
+after installing them.
+
+**callkeep: install `@signalwire/react-native-callkeep`,** the
+SignalWire-maintained fork of react-native-callkeep (same JS API, pod
+`RNCallKeep`, Android package `io.wazo.callkeep`). Stock
+`react-native-callkeep` still works, and the package uses it when the fork is
+not installed, but it lacks the fork's fixes: on Android, stock 4.3.16 crashes
+at launch on the New Architecture (two `@ReactMethod`s with one name), its
+`onHostDestroy` kills the process before a call's `endCall` reaches
+JavaScript, and it has no `didFailCallAction` or Telecom route details. The
+fork's [CHANGELOG](https://github.com/signalwire/react-native-callkeep/blob/signalwire/main/CHANGELOG.md)
+lists everything it adds. Until `@signalwire/react-native-callkeep` is on npm,
+install it from GitHub:
+`npm install github:signalwire/react-native-callkeep#v4.4.0`.
 
 `@signalwire/react` comes with `@signalwire/react-native` as a dependency.
 The four `@signalwire/*` packages of this repository are released together at
@@ -286,14 +301,16 @@ What each native peer is for:
 
 | Package | What uses it |
 | --- | --- |
-| `react-native-callkeep` | Native call UI (CallKit, ConnectionService); `@signalwire/react-native/callkit` |
+| `@signalwire/react-native-callkeep` (or stock `react-native-callkeep`) | Native call UI (CallKit, ConnectionService); `@signalwire/react-native/callkit` |
 | `react-native-incall-manager` | Speaker/earpiece/headset/Bluetooth routing; `@signalwire/react-native/audio` (iOS beyond speaker on/off: see [Audio routes on iOS](#audio-routes-on-ios)) |
 | `@react-native-community/netinfo` | Network-loss detection and SDK reconnection |
 
 `MissingPeerDependencyError`, which names the package and the fix, is for a
 peer that is installed but not linked, such as a dev client not rebuilt since
 the package was added. A peer that is not installed fails the bundle, as
-above.
+above, except callkeep: the package loads whichever of its two names the app
+has, and throws `MissingPeerDependencyError` from `setup()` when it has
+neither.
 
 **This package has a little native code on iOS** (`ios/`, pod
 `SignalWireReactNative`): the system audio output button,
@@ -517,7 +534,7 @@ where it was, on Android too.
 
 #### Audio routes on Android
 
-A call the CallKit bridge tracks runs in react-native-callkeep's self-managed
+A call the CallKit bridge tracks runs in callkeep's self-managed
 ConnectionService, and Telecom routes its audio. The package then asks
 Telecom for every route (`Connection.setAudioRoute`, through callkeep's
 `setAudioRoute`) and `route` follows Telecom's reports (callkeep's
@@ -537,7 +554,7 @@ incall-manager to keep the screen on during the call and to blank it while
 the phone is at the ear on the receiver (its proximity sensor).
 
 The routes Telecom offers come with each of callkeep's reports when
-callkeep is the SignalWire fork (4.4.0-signalwire, which adds them and the
+callkeep is the SignalWire fork (`@signalwire/react-native-callkeep`, which adds them and the
 Bluetooth device to `didChangeAudioRoute`); the state before the first
 report, and every report from stock callkeep (which reports only the route),
 is read from the call's `CallAudioState` by the package's Android library, so

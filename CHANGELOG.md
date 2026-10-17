@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### callkeep: `@signalwire/react-native-callkeep`, or stock
+
+- The package loads callkeep as `@signalwire/react-native-callkeep` (the
+  SignalWire-maintained fork, preferred) or, when that is not installed, as
+  stock `react-native-callkeep`. Both are optional peers. The choice is made
+  once, while the bridge's module loads; an app with neither still bundles,
+  and the native call UI's `setup()` throws `MissingPeerDependencyError`
+  naming the fork (and stock callkeep as the alternative), with the reason when
+  an installed callkeep failed to load.
+- The Expo config plugin generates the iOS VoIP push hook when either name is
+  installed.
+- Install `@signalwire/react-native-callkeep`. Stock callkeep works but lacks
+  the fork's fixes: on Android, 4.3.16 crashes at launch on the New
+  Architecture. Until the fork is on npm, install it from
+  `github:signalwire/react-native-callkeep#v4.4.0`. Apps that import
+  callkeep themselves change the import to `'@signalwire/react-native-callkeep'`.
+
 ### Android call audio is routed by Telecom
 
 Needs a native rebuild for the routes Telecom offers (the package's Android

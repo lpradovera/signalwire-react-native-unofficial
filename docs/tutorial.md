@@ -30,14 +30,19 @@ npm install @signalwire/react-native@alpha @signalwire/js rxjs \
   @react-native-async-storage/async-storage \
   react-native-get-random-values \
   react-native-url-polyfill \
-  react-native-callkeep react-native-incall-manager \
+  @signalwire/react-native-callkeep react-native-incall-manager \
   @react-native-community/netinfo \
   @signalwire/react-native-ui@alpha react-native-safe-area-context
 ```
 
 The callkeep, incall-manager and netinfo lines are native call UI, audio
 routing and network-loss detection. `@signalwire/react-native`'s main entry
-imports all three, so the app does not bundle without them. `@alpha` matters:
+imports incall-manager and netinfo, so the app does not bundle without them,
+and native call UI needs callkeep. `@signalwire/react-native-callkeep` is the
+SignalWire-maintained fork of react-native-callkeep; stock
+`react-native-callkeep` also works but lacks the fork's fixes (on Android,
+stock 4.3.16 crashes at launch on the New Architecture). Until the fork is on
+npm, install it with `npm install github:signalwire/react-native-callkeep#v4.4.0`. `@alpha` matters:
 without it npm installs `latest`, which is still SignalWire's unrelated 1.x SDK
 (see "Install" in the README). `@signalwire/react-native-ui` supplies the
 incoming-call sheet in step 6 (with `react-native-safe-area-context`, its
