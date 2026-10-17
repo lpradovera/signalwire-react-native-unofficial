@@ -818,9 +818,10 @@ let any subscriber holding a token join any parked call.
 | Forward opaque payload to JS | generated `SignalWireVoipPush.m` |
 | Adopt the natively-displayed entry | `CallKeepBridge` / `CallRegistry.adoptNativeEntry` |
 | Ask the app to dial | `CallRegistry.answerRequested$` |
+| Tell the server about a decline | `CallRegistry.rejectRequested$`, subscribed outside React (a killed app's Decline never mounts it) |
 | Claim the entry for the dial | `CallKeepBridge.beginBridgeDial(uuid)` before dialling, `endBridgeDial()` once the dial settles |
 | Attach the placed call | `CallKeepBridge.bindBridgeCall(uuid, call)` |
-| Example wiring | `example/src/useBridgeAnswer.ts` |
+| Example wiring | `example/src/useBridgeAnswer.ts`; `example/src/bridgeDecline.ts`, registered in `example/index.js` |
 
 Attach the call with `getCallKit().bindBridgeCall`, not
 `getCallKit().registry.bindCall`. The bridge's version also watches the
