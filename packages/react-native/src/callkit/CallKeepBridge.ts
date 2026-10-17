@@ -200,6 +200,27 @@ function androidCallPermissions(): string[] {
 const TERMINAL_STATUSES = new Set<string>(['ended', 'disconnecting', 'destroyed', 'failed']);
 
 
+/**
+ * The audio session callkeep sets up on every CallKit start, answer and
+ * activation (iOS): PlayAndRecord with Bluetooth HFP allowed, in voice chat
+ * mode. That is the session WebRTC and incall-manager set up for a call, so
+ * callkeep's reconfiguration no longer changes it under them.
+ *
+ * callkeep's default is mode `Default` with AllowBluetooth|AllowBluetoothA2DP.
+ * On iOS 27 the session was seen as PlayAndRecord, `Default`, options 0 right
+ * after callkeep's answer and its activation at Hold & Accept (iPhone 15 Pro
+ * Max, Bose QC Ultra, 2026-10-17): with neither the option nor a voice mode
+ * (VoiceChat and VideoChat imply AllowBluetoothHFP), iOS moved the call to the
+ * receiver until incall-manager put VoiceChat back, twice in 0.3 s (BUG-I2).
+ * In VoiceChat Bluetooth stays allowed whatever the options end up as.
+ */
+const CALL_AUDIO_SESSION = {
+  // AVAudioSessionCategoryOptionAllowBluetooth (AllowBluetoothHFP): the
+  // headset's microphone and earpiece. WebRTC sets the same.
+  categoryOptions: 0x4,
+  mode: 'AVAudioSessionModeVoiceChat'
+};
+
 export type { CallWaitingMode } from './callWaitingMode';
 
 export interface CallKitSetupOptions {
@@ -472,7 +493,8 @@ export class CallKeepBridge {
         // beside End & Accept, and holds and swaps the two calls. One group
         // offers End & Accept only. A group is one call: no merging.
         maximumCallGroups: this._callWaiting === 'full' ? '2' : '1',
-        maximumCallsPerCallGroup: '1'
+        maximumCallsPerCallGroup: '1',
+        audioSession: CALL_AUDIO_SESSION
       },
       android: {
         alertTitle: 'Permissions required',
