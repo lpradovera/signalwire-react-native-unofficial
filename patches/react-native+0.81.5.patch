@@ -1,20 +1,22 @@
 diff --git a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
-index 577bebe..f17427c 100644
+index 577bebe..a528924 100644
 --- a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
 +++ b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/TextInput/RCTTextInputComponentView.mm
-@@ -346,8 +346,19 @@ - (void)updateState:(const State::Shared &)state oldState:(const State::Shared &
+@@ -346,8 +346,21 @@ - (void)updateState:(const State::Shared &)state oldState:(const State::Shared &
    }
  
    if (_mostRecentEventCount == _state->getData().mostRecentEventCount) {
 +    NSAttributedString *attributedString = RCTNSAttributedStringFromAttributedStringBox(data.attributedStringBox);
-+    // The state echoes the text this view last sent (-_updateState), and the field still holds those characters:
-+    // nothing to write. UIKit may have changed the field's attributes since (the first character typed into an
-+    // empty field gets the default paragraph style, background color and event emitter only after it is
-+    // inserted), so an attribute comparison would see a change and write the text back. Written into a focused
-+    // field, that drops keystrokes: UIKit delivers the keys queued behind the write inside it, -textInputDidChange
-+    // ignores them (_comingFromJS), and the write then replaces them.
-+    if ([attributedString isEqual:_lastStringStateWasUpdatedWith] &&
-+        [attributedString.string isEqualToString:_backedTextInputView.attributedText.string]) {
++    // Don't write text the field already shows. Written into a focused field, the write drops keystrokes: UIKit
++    // delivers the keys queued behind it inside -setAttributedText:, -textInputDidChange ignores them
++    // (_comingFromJS), and the write then replaces them. Two cases compare unequal in -_textOf:equals: although
++    // nothing changed, because UIKit gives typed text attributes the state lacks (the default paragraph style,
++    // and for the first character in an empty field also the background color and event emitter):
++    // - the state echoes the text this view last sent (-_updateState) and the field still holds those characters;
++    // - the state comes from a controlled `value` equal to what was typed: built from props, it has no paragraph
++    //   style.
++    if ([attributedString.string isEqualToString:_backedTextInputView.attributedText.string] &&
++        ([attributedString isEqual:_lastStringStateWasUpdatedWith] || [self _fieldAlreadyShows:attributedString])) {
 +      return;
 +    }
      _comingFromJS = YES;
@@ -23,3 +25,59 @@ index 577bebe..f17427c 100644
      _comingFromJS = NO;
    }
  }
+@@ -837,6 +850,55 @@ - (void)_setShowSoftInputOnFocus:(BOOL)showSoftInputOnFocus
+   }
+ }
+ 
++// UIKit's default paragraph style, whatever its line break mode and resolved writing direction: what UIKit gives text
++// typed into a field whose text attributes set no paragraph style.
++static BOOL RCTIsDefaultParagraphStyle(id value)
++{
++  if (![value isKindOfClass:[NSParagraphStyle class]]) {
++    return NO;
++  }
++  NSParagraphStyle *style = value;
++  NSMutableParagraphStyle *defaultStyle = [NSParagraphStyle.defaultParagraphStyle mutableCopy];
++  defaultStyle.lineBreakMode = style.lineBreakMode;
++  defaultStyle.baseWritingDirection = style.baseWritingDirection;
++  return [style isEqual:defaultStyle];
++}
++
++// YES if the field shows `attributedString`: the same characters, every attribute the string sets has the same value
++// in the field, and every attribute only the field has is a default (the view's default text attributes, or UIKit's
++// default paragraph style). An attribute that JS removes is not a default, so that change is still written.
++- (BOOL)_fieldAlreadyShows:(NSAttributedString *)attributedString
++{
++  NSAttributedString *fieldText = _backedTextInputView.attributedText;
++  if (![attributedString.string isEqualToString:fieldText.string]) {
++    return NO;
++  }
++  NSDictionary<NSAttributedStringKey, id> *defaults = _backedTextInputView.defaultTextAttributes;
++  NSUInteger index = 0;
++  while (index < attributedString.length) {
++    NSRange range;
++    NSRange fieldRange;
++    NSDictionary<NSAttributedStringKey, id> *attributes = [attributedString attributesAtIndex:index
++                                                                               effectiveRange:&range];
++    NSDictionary<NSAttributedStringKey, id> *fieldAttributes = [fieldText attributesAtIndex:index
++                                                                             effectiveRange:&fieldRange];
++    for (NSAttributedStringKey key in attributes) {
++      if (![attributes[key] isEqual:fieldAttributes[key]]) {
++        return NO;
++      }
++    }
++    for (NSAttributedStringKey key in fieldAttributes) {
++      id value = fieldAttributes[key];
++      if (attributes[key] == nil && ![value isEqual:defaults[key]] &&
++          !([key isEqualToString:NSParagraphStyleAttributeName] && RCTIsDefaultParagraphStyle(value))) {
++        return NO;
++      }
++    }
++    index = MIN(NSMaxRange(range), NSMaxRange(fieldRange));
++  }
++  return YES;
++}
++
+ - (BOOL)_textOf:(NSAttributedString *)newText equals:(NSAttributedString *)oldText
+ {
+   // When the dictation is running we can't update the attributed text on the backed up text view
