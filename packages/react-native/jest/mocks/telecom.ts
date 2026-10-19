@@ -4,7 +4,8 @@ import { DeviceEventEmitter, NativeModules } from 'react-native';
  * Telecom as a self-managed callkeep call sees it: callkeep's native
  * `setAudioRoute` (Connection.setAudioRoute), its `didChangeAudioRoute`
  * event (RNCallKeepDidChangeAudioRoute through DeviceEventEmitter), and the
- * package's CallAudioState reader (SignalWireCallAudio).
+ * package's CallAudioState reader (SignalWireCallAudio) and its proximity
+ * screen-off lock (SignalWireProximityScreen).
  *
  * Telecom names: EARPIECE, SPEAKER, WIRED_HEADSET, BLUETOOTH.
  */
@@ -60,13 +61,33 @@ export const callAudioNative = {
   })
 };
 
-/** Links callkeep's native module and, unless `reader` is false, the package's reader. */
-export function installTelecom({ reader = true }: { reader?: boolean } = {}): void {
+/** The proximity screen-off lock: `held` is what the last setHeld left it at. */
+export const proximityNative = {
+  held: false,
+  setHeld: jest.fn<void, [hold: boolean, waitForFar: boolean]>((hold) => {
+    proximityNative.held = hold;
+  })
+};
+
+/**
+ * Links callkeep's native module and, unless `reader` is false, the package's
+ * reader; unless `proximityLock` is false, its proximity lock (false: an app
+ * whose native code predates it).
+ */
+export function installTelecom({
+  reader = true,
+  proximityLock = true
+}: { reader?: boolean; proximityLock?: boolean } = {}): void {
   modules.RNCallKeep = callkeepNative;
   if (reader) {
     modules.SignalWireCallAudio = callAudioNative;
   } else {
     delete modules.SignalWireCallAudio;
+  }
+  if (proximityLock) {
+    modules.SignalWireProximityScreen = proximityNative;
+  } else {
+    delete modules.SignalWireProximityScreen;
   }
   follows = true;
 }
@@ -74,10 +95,13 @@ export function installTelecom({ reader = true }: { reader?: boolean } = {}): vo
 export function uninstallTelecom(): void {
   delete modules.RNCallKeep;
   delete modules.SignalWireCallAudio;
+  delete modules.SignalWireProximityScreen;
   states.clear();
   follows = true;
   callkeepNative.setAudioRoute.mockClear();
   callAudioNative.getCallAudioState.mockClear();
+  proximityNative.setHeld.mockClear();
+  proximityNative.held = false;
 }
 
 /** Sets a call's state without a report (the state before JavaScript subscribed). */

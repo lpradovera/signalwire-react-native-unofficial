@@ -17,7 +17,9 @@ public class SignalWireReactNativePackage implements ReactPackage {
   @Override
   public List<NativeModule> createNativeModules(@NonNull ReactApplicationContext context) {
     return Arrays.<NativeModule>asList(
-        new IncomingCallNotificationModule(context), new CallAudioStateModule(context));
+        new IncomingCallNotificationModule(context),
+        new CallAudioStateModule(context),
+        new ProximityScreenModule(context));
   }
 
   @NonNull

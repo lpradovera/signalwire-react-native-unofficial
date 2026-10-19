@@ -171,12 +171,25 @@ export function requestTelecomRoute(uuid: string, device: AudioDeviceName): void
 
 type ScreenMethod = 'setKeepScreenOn' | 'startProximitySensor' | 'stopProximitySensor' | 'turnScreenOn' | 'turnScreenOff';
 
+/** The package's proximity screen-off lock (ProximityScreenModule). */
+interface ProximityScreenNative {
+  setHeld(hold: boolean, waitForFar: boolean): void;
+}
+
 /**
  * What incall-manager's session did for a call besides routing, through its
  * single-purpose methods instead of start(): the screen kept on, and blanked
- * while the phone is held to the ear on the receiver (the proximity sensor;
- * a self-managed call has no system in-call UI to do it). Telecom sets the
- * audio mode and takes audio focus. Returns the teardown.
+ * while the phone is held to the ear on the receiver (a self-managed call has
+ * no system in-call UI to do it). Telecom sets the audio mode and takes audio
+ * focus. Returns the teardown.
+ *
+ * Blanking is the system's: the package's ProximityScreenModule holds a
+ * PROXIMITY_SCREEN_OFF_WAKE_LOCK while the route is the receiver, and the
+ * system turns the screen off when something is near and on when it goes
+ * away. The lock is released at once on any other route, and at the end of
+ * the call once the phone has left the ear. An app whose native code predates
+ * the module (not rebuilt) falls back to incall-manager's sensor, which blanks
+ * the screen only once JavaScript has seen its "near" event.
  */
 export function startTelecomCallScreen(route$: Observable<string>): () => void {
   const manager = InCallManager as unknown as Partial<Record<ScreenMethod, (enable?: boolean) => void>>;
@@ -194,6 +207,38 @@ export function startTelecomCallScreen(route$: Observable<string>): () => void {
       logger.warn(`incall-manager ${name} failed:`, error);
     }
   };
+  call('setKeepScreenOn', true);
+  const lock = nativeModule<ProximityScreenNative>('SignalWireProximityScreen', 'setHeld');
+  const stopBlanking = lock ? holdProximityLock(lock, route$) : blankOnSensor(call, route$);
+  return () => {
+    stopBlanking();
+    call('setKeepScreenOn', false);
+  };
+}
+
+/** Holds the proximity screen-off lock while `route$` is the receiver. Returns the release. */
+function holdProximityLock(lock: ProximityScreenNative, route$: Observable<string>): () => void {
+  let held = false;
+  const set = (hold: boolean, waitForFar: boolean): void => {
+    if (hold === held) {
+      return;
+    }
+    held = hold;
+    try {
+      lock.setHeld(hold, waitForFar);
+    } catch (error) {
+      logger.warn('Failed to set the proximity screen-off lock:', error);
+    }
+  };
+  const routes = route$.subscribe((route) => set(route === 'earpiece', false));
+  return () => {
+    routes.unsubscribe();
+    set(false, true);
+  };
+}
+
+/** incall-manager's sensor: blanks the screen on a "near" event while `route$` is the receiver. */
+function blankOnSensor(call: (name: ScreenMethod) => void, route$: Observable<string>): () => void {
   let near = false;
   let route = '';
   let blanked = false;
@@ -204,7 +249,6 @@ export function startTelecomCallScreen(route$: Observable<string>): () => void {
       call(blank ? 'turnScreenOff' : 'turnScreenOn');
     }
   };
-  call('setKeepScreenOn', true);
   call('startProximitySensor');
   const proximity = DeviceEventEmitter.addListener('Proximity', (event: unknown) => {
     near = (event as { isNear?: unknown } | undefined)?.isNear === true;
@@ -222,6 +266,5 @@ export function startTelecomCallScreen(route$: Observable<string>): () => void {
       blanked = false;
       call('turnScreenOn');
     }
-    call('setKeepScreenOn', false);
   };
 }

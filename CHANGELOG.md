@@ -29,6 +29,15 @@ library reads them); routing through Telecom works without it.
 - New native module `SignalWireCallAudio` in the package's Android library:
   reads a callkeep call's `CallAudioState` (route, the routes Telecom offers,
   the Bluetooth device's name).
+- The screen goes off at the ear on the receiver. A new native module,
+  `SignalWireProximityScreen`, holds a `PROXIMITY_SCREEN_OFF_WAKE_LOCK`
+  while the call's route is the earpiece, and the system blanks the screen
+  when something is near, as the dialer does. It is released at once on the
+  speaker, Bluetooth or a wired headset, and at the end of the call once the
+  phone has left the ear. The screen used to go off only after JavaScript
+  saw a "near" event from incall-manager's sensor listener and asked for the
+  lock; on a Pixel 6 Pro (Android 17) it never went off. Without a native
+  rebuild the sensor path still runs.
 
 ### Android calls: set active, permissions, foreground service, incoming-call notification
 

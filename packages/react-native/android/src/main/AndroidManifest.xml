@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
   <!-- Lets the incoming-call notification open the call over the lock screen. -->
   <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+  <!-- The proximity screen-off lock held during a call on the receiver (ProximityScreenModule). -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
 
   <application>
     <receiver

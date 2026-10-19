@@ -11,6 +11,7 @@ import {
   callAudioNative,
   callkeepNative,
   installTelecom,
+  proximityNative,
   reportTelecom,
   setTelecomState,
   telecomIgnoresRequests,
@@ -84,11 +85,128 @@ describe('AudioRouteController on Android with Telecom', () => {
       expect(choose).not.toHaveBeenCalled();
     });
 
-    it('keeps its other duties: the screen kept on, and the proximity sensor while the call runs', async () => {
+    it('keeps the screen on while the call runs', async () => {
       setTelecomState(CALL, { route: 'EARPIECE', available: PHONE });
       controller.start('audio', CALL);
       await settle();
       expect(InCallManager.setKeepScreenOn).toHaveBeenLastCalledWith(true);
+
+      controller.stop();
+      expect(InCallManager.setKeepScreenOn).toHaveBeenLastCalledWith(false);
+    });
+  });
+
+  describe('the screen at the ear (the proximity screen-off lock)', () => {
+    /** setHeld's calls, as `hold` or `release` (`release-once-far` with RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY). */
+    function lockCalls(): string[] {
+      return proximityNative.setHeld.mock.calls.map(([hold, waitForFar]) =>
+        hold ? 'hold' : waitForFar ? 'release-once-far' : 'release'
+      );
+    }
+
+    it('holds the lock on the receiver, without waiting for a sensor event, and never uses incall-manager\'s sensor', async () => {
+      setTelecomState(CALL, { route: 'EARPIECE', available: PHONE });
+      controller.start('audio', CALL);
+      await settle();
+      expect(controller.route).toBe('earpiece');
+      expect(proximityNative.held).toBe(true);
+      expect(lockCalls()).toEqual(['hold']);
+      expect(InCallManager.startProximitySensor).not.toHaveBeenCalled();
+      expect(InCallManager.turnScreenOff).not.toHaveBeenCalled();
+    });
+
+    it('releases it at once on the speaker and holds it again back on the receiver', async () => {
+      setTelecomState(CALL, { route: 'EARPIECE', available: PHONE });
+      controller.start('audio', CALL);
+      await settle();
+
+      controller.setSpeakerOn(true);
+      expect(lockCalls()).toEqual(['hold', 'release']);
+      await settle();
+      expect(controller.route).toBe('speaker');
+      expect(proximityNative.held).toBe(false);
+
+      controller.setSpeakerOn(false);
+      await settle();
+      expect(controller.route).toBe('earpiece');
+      expect(lockCalls()).toEqual(['hold', 'release', 'hold']);
+    });
+
+    it('releases it when Telecom moves the call to Bluetooth or a wired headset', async () => {
+      setTelecomState(CALL, { route: 'EARPIECE', available: WITH_BT });
+      controller.start('audio', CALL);
+      await settle();
+      expect(proximityNative.held).toBe(true);
+
+      reportTelecom(CALL, { route: 'BLUETOOTH', available: WITH_BT });
+      await settle();
+      expect(controller.route).toBe('bluetooth');
+      expect(proximityNative.held).toBe(false);
+
+      reportTelecom(CALL, { route: 'EARPIECE', available: WITH_BT });
+      await settle();
+      expect(proximityNative.held).toBe(true);
+
+      reportTelecom(CALL, { route: 'WIRED_HEADSET', available: WITH_WIRED });
+      await settle();
+      expect(controller.route).toBe('headset');
+      expect(proximityNative.held).toBe(false);
+      expect(lockCalls()).toEqual(['hold', 'release', 'hold', 'release']);
+    });
+
+    it('is not held for a call Telecom starts on Bluetooth, once Telecom says so', async () => {
+      setTelecomState(CALL, { route: 'BLUETOOTH', available: WITH_BT });
+      controller.start('audio', CALL);
+      await settle();
+      expect(controller.route).toBe('bluetooth');
+      expect(proximityNative.held).toBe(false);
+    });
+
+    it('is released for a video call once it is on the speaker', async () => {
+      setTelecomState(CALL, { route: 'EARPIECE', available: PHONE });
+      controller.start('video', CALL);
+      await settle();
+      // Telecom starts it on the receiver, which the route shows until the
+      // speaker request lands.
+      expect(controller.route).toBe('speaker');
+      expect(proximityNative.held).toBe(false);
+      expect(lockCalls()).toEqual(['hold', 'release']);
+    });
+
+    it('releases it when the call ends, once the phone has left the ear', async () => {
+      setTelecomState(CALL, { route: 'EARPIECE', available: PHONE });
+      controller.start('audio', CALL);
+      await settle();
+
+      controller.stop();
+      expect(lockCalls()).toEqual(['hold', 'release-once-far']);
+      expect(proximityNative.held).toBe(false);
+
+      // Nothing after the end: a late report can't take the lock again.
+      reportTelecom(CALL, { route: 'EARPIECE', available: PHONE });
+      await settle();
+      expect(lockCalls()).toEqual(['hold', 'release-once-far']);
+    });
+
+    it('is released for the whole call on the speaker, ending included', async () => {
+      setTelecomState(CALL, { route: 'SPEAKER', available: PHONE });
+      controller.start('audio', CALL);
+      await settle();
+      expect(controller.route).toBe('speaker');
+      controller.stop();
+      expect(proximityNative.held).toBe(false);
+    });
+  });
+
+  describe('the screen at the ear without the package\'s lock (native code not rebuilt)', () => {
+    beforeEach(() => {
+      installTelecom({ proximityLock: false });
+    });
+
+    it("runs incall-manager's proximity sensor while the call runs", async () => {
+      setTelecomState(CALL, { route: 'EARPIECE', available: PHONE });
+      controller.start('audio', CALL);
+      await settle();
       expect(InCallManager.startProximitySensor).toHaveBeenCalledTimes(1);
 
       controller.stop();
