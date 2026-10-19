@@ -16,7 +16,7 @@
 Support server for `@signalwire/react-native`: a device-token registry and a
 push sender for iOS VoIP (PushKit) and Android FCM.
 
-SignalWire has no push infrastructure, so this covers the middle of the chain:
+SignalWire Call Fabric has push of its own, but it is configured for an account by SignalWire staff rather than self-serve, and the v4 JavaScript SDK this package wraps has no API to answer a call delivered that way. So this covers the middle of the chain:
 
 ```
 SignalWire ──webhook──▶ this server ──APNs/FCM──▶ device ──▶ reportIncomingPush()
@@ -70,7 +70,7 @@ time, which is the sane way to debug push.
 | `SIGNALWIRE_API_TOKEN` | `/token`, ending callers | Also used to `calling.end` a parked caller when the device hangs up or the user declines |
 | `ALLOW_UNAUTHENTICATED_TOKENS` | — | `1` mints a subscriber token for **any** caller. Development only; see [Subscriber tokens](#subscriber-tokens) |
 | `DEV_SUBSCRIBER_REFERENCE` | — | Default reference for the development `/token` stub, **and** the park's fallback subscriber: with it set, every park that `?subscriber=` and `PARK_ROUTES` do not resolve rings this one user |
-| `PUBLIC_URL` | parked-caller flow | Base URL SignalWire reaches (your tunnel). Builds the bridge's `status_url` — without it a parked caller is left up when the device hangs up — and is the URL signatures are checked against |
+| `PUBLIC_URL` | parked-caller flow | Base URL SignalWire reaches (your tunnel). Builds the bridge's `status_url` — without it a parked caller is left up when the device hangs up — and the park's poll URL, so the park can end itself; it is also the URL signatures are checked against |
 | `SIGNALWIRE_SIGNING_KEY` | production | The space's Signing Key. Set, `/swml/park`, `/swml/bridge`, `/swml/bridge/status` and `/webhooks/signalwire` refuse requests SignalWire did not sign (the webhook then needs no `API_TOKEN`). Unset, anyone who can reach the server can ring any subscriber. Needs `PUBLIC_URL` |
 | `PARK_ROUTES` | phone numbers | Dialled destination → subscriber, e.g. `+15551234567:rn-example,+15559998888:other-user` |
 | `PARK_RINGBACK_URL` | — | Your own ringback recording, replacing the generated `ring:15.0:us` (this server's `/swml/ringback` serves one) |
@@ -99,7 +99,8 @@ One `.p8` APNs key covers alert *and* VoIP pushes, sandbox *and* production.
 | `POST /swml/park` | SignalWire signature | Park the caller, push the user's devices. Subscriber from `?subscriber=` on this URL, then `PARK_ROUTES`. |
 | `POST /swml/bridge` | SignalWire signature + bridge token | Join the answering device to the parked caller. |
 | `POST /swml/bridge/status` | SignalWire signature | The bridge's status callback; ends the caller once the device leg ends. |
-| `POST /swml/decline` | bridge token | The app reports a decline. Body: `bridgeToken`. Ends the parked caller (`204`); `409` if the call was already answered or declined. |
+| `GET /swml/park/state` | the park's key | The park SWML's poll. Query: `call` (its `%{call.call_id}`), `key`. Answers `{ "end": "yes" }` once the caller should be hung up (declined, bridge ended, window over, or a park the server no longer knows), else `"no"`; `403` for a key presented with another call. |
+| `POST /swml/decline` | bridge token | The app reports a decline. Body: `bridgeToken`. Marks the park ended and tries `calling.end` (`204`; with `PUBLIC_URL` unset, `502` if that fails and `503` without SignalWire credentials); `409` if the call was already answered or declined. |
 | `GET /swml/ringback` | none | A generated ringback WAV. |
 
 "SignalWire signature" applies only with `SIGNALWIRE_SIGNING_KEY` set; without
@@ -147,14 +148,13 @@ reuses a stale one.
 
 Call the park handler from a phone number pointed at it, or as a top-level call
 whose own SWML is the park URL (a Calling API `dial` with
-`"url": "<public>/swml/park?subscriber=<ref>"`). A REST dial or SWML `connect`
-to the park resource's *Fabric address* runs the park on an internal leg
-(`to: sip:steer@…`) that the API cannot end: after the device hangs up or
-declines, `calling.end`, `update` with `status: completed` and the LaML Calls
-update all answer `404`, and the caller stays up until its own script or
-`max_duration` ends it. The server warns `Parked on an internal leg` when that
-happens, and adds a `hint` to the failed end. Details in
-[docs/push-setup.md](../docs/push-setup.md#testing-it-call-the-park-handler-from-a-phone-number-or-as-a-top-level-call).
+`"url": "<public>/swml/park?subscriber=<ref>"`).
+
+With `PUBLIC_URL` set the park ends itself: its SWML loops a short ringback and
+polls `GET /swml/park/state?call=%{call.call_id}&key=<park key>`, hanging up
+when the answer is `{ "end": "yes" }`. `/swml/decline` and `/swml/bridge/status`
+mark the park ended and still try `calling.end`. Details in
+[docs/push-setup.md](../docs/push-setup.md#the-park-ends-itself).
 
 ## ⚠️ The one unverified piece
 

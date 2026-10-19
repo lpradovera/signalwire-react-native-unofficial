@@ -3,8 +3,6 @@ import { Router } from 'express';
 import { requireSignalWireSignature } from '../signalwire/signature.js';
 
 import type { BridgeTokenStore } from '../core/BridgeTokenStore.js';
-import { UNENDABLE_LEG_HINT } from '../signalwire/endCall.js';
-
 import type { CallEnder } from '../signalwire/endCall.js';
 import type { NotificationService } from '../core/NotificationService.js';
 import type { NotifyResult } from '../core/types.js';
@@ -12,6 +10,14 @@ import type { NextFunction, Request, Response } from 'express';
 
 /** One `ring:` entry lasts this long; the park window is built from these. */
 const RINGBACK_CHUNK_SECONDS = 15;
+/**
+ * The generated ringback chunk when the park polls: one ring cadence (2 s on,
+ * 4 s off), so a decline releases the caller within about 6 s and the tone
+ * restarts in step.
+ */
+const POLL_RINGBACK_SECONDS = 6;
+/** How long the park's poll may take before the SWML treats it as "keep waiting". */
+const PARK_POLL_TIMEOUT_SECONDS = 5;
 const DEFAULT_PARK_SECONDS = 60;
 /**
  * How long the park reply waits on the push. Long enough for a normal APNs or
@@ -112,21 +118,6 @@ function firstString(candidates: readonly unknown[]): string | undefined {
 function callSidFrom(body: Record<string, unknown>): string | undefined {
   const { params, call } = paramsAndCall(body);
   return firstString([call.call_id, call.id, params.call_id, params.callSid, params.CallSid]);
-}
-
-/**
- * Whether the park is running on an internal leg rather than the caller's
- * own: SignalWire addresses that leg as `sip:steer@<internal host>`. See
- * {@link UNENDABLE_LEG_HINT}.
- */
-function isInternalLeg(body: Record<string, unknown>): boolean {
-  const { call } = paramsAndCall(body);
-  return typeof call.to === 'string' && /^sip:steer@/i.test(call.to);
-}
-
-/** The hint for a failed end, when the failure is SignalWire not knowing the id. */
-function endFailureHint(result: { ok: false; status?: number }): { hint?: string } {
-  return result.status === 404 ? { hint: UNENDABLE_LEG_HINT } : {};
 }
 
 /** Reads the caller's identity, which becomes the name on the CallKit screen. */
@@ -298,6 +289,76 @@ export function createSwmlRoutes({
     ? requireSignalWireSignature({ signingKey, publicUrl })
     : (_req: Request, _res: Response, next: NextFunction) => next();
 
+  // The park SWML polls this, so it can end itself (see selfEndingPark).
+  const stateBase = publicUrl ? `${publicUrl.replace(/\/$/, '')}/swml/park/state` : undefined;
+
+  /**
+   * The park SWML when it can poll: it owns its own exit.
+   *
+   * Rather than one long ringback, it loops: a ringback chunk, a `request` to
+   * `/swml/park/state` (keyed by its own `%{call.call_id}` and the park's
+   * secret), a `switch` that hangs up when the answer is `end: "yes"`, and a
+   * `goto` back, bounded by `max` so the park still ends with its window.
+   * A decline, or the end of a bridged call, marks the park ended here, and
+   * the caller is released within one chunk on whichever leg the SWML runs —
+   * it does not depend on a REST end reaching that leg. A poll that fails or
+   * times out reads as "keep waiting", so a slow server costs a ring, not the
+   * call.
+   */
+  const selfEndingPark = (stateUrl: string): Record<string, unknown> => {
+    const chunkSeconds = ringback ? ringbackChunkSeconds : POLL_RINGBACK_SECONDS;
+    const chunkUrl = ringback ?? `ring:${POLL_RINGBACK_SECONDS.toFixed(1)}:us`;
+    const rounds = Math.max(2, Math.ceil(parkSeconds / chunkSeconds));
+    return {
+      version: '1.0.0',
+      sections: {
+        main: [
+          { answer: {} },
+          { label: 'ring' },
+          { play: { url: chunkUrl } },
+          {
+            request: {
+              url: stateUrl,
+              method: 'GET',
+              save_variables: true,
+              timeout: PARK_POLL_TIMEOUT_SECONDS
+            }
+          },
+          { switch: { variable: 'vars.request_response.end', case: { yes: [{ hangup: {} }] } } },
+          // `max` counts the jumps back, so the chunk plays `rounds` times.
+          { goto: { label: 'ring', max: rounds - 1 } },
+          // Reached only if nobody answers within the park window.
+          { hangup: { reason: 'busy' } }
+        ]
+      }
+    };
+  };
+
+  /**
+   * The park SWML's poll: `{ end: "yes" }` once the caller should be hung up.
+   *
+   *   GET /swml/park/state?call=<call_id>&key=<park key>  ->  200 { end } | 400 | 403
+   *
+   * Fetched by SignalWire from inside the park, which a request verb does not
+   * sign, so it is authorised by the park's own key: minted with the park,
+   * sent only in that park's SWML, and checked against the call it belongs to.
+   * The answer tells the caller's own script whether to hang up, nothing more.
+   */
+  router.get('/park/state', (req, res) => {
+    const call = req.query.call;
+    const key = req.query.key;
+    if (typeof call !== 'string' || call.length === 0 || typeof key !== 'string' || key.length === 0) {
+      res.status(400).json({ error: 'call and key are required' });
+      return;
+    }
+    const state = tokens.parkState(key, call);
+    if (typeof state !== 'string') {
+      res.status(403).json({ error: state.error });
+      return;
+    }
+    res.json({ end: state === 'end' ? 'yes' : 'no' });
+  });
+
   router.post('/park', signedBySignalWire, async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const callSid = callSidFrom(body);
@@ -321,19 +382,6 @@ export function createSwmlRoutes({
 
     const caller = callerFrom(body);
     const token = tokens.mint(callSid, externalUserId);
-
-    if (isInternalLeg(body)) {
-      // The call will ring and bridge as usual, but when it is over nothing
-      // can end this caller: said now, where a test setup will see it.
-      console.warn(
-        JSON.stringify({
-          at: new Date().toISOString(),
-          message: 'Parked on an internal leg',
-          callSid,
-          hint: UNENDABLE_LEG_HINT
-        })
-      );
-    }
 
     // Push before the SWML is returned, so the device is already waking while
     // the caller hears the first ring — but wait only so long: the caller
@@ -422,8 +470,15 @@ export function createSwmlRoutes({
     // `ring:<seconds>:<country>` is generated by SignalWire, so the common
     // case hosts no audio at all. PARK_RINGBACK_URL overrides it with your own
     // recording; the /swml/ringback route on this server serves a suitable one.
+    if (stateBase) {
+      res.json(selfEndingPark(`${stateBase}?call=%{call.call_id}&key=${encodeURIComponent(token.parkKey)}`));
+      return;
+    }
+
     const chunks = Math.max(1, Math.ceil(parkSeconds / ringbackChunkSeconds));
 
+    // Without PUBLIC_URL the SWML has no address to poll, so the park cannot
+    // end itself: one long ringback, and only calling.end ends it sooner.
     res.json({
       version: '1.0.0',
       sections: {
@@ -610,6 +665,10 @@ export function createSwmlRoutes({
    * by /swml/bridge. `disconnected` means the device's leg is gone — and the
    * caller's leg is not returned to its script and is not hung up, so without
    * this it stays up, connected to nothing, in silence.
+   *
+   * Claiming the end also marks the park ended, for its poll. But a caller
+   * taken by a bridge does not return to the park script, so the poll cannot
+   * end it here: `calling.end` does.
    */
   router.post('/bridge/status', signedBySignalWire, async (req, res) => {
     // Answer first. This is a status callback: SignalWire does not need our
@@ -671,7 +730,7 @@ export function createSwmlRoutes({
         message: result.ok ? 'Ended caller leg' : 'Failed to end caller leg',
         callSid: paired.callSid,
         connectState: state,
-        ...(result.ok ? {} : { error: result.error, ...endFailureHint(result) })
+        ...(result.ok ? {} : { error: result.error })
       })
     );
   });
@@ -695,15 +754,18 @@ export function createSwmlRoutes({
       res.status(400).json({ error: 'bridgeToken is required' });
       return;
     }
-    if (!callEnder) {
+    if (!callEnder && !stateBase) {
       // Checked before the token is touched, so the call stays answerable.
+      // With PUBLIC_URL set the park ends itself, so this is only the case
+      // where nothing at all could end the caller.
       res.status(503).json({
         error:
-          'No call ender configured (SIGNALWIRE_SPACE, SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN); the caller cannot be ended'
+          'No call ender configured (SIGNALWIRE_SPACE, SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN) and no PUBLIC_URL for the park to poll; the caller cannot be ended'
       });
       return;
     }
 
+    // Marks the park ended: its next poll hangs the caller up.
     const declined = tokens.decline(token);
     if ('error' in declined) {
       const status = { unknown: 404, expired: 410, 'already-redeemed': 409, 'already-declined': 409 }[
@@ -713,16 +775,33 @@ export function createSwmlRoutes({
       return;
     }
 
+    if (!callEnder) {
+      console.log(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          message: 'Declined; the park hangs up on its next poll',
+          callSid: declined.callSid
+        })
+      );
+      res.status(204).end();
+      return;
+    }
+
+    // Still tried: it ends the caller at once rather than at the next poll.
     const result = await callEnder.end(declined.callSid, 'decline');
     console.log(
       JSON.stringify({
         at: new Date().toISOString(),
-        message: result.ok ? 'Declined; ended caller leg' : 'Declined; failed to end caller leg',
+        message: result.ok
+          ? 'Declined; ended caller leg'
+          : stateBase
+            ? 'Declined; calling.end failed, the park hangs up on its next poll'
+            : 'Declined; failed to end caller leg',
         callSid: declined.callSid,
-        ...(result.ok ? {} : { error: result.error, ...endFailureHint(result) })
+        ...(result.ok ? {} : { error: result.error })
       })
     );
-    if (result.ok) {
+    if (result.ok || stateBase) {
       res.status(204).end();
     } else {
       res.status(502).json({ error: result.error });

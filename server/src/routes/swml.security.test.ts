@@ -144,7 +144,8 @@ describe('SignalWire signatures on the SWML routes', () => {
     const response = await h.signedPost('/swml/park', parkBody());
 
     assert.equal(response.status, 200);
-    assert.deepEqual(verbs(await swmlOf(response)), ['answer', 'play', 'hangup']);
+    // With PUBLIC_URL set the park polls for its own end (see "a park that ends itself").
+    assert.deepEqual(verbs(await swmlOf(response)), ['answer', 'label', 'play', 'request', 'switch', 'goto', 'hangup']);
     assert.equal(h.sent.length, 1);
   });
 
@@ -426,97 +427,138 @@ describe('POST /swml/decline', () => {
   });
 });
 
-describe('a parked caller SignalWire cannot end (BUG-P2)', () => {
-  /** Console lines written while `run` runs, parsed. */
-  async function logged(run: () => Promise<unknown>): Promise<Array<Record<string, unknown>>> {
-    const lines: string[] = [];
-    const { log, warn } = console;
-    console.log = (line: unknown) => lines.push(String(line));
-    console.warn = (line: unknown) => lines.push(String(line));
-    try {
-      await run();
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    } finally {
-      console.log = log;
-      console.warn = warn;
-    }
-    return lines.map((line) => JSON.parse(line) as Record<string, unknown>);
+describe('a park that ends itself', () => {
+  /** Parks a call and returns its SWML and the state URL it polls. */
+  async function park(h: Harness, callId = 'a-leg-sid'): Promise<{ swml: Swml; stateUrl: string }> {
+    const response = await h.signedPost('/swml/park', parkBody({ call: { call_id: callId, to: '/public/rn-example-park', from: '+15551234567' } }));
+    const swml = await swmlOf(response);
+    const request = swml.sections.main.find((verb) => 'request' in verb)?.request;
+    return { swml, stateUrl: String(request?.url ?? '') };
   }
 
-  // What calling.end answered on the device tests, for a park that ran on an
-  // internal leg (a REST dial to the park's Fabric address).
-  const unknownCall: CallEnder = {
-    async end() {
-      return { ok: false, error: '404 Not Found', status: 404 };
-    }
+  /** Polls as SignalWire would, with `%{call.call_id}` substituted. */
+  async function poll(h: Harness, stateUrl: string, callId = 'a-leg-sid'): Promise<Response> {
+    const url = new URL(stateUrl.replace('%{call.call_id}', callId));
+    assert.equal(url.origin + url.pathname, `${PUBLIC_URL}/swml/park/state`);
+    return fetch(`${h.base}/swml/park/state${url.search}`);
+  }
+
+  const signed = {
+    signingKey: SIGNING_KEY,
+    publicUrl: PUBLIC_URL,
+    routes: { '/public/rn-example-park': 'rn-example' }
   };
 
-  it('says why, and how to test instead, when the bridge ends and calling.end 404s', async () => {
-    const h = await harness({ callEnder: unknownCall, publicUrl: 'https://example.test' });
-    const { token } = h.tokens.mint('steer-leg-sid', 'rn-example');
-    h.tokens.redeem(token, 'rn-example');
+  it('loops a short ringback and polls, instead of one long play', async () => {
+    const h = await harness(signed);
+    const { swml, stateUrl } = await park(h);
 
-    const lines = await logged(() =>
-      h.post(`/swml/bridge/status?token=${token}`, { params: { connect_state: 'disconnected' } })
-    );
-
-    const line = lines.find((entry) => entry.message === 'Failed to end caller leg');
-    assert.ok(line, `no failure line in ${JSON.stringify(lines)}`);
-    assert.equal(line.callSid, 'steer-leg-sid');
-    assert.match(String(line.hint), /internal leg/);
-    assert.match(String(line.hint), /phone number|top-level/);
+    assert.deepEqual(verbs(swml), ['answer', 'label', 'play', 'request', 'switch', 'goto', 'hangup']);
+    const [, label, play, request, choice, jump, hangup] = swml.sections.main;
+    assert.equal(play.play.url, 'ring:6.0:us');
+    assert.equal(request.request.method, 'GET');
+    assert.equal(request.request.save_variables, true);
+    assert.match(stateUrl, /^https:\/\/push\.example\.test\/swml\/park\/state\?call=%\{call\.call_id\}&key=[0-9a-f-]{36}$/);
+    assert.deepEqual(choice.switch, { variable: 'vars.request_response.end', case: { yes: [{ hangup: {} }] } });
+    // 60 s of 6 s chunks: ten plays, so nine jumps back, then the busy hangup.
+    assert.deepEqual(jump.goto, { label: label.label, max: 9 });
+    assert.deepEqual(hangup, { hangup: { reason: 'busy' } });
   });
 
-  it('says the same when a decline cannot end the caller', async () => {
-    const h = await harness({ callEnder: unknownCall });
-    const { token } = h.tokens.mint('steer-leg-sid', 'rn-example');
+  it('keeps the park key out of the push: only SignalWire gets it', async () => {
+    const h = await harness(signed);
+    const { stateUrl } = await park(h);
+    const key = new URL(stateUrl.replace('%{call.call_id}', 'x')).searchParams.get('key');
 
-    let status = 0;
-    const lines = await logged(async () => {
-      status = (await h.post('/swml/decline', { bridgeToken: token })).status;
-    });
-
-    assert.equal(status, 502);
-    const line = lines.find((entry) => entry.message === 'Declined; failed to end caller leg');
-    assert.match(String(line?.hint), /internal leg/);
+    assert.ok(key);
+    assert.equal(JSON.stringify(h.sent).includes(key), false);
   });
 
-  it('adds no hint to other failures', async () => {
+  it('answers "no" while the caller waits', async () => {
+    const h = await harness(signed);
+    const { stateUrl } = await park(h);
+
+    const response = await poll(h, stateUrl);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { end: 'no' });
+  });
+
+  it('answers "yes" once the user declines, and still tries calling.end', async () => {
+    const h = await harness(signed);
+    const { stateUrl } = await park(h);
+    const token = String(h.sent[0]?.payload.call_id);
+
+    assert.equal((await h.post('/swml/decline', { bridgeToken: token })).status, 204);
+    assert.deepEqual(await (await poll(h, stateUrl)).json(), { end: 'yes' });
+    assert.deepEqual(h.ended, [{ callId: 'a-leg-sid', reason: 'decline' }]);
+  });
+
+  it('declines without a call ender: the park hangs up on its next poll', async () => {
+    const h = await harness({ ...signed, noEnder: true });
+    const { stateUrl } = await park(h);
+    const token = String(h.sent[0]?.payload.call_id);
+
+    assert.equal((await h.post('/swml/decline', { bridgeToken: token })).status, 204);
+    assert.deepEqual(await (await poll(h, stateUrl)).json(), { end: 'yes' });
+  });
+
+  it('declines when calling.end fails: the poll still ends the caller', async () => {
     const h = await harness({
-      callEnder: { async end() { return { ok: false, error: '500 boom', status: 500 }; } },
-      publicUrl: 'https://example.test'
+      ...signed,
+      callEnder: { async end() { return { ok: false, error: '500 boom', status: 500 }; } }
     });
-    const { token } = h.tokens.mint('top-level-sid', 'rn-example');
+    const { stateUrl } = await park(h);
+    const token = String(h.sent[0]?.payload.call_id);
+
+    assert.equal((await h.post('/swml/decline', { bridgeToken: token })).status, 204);
+    assert.deepEqual(await (await poll(h, stateUrl)).json(), { end: 'yes' });
+  });
+
+  it('answers "yes" once a bridged call has ended, and ends the caller', async () => {
+    const h = await harness(signed);
+    const { stateUrl } = await park(h);
+    const token = String(h.sent[0]?.payload.call_id);
     h.tokens.redeem(token, 'rn-example');
+    assert.deepEqual(await (await poll(h, stateUrl)).json(), { end: 'no' });
 
-    const lines = await logged(() =>
-      h.post(`/swml/bridge/status?token=${token}`, { params: { connect_state: 'disconnected' } })
-    );
-    const line = lines.find((entry) => entry.message === 'Failed to end caller leg');
-    assert.ok(line);
-    assert.equal(line.hint, undefined);
+    await h.signedPost(`/swml/bridge/status?token=${token}`, { params: { connect_state: 'disconnected' } });
+    await settle();
+
+    assert.deepEqual(await (await poll(h, stateUrl)).json(), { end: 'yes' });
+    assert.deepEqual(h.ended.map((end) => end.callId), ['a-leg-sid']);
   });
 
-  it('warns at park time when the park runs on an internal leg', async () => {
-    const h = await harness();
-    const lines = await logged(() =>
-      h.post('/swml/park?subscriber=rn-example', {
-        call: { call_id: 'steer-leg-sid', from: 'sip:caller@example.com', to: 'sip:steer@10.0.0.1:5050' }
-      })
-    );
-    const line = lines.find((entry) => entry.message === 'Parked on an internal leg');
-    assert.ok(line, `no warning in ${JSON.stringify(lines.map((entry) => entry.message))}`);
-    assert.equal(line.callSid, 'steer-leg-sid');
+  it('answers "yes" once the park window is over unanswered', async () => {
+    let now = 1_000_000;
+    const h = await harness({ ...signed, tokens: new BridgeTokenStore({ now: () => now }) });
+    const { stateUrl } = await park(h);
+
+    now += 61_000;
+    assert.deepEqual(await (await poll(h, stateUrl)).json(), { end: 'yes' });
   });
 
-  it('does not warn for a caller on its own leg', async () => {
+  it('answers "yes" for a park it does not know (swept, or the server restarted)', async () => {
+    const h = await harness(signed);
+    const response = await fetch(`${h.base}/swml/park/state?call=a-leg-sid&key=not-a-key`);
+    assert.deepEqual(await response.json(), { end: 'yes' });
+  });
+
+  it('refuses a key presented for another call', async () => {
+    const h = await harness(signed);
+    const { stateUrl } = await park(h);
+
+    assert.equal((await poll(h, stateUrl, 'some-other-call')).status, 403);
+  });
+
+  it('answers 400 without the call or the key', async () => {
+    const h = await harness(signed);
+    assert.equal((await fetch(`${h.base}/swml/park/state?call=a-leg-sid`)).status, 400);
+    assert.equal((await fetch(`${h.base}/swml/park/state?key=k`)).status, 400);
+  });
+
+  it('keeps one long ringback without PUBLIC_URL, which the poll needs', async () => {
     const h = await harness();
-    const lines = await logged(() =>
-      h.post('/swml/park?subscriber=rn-example', {
-        call: { call_id: 'top-level-sid', from: '+15551230000', to: '+15559870000' }
-      })
-    );
-    assert.equal(lines.some((entry) => entry.message === 'Parked on an internal leg'), false);
-    assert.ok(lines.some((entry) => entry.message === 'Parked caller and pushed'));
+    const swml = await swmlOf(await h.post('/swml/park?subscriber=rn-example', parkBody()));
+    assert.deepEqual(verbs(swml), ['answer', 'play', 'hangup']);
   });
 });

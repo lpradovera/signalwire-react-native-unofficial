@@ -198,7 +198,7 @@ Who owns what:
 | Placing and receiving calls, media | `@signalwire/js` via `@signalwire/react` | Platform-agnostic; the hooks are the whole API |
 | Native call UI, push tokens, ringing | `@signalwire/react-native/callkit` | CallKit on iOS, ConnectionService on Android |
 | Waking a killed app | The OS, via PushKit / FCM | On iOS this happens **before any JavaScript exists** |
-| Deciding who to ring, sending the push | `server/` — a scaffold, reimplement it | SignalWire has no push infrastructure; this is the missing middle |
+| Deciding who to ring, sending the push | `server/` — a scaffold, reimplement it | Call Fabric's own push is staff-configured and the SDK cannot answer it; this is the missing middle |
 | Parking the caller and bridging | `server/` SWML routes | `/swml/park` and `/swml/bridge` |
 | Answering into a bridge dial | The **app**, not the package — `example/src/useBridgeAnswer.ts` | Deliberately app-level: the bridge address and token policy are yours |
 
@@ -784,8 +784,10 @@ native call entry with the SDK call by matching on it. Without it, the registry
 falls back to "the single unmatched inbound call within the timeout" and logs a
 warning — which breaks as soon as two calls overlap.
 
-This package does not acquire push tokens, and **SignalWire has no push
-infrastructure** — it will not send the push for you. The whole chain is yours:
+This package does not acquire push tokens, and **you send the push**:
+SignalWire Call Fabric has push of its own, but it is configured for an account
+by SignalWire staff rather than self-serve, and the v4 JavaScript SDK has no API
+to answer a call delivered that way. The whole chain is yours:
 your backend learns an inbound call is coming (webhook), looks up the device
 token, and sends the push; the app receives it and calls `reportIncomingPush`.
 That call is the entire contract with this package.

@@ -46,6 +46,11 @@ async function park(options: Partial<SwmlRouteOptions>): Promise<string[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const swml = (await response.json()) as { sections: { main: any[] } };
   const play = swml.sections.main.find((verb) => 'play' in verb);
+  if (options.publicUrl) {
+    // The self-ending park: one chunk per round, `goto` max = rounds - 1.
+    const jump = swml.sections.main.find((verb) => 'goto' in verb);
+    return Array(jump.goto.max + 1).fill(play.play.url) as string[];
+  }
   return play.play.urls as string[];
 }
 
@@ -58,6 +63,22 @@ describe('park ringback length', () => {
     // This server's own /swml/ringback is a 6 s cycle.
     const url = 'https://push.example.test/swml/ringback';
     assert.deepEqual(await park({ ringback: url, ringbackSeconds: 6 }), Array(10).fill(url));
+  });
+
+  it('loops a recording by its stated length when the park polls for its end', async () => {
+    const url = 'https://push.example.test/swml/ringback';
+    assert.deepEqual(
+      await park({ ringback: url, ringbackSeconds: 6, publicUrl: 'https://push.example.test' }),
+      Array(10).fill(url)
+    );
+    assert.deepEqual(
+      await park({ ringback: url, ringbackSeconds: 20, publicUrl: 'https://push.example.test' }),
+      Array(3).fill(url)
+    );
+  });
+
+  it('loops the generated tone in 6 s chunks when the park polls for its end', async () => {
+    assert.deepEqual(await park({ publicUrl: 'https://push.example.test' }), Array(10).fill('ring:6.0:us'));
   });
 
   it('refuses a recording whose length it is not told', () => {
