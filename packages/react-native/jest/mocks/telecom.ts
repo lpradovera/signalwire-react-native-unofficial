@@ -4,7 +4,8 @@ import { DeviceEventEmitter, NativeModules } from 'react-native';
  * Telecom as a self-managed callkeep call sees it: callkeep's native
  * `setAudioRoute` (Connection.setAudioRoute), its `didChangeAudioRoute`
  * event (RNCallKeepDidChangeAudioRoute through DeviceEventEmitter), and the
- * package's CallAudioState reader (SignalWireCallAudio).
+ * package's CallAudioState reader (SignalWireCallAudio) and its proximity
+ * screen-off lock (SignalWireProximityScreen).
  *
  * Telecom names: EARPIECE, SPEAKER, WIRED_HEADSET, BLUETOOTH.
  */
@@ -65,12 +66,25 @@ export const callAudioNative = {
   })
 };
 
+/** The proximity screen-off lock: `held` is what the last setHeld left it at. */
+export const proximityNative = {
+  held: false,
+  setHeld: jest.fn<void, [hold: boolean, waitForFar: boolean]>((hold) => {
+    proximityNative.held = hold;
+  })
+};
+
 /**
  * Links callkeep's native module and, unless `reader` is false, the package's
- * reader. `fullReports`: callkeep's reports carry the routes and the Bluetooth
- * device, as the fork's do.
+ * reader; unless `proximityLock` is false, its proximity lock (false: an app
+ * whose native code predates it). `fullReports`: callkeep's reports carry the
+ * routes and the Bluetooth device, as the fork's do.
  */
-export function installTelecom({ reader = true, fullReports: full = false }: { reader?: boolean; fullReports?: boolean } = {}): void {
+export function installTelecom({
+  reader = true,
+  proximityLock = true,
+  fullReports: full = false
+}: { reader?: boolean; proximityLock?: boolean; fullReports?: boolean } = {}): void {
   modules.RNCallKeep = callkeepNative;
   fullReports = full;
   if (reader) {
@@ -78,17 +92,25 @@ export function installTelecom({ reader = true, fullReports: full = false }: { r
   } else {
     delete modules.SignalWireCallAudio;
   }
+  if (proximityLock) {
+    modules.SignalWireProximityScreen = proximityNative;
+  } else {
+    delete modules.SignalWireProximityScreen;
+  }
   follows = true;
 }
 
 export function uninstallTelecom(): void {
   delete modules.RNCallKeep;
   delete modules.SignalWireCallAudio;
+  delete modules.SignalWireProximityScreen;
   states.clear();
   follows = true;
   fullReports = false;
   callkeepNative.setAudioRoute.mockClear();
   callAudioNative.getCallAudioState.mockClear();
+  proximityNative.setHeld.mockClear();
+  proximityNative.held = false;
 }
 
 /** Sets a call's state without a report (the state before JavaScript subscribed). */

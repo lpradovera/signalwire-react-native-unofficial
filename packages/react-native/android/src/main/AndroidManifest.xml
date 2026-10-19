@@ -5,6 +5,8 @@
        Android 14+ silences the microphone of a background app without one. -->
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+  <!-- The proximity screen-off lock held during a call on the receiver (ProximityScreenModule). -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
 
   <application>
     <receiver

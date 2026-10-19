@@ -26,7 +26,8 @@ public class SignalWireReactNativePackage implements ReactPackage {
     List<NativeModule> modules = new ArrayList<>(Arrays.<NativeModule>asList(
         new IncomingCallNotificationModule(context),
         new CallAudioStateModule(context),
-        new CallForegroundServiceModule(context)));
+        new CallForegroundServiceModule(context),
+        new ProximityScreenModule(context)));
     // Bridgeless only: lets the FCM headless task finish (see the module).
     modules.addAll(HeadlessTaskSupportModule.forContext(context));
     return modules;
