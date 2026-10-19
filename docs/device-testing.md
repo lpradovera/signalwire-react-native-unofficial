@@ -332,7 +332,7 @@ markers, and each REST leg's packets from and to the app.
 
 ```bash
 npm ci
-example/device-tests/suite.sh                 # every group, about 23 calls
+example/device-tests/suite.sh                 # every group, about 25 calls
 example/device-tests/suite.sh calls cw        # some groups
 ```
 
@@ -371,9 +371,17 @@ way across the return, with at most 3 packets lost. `[DEVSTATS]` now logs
 `lost` (inbound packetsLost) and `legs.txt` shows it, so a gap with
 `lost` growing is packets that never arrived, and one without is the app.
 
-**Not covered** (the emulator can't): the earpiece route and proximity
-screen-off on it (the emulator offers only the speaker; the sensor reaches
-incall-manager, which correctly keeps the screen on for the speaker),
+**Proximity.** `a2Outbound` and `cwHoldAcceptCentreTap` check that the
+app's proximity screen-off lock (`SignalWire:proximity` in `dumpsys power`)
+follows the route: held on the receiver, where covering the emulated sensor
+turns the display off; not held on the speaker, where the display stays on;
+gone after the call. The emulator offers only the speaker, so the suite runs
+the speaker half; the receiver half is the phone's (a build that held the
+lock on the speaker showed the display going off at `sensor set proximity 0`
+and on at `5`, 2026-10-19).
+
+**Not covered** (the emulator can't): the earpiece route itself (the
+emulator offers only the speaker, `supportedRouteMask: SPEAKER`),
 Bluetooth, a real FCM delivery (the simulated receiver plus the temporary
 allowlist Google Play services grants stand in for it), and OEM lock
 screens.

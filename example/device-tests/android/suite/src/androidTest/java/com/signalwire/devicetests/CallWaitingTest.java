@@ -1,14 +1,17 @@
 package com.signalwire.devicetests;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import android.graphics.Rect;
 import android.os.SystemClock;
 
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.UiObject2;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -65,6 +68,53 @@ public class CallWaitingTest extends SwBase {
     assertSending(b, "B-after-ending-held-A");
     tap("sw-hangup", 5_000);
     needHome(10_000);
+  }
+
+  /**
+   * Hold & Accept by a shell `input tap` at the centre of its two-line label
+   * (Len's round 3: such a tap did nothing on a Pixel 6 Pro). Each of the
+   * sheet's buttons is one node named by its label, the label lies inside its
+   * button, and the tap holds A and answers B. Also: the proximity lock
+   * follows A's route, and is gone once both calls end.
+   */
+  @Test
+  public void cwHoldAcceptCentreTap() throws Exception {
+    String a = callA();
+    assertProximityFollowsRoute(textOf(need(By.res("sw-route"), 5_000, "the route button")), "A");
+    ringApp("rn-device-caller");
+    sheetName();
+    String[][] buttons = {{"sw-decline", "Decline"}, {"sw-end-accept", "End & Accept"}, {"sw-hold-accept", "Hold & Accept"}};
+    for (String[] b : buttons) {
+      UiObject2 button = need(By.res(b[0]), 5_000, b[1]);
+      assertEquals(b[1] + " is named by its label", b[1], button.getContentDescription());
+      assertTrue(b[1] + " is the clickable node", button.isClickable());
+      Rect outer = button.getVisibleBounds();
+      for (UiObject2 child : button.getChildren()) {
+        assertTrue(b[1] + ": its label lies inside it", outer.contains(child.getVisibleBounds()));
+        assertFalse(b[1] + ": its label is not a clickable node of its own", child.isClickable());
+      }
+    }
+    UiObject2 hold = need(By.res("sw-hold-accept"), 5_000, "Hold & Accept");
+    List<UiObject2> label = hold.getChildren();
+    Rect target = (label.isEmpty() ? hold : label.get(0)).getVisibleBounds();
+    shot("centre-tap-sheet");
+    sh("input tap " + target.centerX() + " " + target.centerY());
+    mark("INPUT TAP Hold & Accept label centre " + target.centerX() + "," + target.centerY()
+        + " label=" + target.toShortString() + " button=" + hold.getVisibleBounds().toShortString());
+    List<String> ids = waitCalls(2, 15_000);
+    String b = ids.get(1);
+    need(By.res("held-call"), 10_000, "the held-call row");
+    SystemClock.sleep(1_000);
+    assertSwitch(b, a, "after-centre-tap");
+    List<String> telecom = telecomStates();
+    assertTrue("Telecom: one ACTIVE, one held: " + telecom, telecom.contains("ACTIVE") && telecom.contains("ON_HOLD"));
+
+    tap("end-held-call", 5_000);
+    assertTrue("the held row went", gone(By.res("held-call"), 10_000));
+    tap("sw-hangup", 5_000);
+    needHome(10_000);
+    SystemClock.sleep(1_000);
+    assertFalse("no proximity lock after both calls", proximityLockHeld());
   }
 
   /** Decline while a call is up, then End & Accept: the first call ends, the third connects. */

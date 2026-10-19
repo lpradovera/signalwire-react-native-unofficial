@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
 /** A2 to A4: one call at a time, outbound and inbound. */
 @RunWith(AndroidJUnit4.class)
 public class CallTest extends SwBase {
-  /** A2: outbound, Telecom ACTIVE, audio both ways, speaker on and off, proximity, End. */
+  /** A2: outbound, Telecom ACTIVE, audio both ways, speaker on and off, the proximity lock follows the route, End. */
   @Test
   public void a2Outbound() throws Exception {
     openHome();
@@ -46,15 +46,10 @@ public class CallTest extends SwBase {
     assertTrue("speaker on reads Speaker: " + on, on.toLowerCase().contains("speaker"));
     assertSending(a, "after-routes");
 
-    // Proximity: near, on whatever route the emulator gives the call.
-    String power0 = proximityState();
-    http("/emu?cmd=" + java.net.URLEncoder.encode("sensor set proximity 0", "UTF-8"));
-    SystemClock.sleep(2_000);
-    String power1 = proximityState();
-    boolean screenOnNear = isInteractive();
-    http("/emu?cmd=" + java.net.URLEncoder.encode("sensor set proximity 5", "UTF-8"));
-    SystemClock.sleep(1_500);
-    mark("PROXIMITY route=" + off + " before=[" + power0 + "] near=[" + power1 + "] interactiveNear=" + screenOnNear);
+    // The screen at the ear: the proximity lock on the receiver only. The
+    // emulator offers only the speaker, so there it checks the lock is not
+    // held and the display stays on with the sensor covered.
+    assertProximityFollowsRoute(off, "after-routes");
 
     tap("sw-hangup", 5_000);
     needHome(10_000);
@@ -63,20 +58,7 @@ public class CallTest extends SwBase {
     assertTrue("the leg ended on the server after End", s >= 0);
     SystemClock.sleep(1_000);
     assertTrue("Telecom has no call left", telecomStates().isEmpty());
-  }
-
-  /** The proximity wake lock and display state, from dumpsys power. */
-  private String proximityState() {
-    String d = sh("dumpsys power");
-    StringBuilder sb = new StringBuilder();
-    for (String line : d.split("\n")) {
-      String l = line.trim();
-      if (l.contains("PROXIMITY_SCREEN_OFF") || l.startsWith("mWakefulness=") || l.startsWith("mProximityPositive")
-          || l.startsWith("Display Power: state=")) {
-        sb.append(l).append("; ");
-      }
-    }
-    return sb.toString();
+    assertFalse("no proximity lock after the call", proximityLockHeld());
   }
 
   /** A3: inbound with the app open: the sheet, its name, Answer, audio, End. */
