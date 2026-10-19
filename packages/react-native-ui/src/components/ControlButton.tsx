@@ -73,7 +73,16 @@ export function ControlButton({
         style
       ]}
     >
-      <Text style={[styles.label, { color: theme.colors.text, fontSize: theme.typography.label }]}>
+      {/* The button is the one accessibility element (its name is
+          accessibilityLabel) and the one touch target: the label is not a
+          node of its own, so assistive tech and UI automation find the
+          button, not a non-clickable text inside it. A label that wraps
+          ('Hold & Accept' in a row of three) stays centred in the pill. */}
+      <Text
+        accessible={false}
+        importantForAccessibility="no"
+        style={[styles.label, { color: theme.colors.text, fontSize: theme.typography.label }]}
+      >
         {label}
       </Text>
     </Pressable>
@@ -83,5 +92,5 @@ export function ControlButton({
 const styles = StyleSheet.create({
   // 44 x 44 pt is the minimum touch target (Apple's HIG; Android asks 48 dp).
   base: { alignItems: 'center', justifyContent: 'center', minHeight: 44, minWidth: 44 },
-  label: { fontWeight: '600' }
+  label: { fontWeight: '600', textAlign: 'center' }
 });
