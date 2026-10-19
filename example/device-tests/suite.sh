@@ -9,7 +9,8 @@
 #   launch      A1 fresh install, permission prompts, one "push is off"   (0)
 #   calls       A2 outbound, A3 answer / decline over About, A4 heads-up  (4)
 #   cw          call waiting: Hold & Accept + swaps, Decline + End &
-#               Accept, Dial again + a third call busy                    (8)
+#               Accept, Dial again + a third call busy, Hold & Accept
+#               by an input tap at its label's centre                     (10)
 #   back        locked 15 s then Back keeps the call; answer while locked (2)
 #   connection  401 from the token server, the reconnect banner            (0)
 #   endonback   EXPO_PUBLIC_SW_END_CALLS_ON_BACK=1: Back ends the call     (1)
@@ -137,7 +138,8 @@ for group in "${GROUPS_TO_RUN[@]}"; do
     calls) full && run --apk "$OUT/apk/full.apk" --tag full 'CallTest#a2Outbound' 'CallTest#a3InboundAnswer' \
       'CallTest#a3DeclineOverAbout' 'CallTest#a4InboundBackground' ;;
     cw) full && run --apk "$OUT/apk/full.apk" --tag full 'CallWaitingTest#cwHoldAcceptSwapEnd' \
-      'CallWaitingTest#cwDeclineThenEndAccept' 'CallWaitingTest#cwDialAgainThirdBusy' ;;
+      'CallWaitingTest#cwDeclineThenEndAccept' 'CallWaitingTest#cwDialAgainThirdBusy' \
+      'CallWaitingTest#cwHoldAcceptCentreTap' ;;
     back) full && run --apk "$OUT/apk/full.apk" --tag full 'BackgroundTest#lockThenBackKeepsCall' \
       'BackgroundTest#answerOnLockScreen' ;;
     connection) full && run --apk "$OUT/apk/full.apk" --tag full 'ConnectionTest#tokenRefused401' 'ConnectionTest#reconnectBanner' ;;

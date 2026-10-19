@@ -312,10 +312,13 @@ public abstract class SwBase {
   }
 
   /** The visible text inside an element (its children's text joined). */
+  /** The text under `o`, or its content description when it has none (a button named by its label). */
   protected String textOf(UiObject2 o) {
     StringBuilder sb = new StringBuilder();
     collect(o, sb);
-    return sb.toString().trim();
+    String text = sb.toString().trim();
+    String desc = o.getContentDescription();
+    return text.isEmpty() && desc != null ? desc.trim() : text;
   }
 
   private void collect(UiObject2 o, StringBuilder sb) {
@@ -394,6 +397,49 @@ public abstract class SwBase {
       assertTrue(id + " bottom " + r.bottom + " overlaps the navigation bar at " + nav, nav < 0 || r.bottom <= nav);
       assertTrue(id + " is off screen", r.bottom <= height && r.height() > 0);
     }
+  }
+
+  // ---- the screen at the ear -----------------------------------------------
+
+  /** Whether the app holds its proximity screen-off lock (ProximityScreenModule), per dumpsys power. */
+  protected boolean proximityLockHeld() {
+    for (String line : sh("dumpsys power").split("\n")) {
+      if (line.contains("PROXIMITY_SCREEN_OFF_WAKE_LOCK") && line.contains("SignalWire:proximity")) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** The built-in display's state (ON, OFF, ...), the first mState in dumpsys display. */
+  protected String displayState() {
+    Matcher m = Pattern.compile("mState=(\\w+)").matcher(sh("dumpsys display"));
+    return m.find() ? m.group(1) : "?";
+  }
+
+  /**
+   * The proximity lock follows the call's route (its route button's label):
+   * held on the receiver, where covering the sensor turns the display off and
+   * uncovering it turns it back on; never held on the speaker, Bluetooth or a
+   * headset, where the display stays on with the sensor covered. Covers the
+   * emulated sensor through hostd (`adb emu sensor set proximity`).
+   */
+  protected void assertProximityFollowsRoute(String routeLabel, String label) throws Exception {
+    boolean earpiece = routeLabel.toLowerCase(Locale.ROOT).contains("earpiece");
+    boolean held = proximityLockHeld();
+    http("/emu?cmd=" + java.net.URLEncoder.encode("sensor set proximity 0", "UTF-8"));
+    SystemClock.sleep(2_000);
+    String near = displayState();
+    boolean heldNear = proximityLockHeld();
+    http("/emu?cmd=" + java.net.URLEncoder.encode("sensor set proximity 5", "UTF-8"));
+    SystemClock.sleep(1_500);
+    String far = displayState();
+    mark("PROXIMITY " + label + " route=" + routeLabel + " lock=" + held + " lockNear=" + heldNear
+        + " displayNear=" + near + " displayFar=" + far);
+    assertEquals("the proximity lock on " + routeLabel, earpiece, held);
+    assertEquals("the proximity lock with the sensor covered on " + routeLabel, earpiece, heldNear);
+    assertEquals("the display with the sensor covered on " + routeLabel, earpiece ? "OFF" : "ON", near);
+    assertEquals("the display once uncovered", "ON", far);
   }
 
   // ---- Telecom --------------------------------------------------------------
