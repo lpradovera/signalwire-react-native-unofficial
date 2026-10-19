@@ -145,8 +145,10 @@ Bare projects follow the
 
 For the step-by-step build, see [push-setup.md](push-setup.md).
 
-**SignalWire has no push infrastructure.** It will not send the push for you and
-there is no device-token registration endpoint. The full chain is yours:
+**You send the push.** SignalWire Call Fabric has push of its own, but it is
+configured for an account by SignalWire staff rather than self-serve, and the
+v4 JavaScript SDK has no API to answer a call delivered that way. There is no
+device-token registration endpoint for you to use, so the full chain is yours:
 
 ```
 SignalWire  --webhook-->  your backend  --push-->  device

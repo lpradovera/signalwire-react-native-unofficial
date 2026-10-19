@@ -9,8 +9,11 @@ all of it lives outside this package. Budget for it accordingly.
 
 ## 0. What you are building
 
-**SignalWire has no push infrastructure.** There is no device-token endpoint and
-it will not send a push when a call arrives. Every link below is yours:
+**You send the push.** SignalWire Call Fabric has push of its own, but it is configured for an
+account by SignalWire staff rather than self-serve, and the v4 JavaScript SDK
+this package wraps has no API to answer a call delivered that way. So this guide
+builds the chain itself: there is no device-token endpoint to register with, and
+every link below is yours:
 
 ```
   ┌──────────────┐  1. inbound call    ┌──────────────┐
@@ -732,6 +735,7 @@ Parking the caller removes the race instead of tuning it:
 ```
 1. inbound call ──▶ SWML: POST <public>/swml/park
 2. server: mint a single-use token for the call SID, push it, answer + ringback
+   (the ringback loop polls the server, so the park can end itself)
 3. device wakes; CallKit rings before any JavaScript exists
 4. user answers ──▶ app dials <bridge address>?bridgeToken=…
 5. SWML: POST <public>/swml/bridge  ──▶ { connect: { to: "call:<sid>" } }
@@ -783,17 +787,29 @@ Place test calls the way real ones arrive: from a phone (a number pointed at the
 park handler), or as a top-level call whose own SWML is the park URL, such as a
 Calling API `dial` with `"url": "<public>/swml/park?subscriber=<ref>"`.
 
-Do **not** test with a REST dial (or another SWML `connect`) *to the park
-resource's Fabric address* (`/public/<park-resource>`). The call rings, answers
-and bridges normally, but SignalWire runs the park SWML on an internal leg (its
-`to` is `sip:steer@<internal host>`), and no API can end that leg: after the
-device hangs up or declines, `calling.end` answers `404`, and so do the Calling
-API's `update` with `status: completed` and the compatibility (LaML) Calls
-update with `Status=completed` (all tried against a live parked leg,
-2026-10-17). The caller stays connected to nothing until its own script or
-`max_duration` ends it. The server warns `Parked on an internal leg` at park
-time, and logs the same explanation with the `404` when it cannot end the
-caller.
+### The park ends itself
+
+When `PUBLIC_URL` is set, the park SWML owns its own exit. Instead of one long
+ringback it loops: a 6 s ringback chunk (one `PARK_RINGBACK_URL` play when you
+set your own), then a `request` to
+`GET <public>/swml/park/state?call=%{call.call_id}&key=<park key>`, a `switch`
+that hangs up when the answer is `{ "end": "yes" }`, and a `goto` back, bounded
+by `max` so the park still ends, busy, with its window (60 s). The key is minted
+with the park and appears only in that park's SWML (never in the push), and the
+server checks it against the call it belongs to.
+
+`/swml/decline` and `/swml/bridge/status` mark the park ended, so the caller is
+released within one chunk of a decline whichever leg the SWML runs on. Both
+still try `calling.end` too, which ends the caller at once when it succeeds; a
+decline answers `204` even if that call fails, because the poll will end the
+caller. A caller taken by a bridge does not return to the park script, so after
+a bridged call `calling.end` from `/swml/bridge/status` is what ends it. A park
+the server no longer knows (past its window, or lost in a restart) is told to
+end; a failed or slow poll reads as "keep waiting".
+
+Without `PUBLIC_URL` the SWML has nothing to poll: the park plays one long
+ringback and only `calling.end` ends it early, so `/swml/decline` needs the
+SignalWire credentials (it answers `503` without them).
 
 ### Pointing a phone number at it
 

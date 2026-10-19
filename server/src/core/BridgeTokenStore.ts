@@ -13,7 +13,15 @@ export interface BridgeToken {
   declinedAt: number | null;
   /** Set once the caller's leg has been ended for this token. */
   callerEndedAt: number | null;
+  /**
+   * The park's own secret, in the URL its SWML polls (`/swml/park/state`).
+   * Not the token: the token is pushed to devices, this goes only to SignalWire.
+   */
+  parkKey: string;
 }
+
+/** What a parked caller's SWML should do next: keep ringing, or hang up. */
+export type ParkState = 'wait' | 'end';
 
 export type RedeemError = 'unknown' | 'expired' | 'already-redeemed' | 'declined' | 'wrong-subscriber';
 
@@ -61,10 +69,45 @@ export class BridgeTokenStore {
       expiresAt: this.now() + this.ttlMs,
       redeemedAt: null,
       declinedAt: null,
-      callerEndedAt: null
+      callerEndedAt: null,
+      parkKey: randomUUID()
     };
     this.byToken.set(token.token, token);
     return token;
+  }
+
+  /**
+   * Whether a parked caller should keep waiting, for the park SWML's poll.
+   *
+   * `end` once the user declined, once the caller's end was claimed after a
+   * bridge, and once the park is past its window unanswered. A key this store
+   * does not hold is `end` too: the park was swept (its window is over) or the
+   * server restarted and lost it, and either way no device can bridge it now.
+   * The key must come with the call it was minted for, so a key alone, copied
+   * from one SWML document, reads no other park.
+   */
+  parkState(parkKey: string, callSid: string): ParkState | { error: 'wrong-call' } {
+    this.sweep();
+    let found: BridgeToken | undefined;
+    for (const value of this.byToken.values()) {
+      if (value.parkKey === parkKey) {
+        found = value;
+        break;
+      }
+    }
+    if (!found) {
+      return 'end';
+    }
+    if (found.callSid !== callSid) {
+      return { error: 'wrong-call' };
+    }
+    if (found.declinedAt !== null || found.callerEndedAt !== null) {
+      return 'end';
+    }
+    if (found.redeemedAt === null && this.now() > found.expiresAt) {
+      return 'end';
+    }
+    return 'wait';
   }
 
   /**

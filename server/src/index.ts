@@ -91,7 +91,8 @@ const signingKey = process.env.SIGNALWIRE_SIGNING_KEY;
 if (!publicUrl) {
   log(
     'PUBLIC_URL is unset — /swml/bridge cannot give SignalWire a status_url, so a parked ' +
-      'caller is left up, in silence, when the device hangs up. Set it to your tunnel.'
+      'caller is left up, in silence, when the device hangs up, and the park cannot poll ' +
+      '/swml/park/state to end itself on a decline. Set it to your tunnel.'
   );
 }
 
