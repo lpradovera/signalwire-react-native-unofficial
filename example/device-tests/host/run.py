@@ -14,6 +14,11 @@ call's REST packet counts) and result.txt. After each test the suite's live
 calls are swept by REST. Environment (ANDROID_SERIAL, APP_PKG,
 HOSTD_PORT, SW_ENV_FILE, SW_MATCH, SW_TEST_DESTINATION, SUITE_DIR, SINCE); suite.sh
 sets them.
+
+With the results ledger (RUNLEDGER, LEDGER, SOURCE_KEY, Q; suite.sh sets them
+when RUNLEDGER is given) a test that already has ROUNDS results for this code
+and build (config emu-<tag>) is skipped, and each run is recorded with the
+question. FORCE=1 (with REASON) runs them anyway.
 """
 import hashlib
 import os
@@ -63,6 +68,35 @@ def install(apk, fresh):
             adb('shell', 'pm', 'grant', PKG, f'android.permission.{p}')
 
 
+RUNLEDGER = os.environ.get('RUNLEDGER')
+ROUNDS = int(os.environ.get('ROUNDS', '1'))
+
+
+def ledger_config(tag):
+    return f'emu-{tag or "full"}'
+
+
+def pending(test, tag):
+    if not RUNLEDGER or os.environ.get('FORCE') == '1':
+        return True
+    r = subprocess.run([sys.executable, '-I', RUNLEDGER, 'need', os.environ['LEDGER'], os.environ['SOURCE_KEY'],
+                        ledger_config(tag), str(ROUNDS), test], capture_output=True, text=True, check=True)
+    if r.stderr.strip():
+        print(r.stderr.strip(), flush=True)
+    return bool(r.stdout.strip())
+
+
+def record(test, tag, ok, out, seconds):
+    if not RUNLEDGER:
+        return
+    case = os.path.join(out, 'case.txt')
+    open(case, 'w').write(f'CASE case={test} ok={"true" if ok else "false"}\n')
+    force = f'; FORCE: {os.environ.get("REASON", "")}' if os.environ.get('FORCE') == '1' else ''
+    question = f'{os.environ.get("Q", "")} [{ledger_config(tag)}{force}; {int(seconds)}s]'
+    subprocess.run([sys.executable, '-I', RUNLEDGER, 'record', os.environ['LEDGER'], os.environ['SOURCE_KEY'],
+                    ledger_config(tag), case, question], check=True)
+
+
 def run_one(test, tag, timeout):
     cls, _, method = test.partition('#')
     name = (method or cls) + (f'-{tag}' if tag else '')
@@ -108,6 +142,7 @@ def run_one(test, tag, timeout):
     open(os.path.join(out, 'result.txt'), 'w').write(result)
     print(('PASS ' if ok else 'FAIL ') + test + (' :: ' + failure if failure else ''), '->', out, flush=True)
     print(sw, flush=True)
+    record(test, tag, ok, out, time.time() - started)
     return ok, out
 
 
@@ -128,9 +163,12 @@ def main():
         if a == '--timeout':
             timeout = int(args[i + 1]); i += 2; continue
         tests.append(a); i += 1
+    tests = [t for t in tests if pending(t, tag)]
+    if not tests:
+        sys.exit(0)
     if apk:
         install(apk, bool(fresh))
-    results = [run_one(t, tag, timeout) for t in tests]
+    results = [run_one(t, tag, timeout) for t in tests for _ in range(ROUNDS if RUNLEDGER else 1)]
     sys.exit(0 if all(ok for ok, _ in results) else 1)
 
 

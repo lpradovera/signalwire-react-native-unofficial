@@ -336,6 +336,19 @@ example/device-tests/suite.sh                 # every group, about 25 calls
 example/device-tests/suite.sh calls cw        # some groups
 ```
 
+`SW_SUBSCRIBER` must be a subscriber only tests use, such as
+`/private/rn-devtest-<you>`: the app signs in as it, test calls ring it, and
+the emulator registers for its push. The suite refuses the example's default,
+`rn-example`, and says how to create one (minting a token for a new reference
+creates the subscriber).
+
+To skip tests whose results already exist for the same code, set
+`RUNLEDGER=example/device-tests/host/runledger.py` (a results ledger: JSON
+lines in `.out/ledger.jsonl`, keyed by HEAD plus any uncommitted diff, the
+build and the test). A run then needs `Q="<question>"`, `FULL=1` for every group, and
+`FORCE=1 REASON="..."` to repeat stored results; `ROUNDS` sets the runs per
+test (default 1).
+
 Groups: `launch`, `calls`, `cw`, `back`, `connection`, `endonback`, `modes`,
 `nocallkit`, `push` (call counts in `suite.sh`). Output goes to
 `example/device-tests/.out/` (`runs/<test>-<build>-<time>/` with

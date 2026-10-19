@@ -26,7 +26,10 @@
 #                        SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN,
 #                        ALLOW_UNAUTHENTICATED_TOKENS=1,
 #                        DEV_SUBSCRIBER_REFERENCE); never printed
-#   SW_SUBSCRIBER        the app's address, e.g. /private/rn-example
+#   SW_SUBSCRIBER        the app's address, e.g. /private/rn-devtest-<you>: a
+#                        subscriber only tests use (never the example's
+#                        default rn-example; the suite refuses it). The app
+#                        signs in as its last segment.
 #   SW_INBOUND_URL       SWML (or a relay bin) the inbound test caller runs
 #                        when answered: it must send audio (silence is fine)
 #   SW_TEST_DESTINATION  an address outbound calls dial that answers and
@@ -37,6 +40,14 @@
 #                        com.signalwire.rnexample.suite)
 #
 # Everything it writes goes to example/device-tests/.out/ (gitignored).
+#
+# Results ledger (optional): with RUNLEDGER=example/device-tests/host/runledger.py, every test
+# result is stored in .out/ledger.jsonl keyed by the code under test (HEAD
+# plus any uncommitted diff in packages/, server/, example/ outside
+# device-tests/, and the root package files), the build and the test; a test
+# that already has ROUNDS results (default 1) is not run again, and a group
+# with nothing left is not built. It then needs Q="<question>", FULL=1 to run
+# every group, and FORCE=1 REASON="..." to re-run stored results.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -51,11 +62,38 @@ mkdir -p "$OUT/logs" "$OUT/apk" "$OUT/runs"
 : "${SW_INBOUND_URL:?set SW_INBOUND_URL in suite.env}"
 : "${SW_TEST_DESTINATION:?set SW_TEST_DESTINATION in suite.env}"
 case "$SW_ENV_FILE" in /*) ;; *) SW_ENV_FILE="$HERE/$SW_ENV_FILE" ;; esac
-export ANDROID_SERIAL SW_ENV_FILE SW_SUBSCRIBER SW_INBOUND_URL SW_TEST_DESTINATION
+# The app signs in as SW_SUBSCRIBER's last segment. Test calls ring that
+# subscriber and the emulator registers for its push, so it must be one only
+# tests use: never the example's default, rn-example.
+SW_SUBSCRIBER_REF="${SW_SUBSCRIBER##*/}"
+if [ -z "$SW_SUBSCRIBER_REF" ] || [ "$SW_SUBSCRIBER_REF" = rn-example ]; then
+  cat >&2 <<MSG
+REFUSING TO RUN: the suite needs a subscriber of its own (SW_SUBSCRIBER is '${SW_SUBSCRIBER}').
+rn-example is the example's default: a real user's devices ring for test calls and register for its push.
+Create a dedicated test subscriber: choose a reference only tests use, e.g. rn-devtest-\$USER. Minting a token
+for it creates it (the token server's /token does, through POST /api/fabric/subscribers/tokens with
+{"reference":"<ref>"}), or add it in the Dashboard under Resources > Subscribers. Then in suite.env:
+  SW_SUBSCRIBER=/private/<ref>
+and set DEV_SUBSCRIBER_REFERENCE=<ref> in the token server's env file (SW_ENV_FILE).
+MSG
+  exit 1
+fi
+export ANDROID_SERIAL SW_ENV_FILE SW_SUBSCRIBER SW_SUBSCRIBER_REF SW_INBOUND_URL SW_TEST_DESTINATION
 export SW_MATCH="${SW_MATCH:-${SW_TEST_DESTINATION##*/},${SW_SUBSCRIBER##*/}}"
 export APP_PKG="${SW_APP_ID:-com.signalwire.rnexample.suite}"
 export ADB_MDNS=0 SUITE_DIR="$OUT"
 export SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+if [ -n "${RUNLEDGER:-}" ]; then
+  [ -n "${Q:-}" ] || { echo "RUNLEDGER is set: Q=\"<question>\" is required (every run answers a question)" >&2; exit 2; }
+  [ $# -gt 0 ] || [ "${FULL:-}" = 1 ] || { echo "RUNLEDGER is set: name the groups, or FULL=1 for every group" >&2; exit 2; }
+  [ "${FORCE:-}" != 1 ] || [ -n "${REASON:-}" ] || { echo "FORCE=1 needs REASON=\"...\"" >&2; exit 2; }
+  case "$RUNLEDGER" in /*) ;; *) RUNLEDGER="$PWD/$RUNLEDGER" ;; esac
+  SOURCE_KEY="$(python3 -I "$RUNLEDGER" source "$ROOT" packages server example package.json package-lock.json \
+    ':(exclude)example/device-tests')" || exit 1
+  export RUNLEDGER SOURCE_KEY Q FORCE REASON LEDGER="${LEDGER:-$OUT/ledger.jsonl}" ROUNDS="${ROUNDS:-1}"
+  echo "ledger: source $SOURCE_KEY, $ROUNDS launch(es) per test"
+fi
 
 free_port() { python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1])"; }
 export HOSTD_PORT="$(free_port)" SERVER_PORT="$(free_port)"
@@ -98,6 +136,7 @@ build() {
     cd "$ROOT/example" || exit 1
     unset GOOGLE_SERVICES_JSON EXPO_PUBLIC_SW_CALLKIT EXPO_PUBLIC_SW_CALL_WAITING EXPO_PUBLIC_SW_END_CALLS_ON_BACK EXPO_PUBLIC_SW_BRIDGE_ADDRESS
     export SW_APP_ID="$APP_PKG" CI=1 EXPO_PUBLIC_SW_WIRE_LOG=0 EXPO_PUBLIC_SW_DEV_STATS=1
+    export EXPO_PUBLIC_SW_SUBSCRIBER_REF="$SW_SUBSCRIBER_REF" EXPO_PUBLIC_SW_SUBSCRIBER_REF_ANDROID="$SW_SUBSCRIBER_REF"
     export EXPO_PUBLIC_SW_TOKEN_URL="http://10.0.2.2:$HOSTD_PORT/token"
     export EXPO_PUBLIC_SW_DEV_DIAL_AGAIN="$SW_TEST_DESTINATION"
     for kv in "$@"; do export "$kv"; done
@@ -126,6 +165,30 @@ build_tests() {
 
 run() { python3 -I "$HERE/host/run.py" "$@"; }
 
+# Each group's tests as <tag>:<Class#method> (the --tag run.py records them under); keep in step with the loop below.
+group_tests() {
+  case "$1" in
+    launch) echo "full:LaunchTest#a1FreshInstall" ;;
+    calls) echo "full:CallTest#a2Outbound full:CallTest#a3InboundAnswer full:CallTest#a3DeclineOverAbout full:CallTest#a4InboundBackground" ;;
+    cw) echo "full:CallWaitingTest#cwHoldAcceptSwapEnd full:CallWaitingTest#cwDeclineThenEndAccept full:CallWaitingTest#cwDialAgainThirdBusy full:CallWaitingTest#cwHoldAcceptCentreTap" ;;
+    back) echo "full:BackgroundTest#lockThenBackKeepsCall full:BackgroundTest#answerOnLockScreen" ;;
+    connection) echo "full:ConnectionTest#tokenRefused401 full:ConnectionTest#reconnectBanner" ;;
+    endonback) echo "endonback:BackgroundTest#backEndsCall" ;;
+    modes) echo "endAndAccept:ModeTest#endAndAcceptMode single:ModeTest#singleMode" ;;
+    nocallkit) echo "nocallkit:BackgroundTest#lockedMicWithoutCallKit" ;;
+    push) echo "push:ConnectionTest#pushWakeAnswer push-ttl120:ConnectionTest#tokenRenewalThenPush" ;;
+  esac
+}
+# With the ledger: true when some test in the group still lacks results for this code.
+group_pending() {
+  [ -z "${RUNLEDGER:-}" ] || [ "${FORCE:-}" = 1 ] && return 0
+  local spec
+  for spec in $(group_tests "$1"); do
+    [ -n "$(python3 -I "$RUNLEDGER" need "$LEDGER" "$SOURCE_KEY" "emu-${spec%%:*}" "$ROUNDS" "${spec#*:}" 2>/dev/null)" ] && return 0
+  done
+  return 1
+}
+
 GROUPS_TO_RUN=("$@")
 [ ${#GROUPS_TO_RUN[@]} = 0 ] && GROUPS_TO_RUN=(launch calls cw back connection endonback modes nocallkit push)
 FULL_BUILT=0
@@ -133,6 +196,7 @@ full() { [ $FULL_BUILT = 1 ] || { build full --prebuild && FULL_BUILT=1; } && bu
 
 for group in "${GROUPS_TO_RUN[@]}"; do
   echo "== $group"
+  if ! group_pending "$group"; then echo "every $group test is in the ledger for $SOURCE_KEY; not built or run"; continue; fi
   case "$group" in
     launch) full && run --apk "$OUT/apk/full.apk" --fresh --tag full 'LaunchTest#a1FreshInstall' ;;
     calls) full && run --apk "$OUT/apk/full.apk" --tag full 'CallTest#a2Outbound' 'CallTest#a3InboundAnswer' \
