@@ -7,6 +7,13 @@ import type { StyleProp, ViewStyle } from 'react-native';
 
 export interface ControlButtonProps {
   label: string;
+  /**
+   * The name assistive technology reads, when it should differ from the
+   * visible `label`. For a toggle whose text says what a tap does ('Unmute'),
+   * give the toggle's stable name ('Mute') here and let `active` carry the
+   * state, so a screen reader says it once: 'Mute, selected'.
+   */
+  accessibilityLabel?: string;
   onPress: () => void;
   /** Renders in the destructive colour. Use for hang up and decline. */
   variant?: 'default' | 'accent' | 'danger';
@@ -27,6 +34,7 @@ export interface ControlButtonProps {
  */
 export function ControlButton({
   label,
+  accessibilityLabel = label,
   onPress,
   variant = 'default',
   active = false,
@@ -51,7 +59,7 @@ export function ControlButton({
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled, selected: active }}
       style={({ pressed }) => [
         styles.base,
@@ -65,7 +73,16 @@ export function ControlButton({
         style
       ]}
     >
-      <Text style={[styles.label, { color: theme.colors.text, fontSize: theme.typography.label }]}>
+      {/* The button is the one accessibility element (its name is
+          accessibilityLabel) and the one touch target: the label is not a
+          node of its own, so assistive tech and UI automation find the
+          button, not a non-clickable text inside it. A label that wraps
+          ('Hold & Accept' in a row of three) stays centred in the pill. */}
+      <Text
+        accessible={false}
+        importantForAccessibility="no"
+        style={[styles.label, { color: theme.colors.text, fontSize: theme.typography.label }]}
+      >
         {label}
       </Text>
     </Pressable>
@@ -73,6 +90,7 @@ export function ControlButton({
 }
 
 const styles = StyleSheet.create({
-  base: { alignItems: 'center', justifyContent: 'center' },
-  label: { fontWeight: '600' }
+  // 44 x 44 pt is the minimum touch target (Apple's HIG; Android asks 48 dp).
+  base: { alignItems: 'center', justifyContent: 'center', minHeight: 44, minWidth: 44 },
+  label: { fontWeight: '600', textAlign: 'center' }
 });

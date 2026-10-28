@@ -159,6 +159,59 @@ describe('useObservable', () => {
       expect(getByTestId('value').textContent).toBe('a');
     });
 
+    it("keeps a swapped-out source's late emission out of the new source's value", async () => {
+      // End & Accept on a device: <CallScreen call={...}> went from call A to
+      // call B in place, and A emitted its teardown ('destroyed') before React
+      // had moved the subscription to B. React swaps subscriptions in a passive
+      // effect after the commit, so A's subscription is still live then; it
+      // wrote A's status into the snapshot B's store reads, CallScreen(B) saw
+      // 'destroyed', and the app went Home with B connected.
+      const a = new BehaviorSubject('disconnecting');
+      const b = new BehaviorSubject('ringing');
+      const seen: Array<[string, string]> = [];
+
+      // A's replay is delivered at once here: in the app it is a microtask
+      // (observeOn(asapScheduler)), which runs before React's passive effects,
+      // which the scheduler runs in a later task; under act() they run first.
+      function CallProbe({ id, subject }: { id: string; subject: BehaviorSubject<string> }) {
+        const source = id === 'A' ? subject.asObservable() : subject.asObservable().pipe(observeOn(asapScheduler));
+        const status = useObservable<string>(source, subject.value);
+        seen.push([id, status]);
+        return <span data-testid="value">{status}</span>;
+      }
+      /** A's teardown landing after the commit, before the passive effects. */
+      function LateTeardown({ fire }: { fire: boolean }) {
+        React.useLayoutEffect(() => {
+          if (fire) {
+            a.next('destroyed');
+          }
+        }, [fire]);
+        return <></>;
+      }
+
+      const { getByTestId, rerender } = render(
+        <>
+          <CallProbe id="A" subject={a} />
+          <LateTeardown fire={false} />
+        </>
+      );
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await act(async () => {
+        rerender(
+          <>
+            <CallProbe id="B" subject={b} />
+            <LateTeardown fire />
+          </>
+        );
+        await Promise.resolve();
+      });
+
+      expect(seen.filter(([id]) => id === 'B').map(([, status]) => status)).not.toContain('destroyed');
+      expect(getByTestId('value').textContent).toBe('ringing');
+    });
+
     it('does not strand the initial value when identity changes every render', async () => {
       const subject = new BehaviorSubject(false);
 

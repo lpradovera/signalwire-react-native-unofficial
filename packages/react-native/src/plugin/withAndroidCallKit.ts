@@ -1,6 +1,6 @@
-import { AndroidConfig, withAndroidManifest } from '@expo/config-plugins';
+import { AndroidConfig, withAndroidManifest } from 'expo/config-plugins';
 
-import type { ConfigPlugin } from '@expo/config-plugins';
+import type { ConfigPlugin } from 'expo/config-plugins';
 
 export interface AndroidOptions {
   enableCallKit: boolean;
@@ -13,7 +13,11 @@ const BASE_PERMISSIONS = [
   'android.permission.FOREGROUND_SERVICE',
   'android.permission.FOREGROUND_SERVICE_MICROPHONE',
   'android.permission.POST_NOTIFICATIONS',
-  'android.permission.WAKE_LOCK'
+  'android.permission.WAKE_LOCK',
+  // Android 12+ shows no Bluetooth device to an app without it, so
+  // incall-manager never starts its Bluetooth manager and a headset is never
+  // a route. Requested at runtime by the CallKit bridge.
+  'android.permission.BLUETOOTH_CONNECT'
 ];
 
 const CALLKIT_PERMISSIONS = [
@@ -22,11 +26,32 @@ const CALLKIT_PERMISSIONS = [
   // ConnectionService reads the phone account while building an outgoing
   // connection. callkeep declares this too, but declaring it here keeps the
   // requirement visible where the rest of them are.
-  'android.permission.READ_PHONE_NUMBERS'
+  'android.permission.READ_PHONE_NUMBERS',
+  // For the ConnectionService's 'phoneCall' foreground-service type.
+  'android.permission.FOREGROUND_SERVICE_PHONE_CALL'
 ];
 
 /** callkeep's ConnectionService, which Telecom binds to place and receive calls. */
 const CONNECTION_SERVICE = 'io.wazo.callkeep.VoiceConnectionService';
+
+/**
+ * The ConnectionService's foreground-service types.
+ *
+ * callkeep starts it with `startForeground(id, notification)`, so every type
+ * declared here applies at once, and on Android 14+ the start is refused
+ * outright if any one of them is not allowed. 'camera' was declared without
+ * FOREGROUND_SERVICE_CAMERA, and even with it would need a CAMERA grant that
+ * an audio-only app never asks for:
+ *
+ *   SecurityException: Starting FGS with type camera ... requires permissions:
+ *   [android.permission.FOREGROUND_SERVICE_CAMERA] any of [android.permission.CAMERA]
+ *
+ * so no call ever ran as a foreground service. 'phoneCall' is the type for a
+ * ConnectionService call (MANAGE_OWN_CALLS) and 'microphone' keeps the
+ * microphone usable while the app is in the background. Each needs its
+ * FOREGROUND_SERVICE_* permission, declared above.
+ */
+const CONNECTION_SERVICE_TYPES = 'phoneCall|microphone';
 
 /**
  * Declares callkeep's ConnectionService in the app manifest.
@@ -51,10 +76,12 @@ function withConnectionService(config: Parameters<ConfigPlugin>[0]) {
     const application = AndroidConfig.Manifest.getMainApplicationOrThrow(manifestConfig.modResults);
     application.service = application.service ?? [];
 
-    const already = application.service.some(
+    const existing = application.service.find(
       (service) => service.$?.['android:name'] === CONNECTION_SERVICE
     );
-    if (already) {
+    if (existing) {
+      // An earlier prebuild (or the app) declared it: keep it, with types that start.
+      existing.$ = { ...existing.$, 'android:foregroundServiceType': CONNECTION_SERVICE_TYPES };
       return manifestConfig;
     }
 
@@ -63,7 +90,7 @@ function withConnectionService(config: Parameters<ConfigPlugin>[0]) {
         'android:name': CONNECTION_SERVICE,
         'android:label': 'Calls',
         'android:permission': 'android.permission.BIND_TELECOM_CONNECTION_SERVICE',
-        'android:foregroundServiceType': 'camera|microphone',
+        'android:foregroundServiceType': CONNECTION_SERVICE_TYPES,
         // Telecom lives in another process and must be able to bind it.
         'android:exported': 'true'
       },

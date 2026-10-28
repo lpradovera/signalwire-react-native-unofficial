@@ -19,6 +19,11 @@ declare module 'node:path' {
   const path: {
     join(...segments: string[]): string;
     dirname(target: string): string;
+    parse(target: string): { root: string };
   };
   export default path;
+}
+
+declare module 'node:module' {
+  export function createRequire(filename: string): { resolve(request: string): string };
 }

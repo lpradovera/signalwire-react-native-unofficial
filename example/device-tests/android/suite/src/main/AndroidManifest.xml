@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The instrumentation runs in this (empty) app's process and drives the
+     example app from outside, through UI Automator. INTERNET and cleartext:
+     the tests talk to the host helper (hostd.py) at http://10.0.2.2. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET" />
+  <application android:label="SignalWire device tests" android:usesCleartextTraffic="true" />
+</manifest>

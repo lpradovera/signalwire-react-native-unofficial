@@ -1,29 +1,55 @@
 import { Router } from 'express';
 
+import { requireSignalWireSignature } from '../signalwire/signature.js';
+
 import type { BridgeTokenStore } from '../core/BridgeTokenStore.js';
 import type { CallEnder } from '../signalwire/endCall.js';
 import type { NotificationService } from '../core/NotificationService.js';
-import type { Request } from 'express';
+import type { NotifyResult } from '../core/types.js';
+import type { NextFunction, Request, Response } from 'express';
 
 /** One `ring:` entry lasts this long; the park window is built from these. */
 const RINGBACK_CHUNK_SECONDS = 15;
+/**
+ * The generated ringback chunk when the park polls: one ring cadence (2 s on,
+ * 4 s off), so a decline releases the caller within about 6 s and the tone
+ * restarts in step.
+ */
+const POLL_RINGBACK_SECONDS = 6;
+/** How long the park's poll may take before the SWML treats it as "keep waiting". */
+const PARK_POLL_TIMEOUT_SECONDS = 5;
 const DEFAULT_PARK_SECONDS = 60;
+/**
+ * How long the park reply waits on the push. Long enough for a normal APNs or
+ * FCM round trip (well under a second) plus a cold OAuth exchange; short
+ * enough that a stalled provider does not hold SignalWire's SWML fetch, and
+ * with it the caller, in silence.
+ */
+const DEFAULT_PUSH_WAIT_MS = 5_000;
 
 export interface SwmlRouteOptions {
   tokens: BridgeTokenStore;
   service: NotificationService;
   /**
    * Public base URL SignalWire can reach — a tunnel in development. Used to
-   * build the ringback URL, which SignalWire fetches itself.
+   * build the bridge's status_url, and as the base of the URL SignalWire
+   * signed when {@link signingKey} is set.
    */
   publicUrl?: string;
+  /**
+   * The space's Signing Key (`SIGNALWIRE_SIGNING_KEY`). When set, /park,
+   * /bridge and /bridge/status refuse any request SignalWire did not sign.
+   * Unset, anyone who can reach this server can ring any subscriber with a
+   * caller ID of their choosing. Requires {@link publicUrl}.
+   */
+  signingKey?: string;
   /**
    * Maps a dialled destination to a subscriber reference.
    *
    * Once a phone number points at the park resource, `to` is an E.164 number
    * and nothing about it names a user — this is where that lookup goes. The
-   * default reads an explicit hint, then {@link routes}, then a single
-   * configured subscriber.
+   * default reads `?subscriber=` on the handler URL, then {@link routes},
+   * then `DEV_SUBSCRIBER_REFERENCE`, then the last path segment.
    */
   resolveSubscriber?: (req: Request) => string | undefined;
   /**
@@ -33,8 +59,18 @@ export interface SwmlRouteOptions {
   routes?: Record<string, string>;
   /** Overrides the generated ring tone with your own recording. */
   ringback?: string;
+  /**
+   * The length of `ringback`, in seconds (`PARK_RINGBACK_SECONDS`). Required
+   * with `ringback`: `play` cannot loop, so the park repeats the URL
+   * `ceil(parkSeconds / ringbackSeconds)` times, and only the recording's
+   * real length makes that last the park window. This server's
+   * `/swml/ringback` is 6 s.
+   */
+  ringbackSeconds?: number;
   /** How long a caller waits before being hung up. Default 60s. */
   parkSeconds?: number;
+  /** How long the park reply waits on the push. Default 5s. */
+  pushWaitMs?: number;
   /**
    * Ends the caller's leg when the device's leg ends.
    *
@@ -64,40 +100,33 @@ function variablesFrom(body: Record<string, unknown>): Record<string, unknown> {
   return { ...params, ...vars, ...nested };
 }
 
+/** SignalWire's request: `params` (or the body itself), and `params.call`. */
+function paramsAndCall(body: Record<string, unknown>): {
+  params: Record<string, unknown>;
+  call: Record<string, unknown>;
+} {
+  const params = (body.params ?? body) as Record<string, unknown>;
+  return { params, call: (params.call ?? {}) as Record<string, unknown> };
+}
+
+/** The first non-empty string among `candidates`. */
+function firstString(candidates: readonly unknown[]): string | undefined {
+  return candidates.find((value): value is string => typeof value === 'string' && value.length > 0);
+}
+
 /** Reads the call SID from whichever field SignalWire used. */
 function callSidFrom(body: Record<string, unknown>): string | undefined {
-  const params = (body.params ?? body) as Record<string, unknown>;
-  const call = (params.call ?? {}) as Record<string, unknown>;
-  for (const candidate of [call.call_id, call.id, params.call_id, params.callSid, params.CallSid]) {
-    if (typeof candidate === 'string' && candidate.length > 0) {
-      return candidate;
-    }
-  }
-  return undefined;
+  const { params, call } = paramsAndCall(body);
+  return firstString([call.call_id, call.id, params.call_id, params.callSid, params.CallSid]);
 }
 
 /** Reads the caller's identity, which becomes the name on the CallKit screen. */
 function callerFrom(body: Record<string, unknown>): { from?: string; fromName?: string } {
-  const params = (body.params ?? body) as Record<string, unknown>;
-  const call = (params.call ?? {}) as Record<string, unknown>;
-
-  let from: string | undefined;
-  for (const candidate of [call.from, params.from, params.From, params.from_number]) {
-    if (typeof candidate === 'string' && candidate.length > 0) {
-      from = candidate;
-      break;
-    }
-  }
-
-  let fromName: string | undefined;
-  for (const candidate of [call.from_name, params.from_name, params.CallerName, call.caller_name]) {
-    if (typeof candidate === 'string' && candidate.length > 0) {
-      fromName = candidate;
-      break;
-    }
-  }
-
-  return { from, fromName };
+  const { params, call } = paramsAndCall(body);
+  return {
+    from: firstString([call.from, params.from, params.From, params.from_number]),
+    fromName: firstString([call.from_name, params.from_name, params.CallerName, call.caller_name])
+  };
 }
 
 /**
@@ -118,8 +147,11 @@ function subscriberFromCaller(body: Record<string, unknown>): string | undefined
   // found nothing here, so the caller looked unidentifiable and the bridge
   // fell back to a configured default — which rejected a perfectly good token
   // as wrong-subscriber.
+  // SIP and Fabric addresses escape what they cannot hold (an email's "@",
+  // a space), while the token was minted for the reference as written, so
+  // compare the unescaped form.
   if (from.startsWith('sip:')) {
-    const user = from.slice(4).split('@')[0];
+    const user = unescapeReference(from.slice(4).split('@')[0]);
     return user && user.length > 0 ? user : undefined;
   }
 
@@ -127,19 +159,25 @@ function subscriberFromCaller(body: Record<string, unknown>): string | undefined
     return undefined;
   }
   const segments = (from.split('?')[0] ?? from).split('/').filter(Boolean);
-  return segments[segments.length - 1];
+  return unescapeReference(segments[segments.length - 1]);
+}
+
+/** Percent-decodes a reference; one that is not valid escaping is kept as is. */
+function unescapeReference(raw: string | undefined): string | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
 }
 
 /** Reads the dialled destination, to decide who to ring. */
 function calledAddressFrom(body: Record<string, unknown>): string | undefined {
-  const params = (body.params ?? body) as Record<string, unknown>;
-  const call = (params.call ?? {}) as Record<string, unknown>;
-  for (const candidate of [call.to, params.to, params.To, params.to_number]) {
-    if (typeof candidate === 'string' && candidate.length > 0) {
-      return candidate;
-    }
-  }
-  return undefined;
+  const { params, call } = paramsAndCall(body);
+  return firstString([call.to, params.to, params.To, params.to_number]);
 }
 
 /**
@@ -150,9 +188,18 @@ function calledAddressFrom(body: Record<string, unknown>): string | undefined {
  * addressed to "rn-example-park", a subscriber that does not exist, and
  * `delivered: 0` with no error anywhere.
  *
+ * NOT anything the caller sent either. A destination dialled as
+ * `/public/park?subscriber=victim` arrives with its query copied into the
+ * user variables, so reading a hint from the request body let any caller pick
+ * whom to ring. The hint is read from this handler's own URL — the one set on
+ * the SignalWire resource, and covered by its signature — and nowhere else.
+ *
+ * Order: `?subscriber=` on the handler URL, then `routes` (PARK_ROUTES), then
+ * `DEV_SUBSCRIBER_REFERENCE`, then the last path segment of the destination.
+ *
  * A real deployment maps the dialled number, or a per-user resource, to a user
- * record. Replace this; the scaffold takes an explicit hint and falls back to a
- * single configured subscriber so one device can be tested end to end.
+ * record. Replace this; the scaffold falls back to a single configured
+ * subscriber so one device can be tested end to end.
  */
 function makeDefaultResolveSubscriber(routes: Record<string, string>) {
   return (req: Request): string | undefined => defaultResolveSubscriber(req, routes);
@@ -163,10 +210,8 @@ function defaultResolveSubscriber(
   routes: Record<string, string> = {}
 ): string | undefined {
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const params = (body.params ?? body) as Record<string, unknown>;
-  const vars = variablesFrom(body);
 
-  const hint = vars.subscriber ?? params.subscriber ?? req.query.subscriber;
+  const hint = req.query.subscriber;
   if (typeof hint === 'string' && hint.length > 0) {
     return hint;
   }
@@ -215,13 +260,106 @@ export function createSwmlRoutes({
   publicUrl,
   routes = {},
   ringback,
+  ringbackSeconds,
   parkSeconds = DEFAULT_PARK_SECONDS,
+  pushWaitMs = DEFAULT_PUSH_WAIT_MS,
   callEnder,
+  signingKey,
   resolveSubscriber = makeDefaultResolveSubscriber(routes)
 }: SwmlRouteOptions): Router {
   const router = Router();
 
-  router.post('/park', async (req, res) => {
+  if (ringback && !(typeof ringbackSeconds === 'number' && ringbackSeconds > 0)) {
+    // Guessing 15 s held a caller on this server's 6 s /swml/ringback for
+    // 24 s instead of 60, then hung up on them as busy.
+    throw new Error(
+      'A ringback recording needs its length: set PARK_RINGBACK_SECONDS to the length of ' +
+        'PARK_RINGBACK_URL in seconds (6 for this server\'s /swml/ringback).'
+    );
+  }
+  const ringbackUrl = ringback ?? `ring:${RINGBACK_CHUNK_SECONDS.toFixed(1)}:us`;
+  const ringbackChunkSeconds = ringback ? (ringbackSeconds as number) : RINGBACK_CHUNK_SECONDS;
+
+  if (signingKey && !publicUrl) {
+    // The signature covers the URL SignalWire requested — the tunnel — not
+    // the one this process sees, so it cannot be checked without it.
+    throw new Error('A SignalWire signing key needs the public URL it signs: set PUBLIC_URL.');
+  }
+  const signedBySignalWire = signingKey && publicUrl
+    ? requireSignalWireSignature({ signingKey, publicUrl })
+    : (_req: Request, _res: Response, next: NextFunction) => next();
+
+  // The park SWML polls this, so it can end itself (see selfEndingPark).
+  const stateBase = publicUrl ? `${publicUrl.replace(/\/$/, '')}/swml/park/state` : undefined;
+
+  /**
+   * The park SWML when it can poll: it owns its own exit.
+   *
+   * Rather than one long ringback, it loops: a ringback chunk, a `request` to
+   * `/swml/park/state` (keyed by its own `%{call.call_id}` and the park's
+   * secret), a `switch` that hangs up when the answer is `end: "yes"`, and a
+   * `goto` back, bounded by `max` so the park still ends with its window.
+   * A decline, or the end of a bridged call, marks the park ended here, and
+   * the caller is released within one chunk on whichever leg the SWML runs —
+   * it does not depend on a REST end reaching that leg. A poll that fails or
+   * times out reads as "keep waiting", so a slow server costs a ring, not the
+   * call.
+   */
+  const selfEndingPark = (stateUrl: string): Record<string, unknown> => {
+    const chunkSeconds = ringback ? ringbackChunkSeconds : POLL_RINGBACK_SECONDS;
+    const chunkUrl = ringback ?? `ring:${POLL_RINGBACK_SECONDS.toFixed(1)}:us`;
+    const rounds = Math.max(2, Math.ceil(parkSeconds / chunkSeconds));
+    return {
+      version: '1.0.0',
+      sections: {
+        main: [
+          { answer: {} },
+          { label: 'ring' },
+          { play: { url: chunkUrl } },
+          {
+            request: {
+              url: stateUrl,
+              method: 'GET',
+              save_variables: true,
+              timeout: PARK_POLL_TIMEOUT_SECONDS
+            }
+          },
+          { switch: { variable: 'vars.request_response.end', case: { yes: [{ hangup: {} }] } } },
+          // `max` counts the jumps back, so the chunk plays `rounds` times.
+          { goto: { label: 'ring', max: rounds - 1 } },
+          // Reached only if nobody answers within the park window.
+          { hangup: { reason: 'busy' } }
+        ]
+      }
+    };
+  };
+
+  /**
+   * The park SWML's poll: `{ end: "yes" }` once the caller should be hung up.
+   *
+   *   GET /swml/park/state?call=<call_id>&key=<park key>  ->  200 { end } | 400 | 403
+   *
+   * Fetched by SignalWire from inside the park, which a request verb does not
+   * sign, so it is authorised by the park's own key: minted with the park,
+   * sent only in that park's SWML, and checked against the call it belongs to.
+   * The answer tells the caller's own script whether to hang up, nothing more.
+   */
+  router.get('/park/state', (req, res) => {
+    const call = req.query.call;
+    const key = req.query.key;
+    if (typeof call !== 'string' || call.length === 0 || typeof key !== 'string' || key.length === 0) {
+      res.status(400).json({ error: 'call and key are required' });
+      return;
+    }
+    const state = tokens.parkState(key, call);
+    if (typeof state !== 'string') {
+      res.status(403).json({ error: state.error });
+      return;
+    }
+    res.json({ end: state === 'end' ? 'yes' : 'no' });
+  });
+
+  router.post('/park', signedBySignalWire, async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const callSid = callSidFrom(body);
     const externalUserId = resolveSubscriber(req);
@@ -231,6 +369,7 @@ export function createSwmlRoutes({
       // something deliberate, and the log says exactly what was missing.
       console.warn(
         JSON.stringify({
+          at: new Date().toISOString(),
           message: 'Park request missing call SID or subscriber; hanging up',
           hasCallSid: Boolean(callSid),
           externalUserId,
@@ -245,8 +384,9 @@ export function createSwmlRoutes({
     const token = tokens.mint(callSid, externalUserId);
 
     // Push before the SWML is returned, so the device is already waking while
-    // the caller hears the first ring.
-    const result = await service.notify({
+    // the caller hears the first ring — but wait only so long: the caller
+    // hears nothing at all until this reply goes out.
+    const pushed = service.notify({
       externalUserId,
       // The token, NOT the call SID: correlationId becomes `call_id` in the
       // push payload, so putting the SID here would ship the very capability
@@ -260,17 +400,64 @@ export function createSwmlRoutes({
       fromName: caller.fromName ?? caller.from ?? 'Incoming call',
       data: { bridgeToken: token.token }
     });
-
-    console.log(
-      JSON.stringify({
-        at: new Date().toISOString(),
-        message: 'Parked caller and pushed',
-        callSid,
-        externalUserId,
-        delivered: result.delivered,
-        attempted: result.attempted
-      })
+    const logPush = (result: NotifyResult | Error, late: boolean): void => {
+      console.log(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          message: late ? 'Push finished after the park replied' : 'Parked caller and pushed',
+          callSid,
+          externalUserId,
+          ...(result instanceof Error
+            ? { error: result.message }
+            : { delivered: result.delivered, attempted: result.attempted })
+        })
+      );
+    };
+    const settled = pushed.then(
+      (result) => result,
+      (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
     );
+    let timer: NodeJS.Timeout | undefined;
+    const outcome = await Promise.race([
+      settled,
+      new Promise<'pending'>((resolve) => {
+        timer = setTimeout(() => resolve('pending'), pushWaitMs);
+      })
+    ]);
+    clearTimeout(timer);
+
+    if (outcome === 'pending') {
+      // Not known to have failed, so park as usual; log the result when it lands.
+      console.warn(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          message: 'Push still in flight; parking the caller without waiting',
+          callSid,
+          externalUserId,
+          waitedMs: pushWaitMs
+        })
+      );
+      void settled.then((result) => logPush(result, true));
+    } else if (outcome instanceof Error || outcome.delivered === 0) {
+      // No device will ring, so nobody can answer. Answering would bill the
+      // caller's leg and play a minute of ringback for no one; hanging up
+      // unanswered turns the call away now.
+      console.warn(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          message: 'Push reached no device; turning the caller away',
+          callSid,
+          externalUserId,
+          ...(outcome instanceof Error
+            ? { error: outcome.message }
+            : { delivered: outcome.delivered, attempted: outcome.attempted })
+        })
+      );
+      res.json({ version: '1.0.0', sections: { main: [{ hangup: { reason: 'busy' } }] } });
+      return;
+    } else {
+      logPush(outcome, false);
+    }
 
     // `ring:` is generated by SignalWire, so no audio needs hosting. The loop
     // is bounded: a declined or unanswered call must not park forever, and the
@@ -283,9 +470,15 @@ export function createSwmlRoutes({
     // `ring:<seconds>:<country>` is generated by SignalWire, so the common
     // case hosts no audio at all. PARK_RINGBACK_URL overrides it with your own
     // recording; the /swml/ringback route on this server serves a suitable one.
-    const ringbackUrl = ringback ?? `ring:${RINGBACK_CHUNK_SECONDS.toFixed(1)}:us`;
-    const chunks = Math.max(1, Math.ceil(parkSeconds / RINGBACK_CHUNK_SECONDS));
+    if (stateBase) {
+      res.json(selfEndingPark(`${stateBase}?call=%{call.call_id}&key=${encodeURIComponent(token.parkKey)}`));
+      return;
+    }
 
+    const chunks = Math.max(1, Math.ceil(parkSeconds / ringbackChunkSeconds));
+
+    // Without PUBLIC_URL the SWML has no address to poll, so the park cannot
+    // end itself: one long ringback, and only calling.end ends it sooner.
     res.json({
       version: '1.0.0',
       sections: {
@@ -344,7 +537,7 @@ export function createSwmlRoutes({
     res.send(Buffer.concat([header, samples]));
   });
 
-  router.post('/bridge', (req, res) => {
+  router.post('/bridge', signedBySignalWire, (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const params = (body.params ?? body) as Record<string, unknown>;
     const vars = variablesFrom(body);
@@ -361,8 +554,9 @@ export function createSwmlRoutes({
     // minted for one subscriber was checked against that default and rejected
     // as wrong-subscriber — which only stayed invisible while the default
     // happened to match the only device being tested.
-    const externalUserId =
-      (vars.subscriber as string | undefined) ?? subscriberFromCaller(body);
+    // Nor a `subscriber` variable: the dialled query is the caller's to
+    // write, so naming the token's owner there would skip the check below.
+    const externalUserId = subscriberFromCaller(body);
 
     if (!token) {
       // Logged with the request shape, not just the fact of failure. A device
@@ -372,6 +566,7 @@ export function createSwmlRoutes({
       // at all. The device only sees the leg end, with cause USER_BUSY.
       console.warn(
         JSON.stringify({
+          at: new Date().toISOString(),
           message: 'Bridge request missing its token',
           varKeys: Object.keys(vars),
           paramKeys: Object.keys(params),
@@ -395,6 +590,7 @@ export function createSwmlRoutes({
     if (!externalUserId) {
       console.warn(
         JSON.stringify({
+          at: new Date().toISOString(),
           message: 'Bridge redeemed without verifying the caller',
           from: callerFrom(body).from ?? null
         })
@@ -405,7 +601,12 @@ export function createSwmlRoutes({
       // device: a caller who hung up, a slow answer, and a replayed token all
       // look the same there.
       console.warn(
-        JSON.stringify({ message: 'Bridge token rejected', reason: redeemed.error, externalUserId })
+        JSON.stringify({
+          at: new Date().toISOString(),
+          message: 'Bridge token rejected',
+          reason: redeemed.error,
+          externalUserId
+        })
       );
       res.json({ version: '1.0.0', sections: { main: [{ hangup: {} }] } });
       return;
@@ -435,6 +636,7 @@ export function createSwmlRoutes({
     if (!statusUrl) {
       console.warn(
         JSON.stringify({
+          at: new Date().toISOString(),
           message: 'PUBLIC_URL unset; the caller leg will not be ended when the device hangs up',
           callSid: redeemed.callSid
         })
@@ -463,8 +665,12 @@ export function createSwmlRoutes({
    * by /swml/bridge. `disconnected` means the device's leg is gone — and the
    * caller's leg is not returned to its script and is not hung up, so without
    * this it stays up, connected to nothing, in silence.
+   *
+   * Claiming the end also marks the park ended, for its poll. But a caller
+   * taken by a bridge does not return to the park script, so the poll cannot
+   * end it here: `calling.end` does.
    */
-  router.post('/bridge/status', async (req, res) => {
+  router.post('/bridge/status', signedBySignalWire, async (req, res) => {
     // Answer first. This is a status callback: SignalWire does not need our
     // opinion, and a slow REST call here should not hold up its pipeline.
     res.status(204).end();
@@ -479,19 +685,37 @@ export function createSwmlRoutes({
       return;
     }
     if (!token) {
-      console.warn(JSON.stringify({ message: 'Bridge status callback carried no token', state }));
+      console.warn(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          message: 'Bridge status callback carried no token',
+          state
+        })
+      );
       return;
     }
 
-    const paired = tokens.pairedCallSidByToken(token);
-    if (!paired) {
-      console.warn(JSON.stringify({ message: 'Bridge status: unknown token', state }));
+    const paired = tokens.claimCallerEnd(token);
+    if ('error' in paired) {
+      if (paired.error !== 'already-ended') {
+        console.warn(
+          JSON.stringify({
+            at: new Date().toISOString(),
+            message:
+              paired.error === 'unknown'
+                ? 'Bridge status: unknown token'
+                : 'Bridge status for a token that was never bridged; ignoring',
+            state
+          })
+        );
+      }
       return;
     }
 
     if (!callEnder) {
       console.warn(
         JSON.stringify({
+          at: new Date().toISOString(),
           message: 'No call ender configured; the caller leg will be left up',
           callSid: paired.callSid
         })
@@ -509,6 +733,79 @@ export function createSwmlRoutes({
         ...(result.ok ? {} : { error: result.error })
       })
     );
+  });
+
+  /**
+   * The user declined a parked call.
+   *
+   *   POST /swml/decline  { bridgeToken }  ->  204 | 400 | 404 | 409 | 410 | 502 | 503
+   *
+   * Called by the app, not SignalWire: in the parked-caller flow no SDK call
+   * exists to reject, so without this a decline reaches nobody and the caller
+   * hears ringback for the whole park window, then a busy hangup. The bridge
+   * token is the authority — it was pushed only to this user's devices, is
+   * single-use and expires with the park — so this needs neither the API token
+   * (which an app cannot hold) nor a SignalWire signature.
+   */
+  router.post('/decline', async (req, res) => {
+    const body = (req.body ?? {}) as { bridgeToken?: unknown };
+    const token = body.bridgeToken;
+    if (typeof token !== 'string' || token.length === 0) {
+      res.status(400).json({ error: 'bridgeToken is required' });
+      return;
+    }
+    if (!callEnder && !stateBase) {
+      // Checked before the token is touched, so the call stays answerable.
+      // With PUBLIC_URL set the park ends itself, so this is only the case
+      // where nothing at all could end the caller.
+      res.status(503).json({
+        error:
+          'No call ender configured (SIGNALWIRE_SPACE, SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN) and no PUBLIC_URL for the park to poll; the caller cannot be ended'
+      });
+      return;
+    }
+
+    // Marks the park ended: its next poll hangs the caller up.
+    const declined = tokens.decline(token);
+    if ('error' in declined) {
+      const status = { unknown: 404, expired: 410, 'already-redeemed': 409, 'already-declined': 409 }[
+        declined.error
+      ];
+      res.status(status).json({ error: declined.error });
+      return;
+    }
+
+    if (!callEnder) {
+      console.log(
+        JSON.stringify({
+          at: new Date().toISOString(),
+          message: 'Declined; the park hangs up on its next poll',
+          callSid: declined.callSid
+        })
+      );
+      res.status(204).end();
+      return;
+    }
+
+    // Still tried: it ends the caller at once rather than at the next poll.
+    const result = await callEnder.end(declined.callSid, 'decline');
+    console.log(
+      JSON.stringify({
+        at: new Date().toISOString(),
+        message: result.ok
+          ? 'Declined; ended caller leg'
+          : stateBase
+            ? 'Declined; calling.end failed, the park hangs up on its next poll'
+            : 'Declined; failed to end caller leg',
+        callSid: declined.callSid,
+        ...(result.ok ? {} : { error: result.error })
+      })
+    );
+    if (result.ok || stateBase) {
+      res.status(204).end();
+    } else {
+      res.status(502).json({ error: result.error });
+    }
   });
 
   return router;

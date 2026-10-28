@@ -76,36 +76,50 @@ just a stale ordering.
 | build | Four packages, each `ESM/CJS/DTS ⚡️ Build success` |
 | lint | no output, exit 0 |
 | type-check | no `error TS` lines, across seven workspaces |
-| test | 57 core + 13 react-ui + 167 react-native + 23 react-native-ui = **260**, plus 37 server |
+| test | Every suite passes: a jest summary for each of the four packages (core, react-ui, react-native, react-native-ui) with `Tests: … passed` and nothing failed, then the server's `node:test` summary with `fail 0`. The counts rise with each change, so a different number is not a regression; a failure, a skip or a missing package is |
 | bundle-check | `iOS Bundled … (~1090 modules)`, an `Android Bundled …` line, and a Vite `✓ built in …` |
 
 **Do not treat the Android module count as a gate.** Both platforms export
 concurrently against one Metro cache, and the Android figure tracks cache
 warmth rather than the bundle: on this repo it has been observed at 1088 on a
 cold cache and falling through the 800s, 600s and 400s on successive warm runs,
-while iOS stays fixed. Clear `$TMPDIR/metro-cache` first if you want a
-reproducible number, or just check that both platforms bundle without error.
+while iOS stays fixed. Clear the repository's Metro caches
+(`rm -rf node_modules/.cache/metro node_modules/.cache/metro-file-map`; the
+example's `metro.config.js` keeps them there, not in `$TMPDIR`) first if you want
+a reproducible number, or just check that both platforms bundle without error.
 
 The four packages are `@signalwire/react` (universal core), `@signalwire/react-ui`
 (browser Lit wrappers), `@signalwire/react-native` (platform layer) and
 `@signalwire/react-native-ui` (native components). Build order matters — see below.
 
-Two more, run separately because they hit the network:
+Two more, run separately (CI runs both):
 
 ```bash
-npm run verify:package    # publint + are-the-types-wrong on the built tarball
+npm run verify:package    # publint + are-the-types-wrong on each package's tarball
 npm run verify:prebuild   # real `expo prebuild`; asserts the config plugin applied
 ```
 
-`verify:package` expects `All good!` from publint and **every row green** from
-attw, including `node10` — `typesVersions` covers classic resolution. The
-`./app.plugin.js` entrypoint is excluded from attw on purpose: it is an Expo
-build-time entry consumed by the config-plugin loader, not by TypeScript, so it
-legitimately ships no declarations.
+`verify:package` runs each package's `lint:package` script for all four
+packages, with the publint and `@arethetypeswrong/cli` versions pinned in the
+root `devDependencies`. It expects `All good!` from publint and **every row
+green** from attw, including `node10` — `typesVersions` covers classic
+resolution. Two entrypoints are excluded from attw on purpose:
+`@signalwire/react-native`'s `./app.plugin.js` is an Expo build-time entry
+consumed by the config-plugin loader, not by TypeScript, so it legitimately
+ships no declarations; `@signalwire/react-ui`'s `./theme.css` is a stylesheet.
+`@signalwire/react-ui` is ES modules only (its `@signalwire/web-components`
+dependency cannot be `require()`d), so its attw run ignores the
+`cjs-resolves-to-esm` rule, which reports exactly that.
 
-`verify:prebuild` expects:
-`✓ 10 Android permissions and 4 iOS Info.plist entries applied by the plugin.`
-It needs no Xcode, Android SDK, or CocoaPods — prebuild only generates sources.
+`verify:prebuild` ends with one `✓` line naming what the plugin applied
+(the Android permissions, the iOS Info.plist entries, the VoIP push hook,
+Firebase on Android only) and exits 0; a failed assertion prints a `✗` line
+for each and exits 1. A `node --test` run then checks it left `example/ios`
+and `example/android` alone. It needs no Xcode, Android SDK, or CocoaPods —
+prebuild only generates sources — and it prebuilds a scratch copy of
+`example/` under `.tmp/verify-prebuild/`, so your own native projects, Pods
+and signing edits are never touched. It ignores `example/.env` and checks the
+committed configuration with the placeholder app id.
 
 Coverage, if you want it:
 
@@ -131,10 +145,14 @@ sudo apt-get install -y openjdk-17-jdk-headless
 
 export ANDROID_HOME=$HOME/Android/Sdk
 mkdir -p $ANDROID_HOME/cmdline-tools
-curl -sSLo /tmp/cmdtools.zip \
-  https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-unzip -q -o /tmp/cmdtools.zip -d $ANDROID_HOME/cmdline-tools
-mv -f $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+# Downloaded next to where it is unpacked, not into the shared /tmp, and
+# stopped on failure, so a stale or foreign zip is never extracted.
+curl -fsSLo $ANDROID_HOME/cmdline-tools/cmdtools.zip \
+  https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip &&
+  unzip -q -o $ANDROID_HOME/cmdline-tools/cmdtools.zip -d $ANDROID_HOME/cmdline-tools &&
+  rm $ANDROID_HOME/cmdline-tools/cmdtools.zip &&
+  rm -rf $ANDROID_HOME/cmdline-tools/latest &&
+  mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
 
 export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
@@ -243,8 +261,9 @@ toolchain images rather than whatever AGP resolves to locally.
 
 ## 3. Tier 2 — iOS
 
-**Requires macOS.** Nothing on the iOS path — CallKit, VoIP push, `Info.plist`
-at runtime — has been executed on any machine yet. It is entirely unvalidated.
+**Requires macOS.** Device results are recorded in the sign-off table in
+[`docs/device-testing.md`](docs/device-testing.md); read it for what has and has
+not been confirmed on hardware.
 
 ```bash
 cd example
@@ -255,6 +274,45 @@ open SignalWireRNExample.xcworkspace
 
 **Xcode 26 or newer is required** — any iOS 26 device needs it, and Xcode 16.x
 cannot build SDK 54 anyway.
+
+**Xcode 27 / iOS 27** need two things the example applies itself, as config
+plugins in `example/plugins/`. An app of your own built with the iOS 27 SDK on
+Expo SDK 54 needs the same; copy `generatedCode.js` along with them.
+
+- `withPodDeploymentTarget` raises pod resource bundles that still declare
+  iOS 9 to the app's deployment target (Xcode 27 refuses anything below 15.0;
+  React Native already raises the pods' own targets). It adds a tagged block
+  right after the Podfile's `post_install do |installer|` line. React Native
+  fixed this upstream in facebook/react-native#58687 (commit d45fc2d289, not in
+  0.88.0); drop the plugin once your React Native release contains it.
+- `withSceneLifecycle` adopts the UIScene lifecycle, without which iOS 27 ends
+  the app at launch in
+  `_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`. It merges a
+  scene manifest into Info.plist (other scene roles, such as CarPlay's, are
+  kept; it refuses an app that already names its own window-scene delegate),
+  and adds a `SceneDelegate` to `AppDelegate.swift` that moves the
+  AppDelegate's window onto the scene. React Native now starts when the scene
+  connects, with the scene's URL in the launch options, so
+  `Linking.getInitialURL()` returns a link that cold-started the app; a launch
+  with no scene (a VoIP push in the background) still starts it, on the next
+  turn of the main queue. In Debug builds with expo-dev-client the start stays
+  in `didFinishLaunching`, which expo-dev-launcher requires, and the launcher
+  passes the link on as the app's initial URL. The `SceneDelegate` hands URLs
+  (with their options), user activities, active/background transitions and
+  quick actions back to the AppDelegate, so Expo modules' AppDelegate
+  subscribers still get them. A link a scene connects with while React Native
+  is already running (it was started by a VoIP push) arrives as a `url` event
+  once the first screen is up, not from `getInitialURL()`. The app has one
+  window, so with `UIApplicationSupportsMultipleScenes` each new window scene
+  takes it. Expo SDK 58's template adopts scenes itself; drop the plugin there.
+
+Both plugins write Expo's tagged blocks (`@generated begin ... end`), so
+`expo prebuild` without `--clean` updates them in place and keeps anything
+else in the files. `npm test -w @signalwire/react-native-example` runs them
+through Expo's mod compiler and type-checks the generated Swift (on a Mac;
+elsewhere those four tests skip). CI's Linux job skips them, so CI has a
+macOS job, `example-swift`, that runs the Swift suite with
+`SW_REQUIRE_SWIFTC=1`, which makes a missing Xcode fail instead of skip.
 
 ### The application identifier is not in the repo
 
@@ -335,8 +393,15 @@ double-conversion) as prebuilt binaries. **Use it.** Without it, CocoaPods
 compiles glog from source by running `./configure`, which blocks forever
 reading a stdin that CocoaPods never writes to.
 
-**Do not add `RCT_USE_PREBUILT_RNCORE=1`.** Precompiled React core is broken on
-this toolchain — the `React-Core-prebuilt` umbrella header pulls in source-tree
+The example runs the New Architecture, where Expo's Podfile turns on
+precompiled React core by itself (`RCT_USE_PREBUILT_RNCORE ||= '1'`). That
+configuration builds and launches on Xcode 27 / the iOS 27 Simulator
+(2026-10-15: clean `expo prebuild`, `RCT_USE_RN_DEP=1 pod install`, Release
+build). The note below is from the old architecture, where the variable was
+off by default and setting it by hand failed.
+
+**Old architecture: do not add `RCT_USE_PREBUILT_RNCORE=1`.** Precompiled React core was broken on
+that toolchain — the `React-Core-prebuilt` umbrella header pulls in source-tree
 headers that are not part of its module, and `-Wnon-modular-include-in-framework-module`
 is promoted to an error:
 
@@ -354,22 +419,23 @@ rather than a re-download.
 
 Before checklist items 5–7 can work at all:
 
-1. Add the `AppDelegate` PushKit hook from `docs/native-setup.md`. The Expo
-   plugin deliberately does not inject it (regex-patching Expo's Swift
-   `AppDelegate` fails silently, which is worse than not generating it). Without
-   it, a cold-start push cannot reach CallKit in time and iOS kills the process.
-
-   **Use the Objective-C category, not a Swift `import RNCallKeep`.** On RN 0.81
-   that import fails with "no such module" — callkeep's podspec does not expose
-   a consumable Swift module, and bridging headers do not work around it
-   ([callkeep#856](https://github.com/react-native-webrtc/react-native-callkeep/issues/856),
-   open and unassigned since Aug 2025). The ObjC route is the only one known to
-   work.
+1. **Nothing to add for the PushKit hook.** The Expo plugin generates it
+   (`SignalWireVoipPush.m`, an Objective-C category, added to Compile Sources)
+   on every prebuild with `enableVoipPush`, which the example sets; see
+   [`docs/push-setup.md` §1d](docs/push-setup.md#1d-the-native-pushkit-hook--generated-for-you).
+   `npm run verify:prebuild` asserts it is generated and compiled. Do **not**
+   also add the hook to the `AppDelegate` by hand: that is a second PushKit
+   path beside the generated registry. (It is Objective-C because a Swift
+   `import RNCallKeep` fails with "no such module" on RN 0.81 —
+   [callkeep#856](https://github.com/react-native-webrtc/react-native-callkeep/issues/856).)
 2. Xcode → Signing & Capabilities → add **Push Notifications** and **Background
    Modes** (Voice over IP + Audio). Push Notifications requires a **paid** Apple
    Developer Program membership; a free personal team cannot enable it, so
    items 5–7 are unreachable without one.
-3. Create a VoIP services certificate and wire it to your push sender.
+3. Create an APNs auth key (`.p8`) and give it to the push sender
+   (`docs/push-setup.md` §1a); one key covers VoIP pushes, sandbox and
+   production. A VoIP Services `.p12` certificate is only for vendors that
+   require one.
 
 **CallKit does not work in the iOS Simulator.** Items 3–7 need a real device.
 
@@ -396,8 +462,9 @@ the token store and the sender are all yours, and the payload must **carry
 `call_id`**. The package
 owns neither half by design; `reportIncomingPush({ callId, from, fromName })` is
 the entire contract. Without `call_id` the registry falls back to "the single
-unmatched inbound call within 20s" and logs a warning — which breaks as soon as
-two calls overlap, and is exactly what scenario 12 is designed to catch.
+push entry with no call id, while it waits" (the fusion timeout, 45 s by
+default) and logs a warning — which breaks as soon as two calls overlap, and is
+exactly what scenario 12 is designed to catch.
 
 ### The single most valuable observation
 
@@ -410,12 +477,20 @@ real Hermes runtime in one shot. If it red-screens on startup, capture the stack
 
 ## 5. Failure triage
 
+Several rows below name `[SignalWireRN]` log lines (`Android call push
+registered`, `Adopting pending native call …`, `Buffering "answer" for …`).
+Those are **debug** lines, and `@signalwire/js` logs at `warn` by default, so
+none of them prints until you raise the level: run the example with
+`EXPO_PUBLIC_SW_WIRE_LOG=1` (trace level, plus every WebSocket frame), or call
+`setLogLevel('debug')` from `@signalwire/js` in your own app. With the default
+level, a missing line means nothing.
+
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| Android cold start: the app wakes and comes forward, but no incoming call is shown | The dev client starts a **second JS runtime** for the activity. The headless FCM task created the entry in the first one, and the registry singleton lives on `globalThis`, which is per-runtime — so the UI context has no entry. Look for two `Android call push registered` lines from the same pid | Expected in a **development** build. A release build runs one context, so the entry survives. Verify cold start on a release build before believing it is broken |
+| Android cold start: the app wakes and comes forward, but no incoming call is shown | The dev client starts a **second JS runtime** for the activity. The headless FCM task created the entry in the first one, and the registry singleton lives on `globalThis`, which is per-runtime — so the UI context has no entry. With debug logging on (see above), look for two `Android call push registered` lines from the same pid | Expected in a **development** build. A release build runs one context, so the entry survives. Verify cold start on a release build before believing it is broken |
 | Android: `am force-stop` then a push does nothing at all | force-stop puts the app in Android's *stopped state*, where the system withholds FCM and broadcasts until a manual launch. It does not model a user swiping the app away | Background it (`KEYCODE_HOME`), then `am kill`. Check `dumpsys package <id> \| grep stopped=` — it must be `false` |
-| Cold start: CallKit rings, the user answers, nothing dials, caller stays parked | The `didDisplayIncomingCall` event fired before JavaScript existed. callkeep's `didLoadWithEvents` replay does **not** fire on iOS in this version, so the registry has no entry and `applyIntent` returns silently — no log, because there is nothing to log against | The native module caches the push (as it already does the token); `setup()` adopts it via `getPendingCall()`. Look for `Adopting pending native call <uuid> from the launch push` |
-| Cold start: the answer reaches JS but no bridge is dialled | `answerRequested$` was a plain `Subject`, so an answer applied before React mounts reached no subscriber | It replays outstanding answers to late subscribers. Distinguish from the row above by whether `Buffering "answer" for …` appears: present means the entry existed, absent means it did not |
+| Cold start: CallKit rings, the user answers, nothing dials, caller stays parked | The `didDisplayIncomingCall` event fired before JavaScript existed. callkeep's `didLoadWithEvents` replay does **not** fire on iOS in this version, so the registry has no entry and `applyIntent` returns silently — no log, because there is nothing to log against | The native module caches each push (as it already does the token); `setup()` adopts them via `getPendingCalls()` and forgets each one it has seen. With debug logging on, look for `Adopting pending native call <uuid> from the launch push` |
+| Cold start: the answer reaches JS but no bridge is dialled | `answerRequested$` was a plain `Subject`, so an answer applied before React mounts reached no subscriber | It replays outstanding answers to late subscribers. With debug logging on, distinguish from the row above by whether `Buffering "answer" for …` appears: present means the entry existed, absent means it did not |
 | A device fix "does not work" and the logs show no sign of it | Metro served a cached bundle. `iOS Bundled 42ms example/index.js (1 module)` is the tell — a real bundle is ~1200 modules | Restart Metro with `--clear` and confirm the module count **before** testing on device. This has cost two full test cycles |
 | `Call create timeout` in a browser, with no call in SignalWire's logs and no webhook hit | An unanswered microphone prompt. The SDK takes local media before sending the invite, so `getUserMedia` never settles and the invite is never sent. The prompt is browser chrome, so it is invisible in a screenshot | Grant the mic for the origin. Permissions are per-origin: a grant on `localhost:5173` does **not** apply to `127.0.0.1:5173`. Check with `navigator.permissions.query({name:'microphone'})` — `"prompt"` means nothing was ever granted |
 | VoIP push reports `delivered: 1` from APNs but no CallKit UI and no app-side log | The build is signed without `aps-environment`. iOS still issues a PushKit token and registration succeeds, so nothing looks wrong from the server | The plugin adds the entitlement when `enableVoipPush` is set; `expo prebuild` regenerating the file cannot drop it. Confirm with `codesign -d --entitlements -` on the built `.app`, and watch the `[SignalWireVoipPush]` NSLog lines via `devicectl device process launch --console` |
@@ -426,15 +501,15 @@ real Hermes runtime in one shot. If it red-screens on startup, capture the stack
 | CallKit Accept connects the call but the app UI does not react | Nothing surfaced the native answer to React | Subscribe to `getCallKit().registry.answered$` |
 | A bridge reports `setup=false` while its registry knows the call | Two copies of the module (subpath entry bundles) each held a `let singleton` | Fixed — singletons live on `globalThis`. If you add another, do the same |
 | ICE gathering times out; candidate list includes `100.x`/`fd7a:` addresses | A VPN (e.g. Tailscale) adds interfaces that slow gathering | Disable the VPN on the device, or accept slower setup |
-| `PolyfillNotInstalledError` | `@signalwire/react-native/polyfills` missing or not first | Make it line 1 of `index.js` |
-| Red screen: `CustomEvent is not defined` | Polyfills entry did not run before `@signalwire/js` | Same as above |
+| Red screen at startup: `ReferenceError: Property 'CustomEvent' doesn't exist` | Polyfills entry did not run before `@signalwire/js` (the usual symptom of a missing or late polyfills import) | Make it line 1 of `index.js` |
+| `PolyfillNotInstalledError` | The random-values or URL polyfill is missing, and another library already supplied `CustomEvent` (otherwise the row above happens first) | Same as above |
 | `Unable to resolve module @signalwire/react-native/polyfills` | Metro package exports off | `resolver.unstable_enablePackageExports = true` |
 | `Static class blocks are not enabled` | Babel plugin missing | Add `@babel/plugin-transform-class-static-block` |
 | `dial()` reaches the wrong address | `react-native-url-polyfill` missing | Check the polyfills import |
-| `MissingPeerDependencyError` | Optional peer absent **or installed but not linked** | Install, then `expo prebuild --clean` / fresh pod install |
+| `MissingPeerDependencyError` | A peer installed but not linked (a dev client not rebuilt since it was added). A peer that is not installed at all fails the Metro bundle instead: `Unable to resolve module` | Install, then `expo prebuild --clean` / fresh pod install |
 | Call connects but is silent (iOS) | Audio started before `didActivateAudioSession` | The bridge gates on it; if you start media yourself, wait for it too |
 | Stuck entry in the iOS call log | Push never fused and `tick()` did not run | Check `CallKeepBridge` tick timer; covered by `CallKeepBridge.ios.test.ts` |
-| Network loss not detected | `@react-native-community/netinfo` absent | Install it; pass `platform={{ netInfo: true }}` |
+| Network loss not detected | The NetInfo shim did not start (log: `Network monitoring unavailable`, with the reason), or the platform was built with `netInfo: false` | Read the logged reason; leave `netInfo` at its default `true`. netinfo itself must be installed, or the app does not bundle |
 | Gradle `Could not get unknown property 'release'` | Expo/AGP mismatch, **not this package** | Section 2c |
 
 ---
@@ -457,38 +532,41 @@ real Hermes runtime in one shot. If it red-screens on startup, capture the stack
 
 ## Reaching the support server from a device
 
-A real device cannot reach the Mac's loopback, and the generated `Info.plist`
-sets `NSAllowsArbitraryLoads=false` with `NSAllowsLocalNetworking=true`. That
-combination decides what actually works:
+A real device cannot reach the Mac's loopback. The generated `Info.plist` keeps
+the template's `NSAllowsArbitraryLoads=false` and `NSAllowsLocalNetworking=true`,
+and `example/app.config.js` adds an `NSExceptionDomains` entry that allows plain
+HTTP to `ts.net` and its subdomains (a development convenience for the example;
+do not copy it into a shipping app). `npm run verify:prebuild` checks all three.
+Together they decide what actually works:
 
 | Route | Works? | Why |
 | --- | --- | --- |
 | `http://localhost:3000` | Simulator only | The device has its own loopback |
 | `http://<LAN IP>:3000` | Yes, same Wi-Fi | Covered by `NSAllowsLocalNetworking`; expect an iOS "allow local network access" prompt on first launch |
-| `http://100.x.y.z:3000` (Tailscale IP) | **No** | Tailscale uses `100.64.0.0/10` (CGNAT), which is not one of the private ranges `NSAllowsLocalNetworking` covers, so ATS blocks it |
-| `https://<host>.<tailnet>.ts.net` | Yes | Real certificate, so plain ATS is satisfied; also avoids the local-network prompt |
+| `http://<host>.<tailnet>.ts.net:3000` | Yes | The `ts.net` exception. This is the route the example is set up for |
+| `http://100.x.y.z:3000` (Tailscale IP) | **No** | Tailscale uses `100.64.0.0/10` (CGNAT), which is not one of the private ranges `NSAllowsLocalNetworking` covers, and a domain exception does not cover an IP address. Use the hostname |
+| `https://<host>.<tailnet>.ts.net` via `tailscale serve` | Should, but see below | A real certificate satisfies ATS without any exception |
 
-The Tailscale route survives changing networks, which matters when the Mac and
-the device are not on one Wi-Fi:
+The Tailscale routes survive changing networks, which matters when the Mac and
+the device are not on one Wi-Fi. Use the tailnet hostname over plain HTTP; the
+server already listens on every interface:
 
 ```bash
-tailscale serve --bg 3000          # proxies https://<host>.<tailnet>.ts.net -> localhost:3000
-tailscale serve status
-tailscale serve --https=443 off    # when finished
+# example/.env — EXPO_PUBLIC_ is what makes Expo inline it into the bundle
+EXPO_PUBLIC_SW_TOKEN_URL=http://<host>.<tailnet>.ts.net:3000/token
 ```
 
-Then set the app's endpoint, remembering that `EXPO_PUBLIC_` is what makes Expo
-inline it into the bundle:
+Verify from the Mac before blaming the app — a token minted through the tailnet
+name proves the whole chain except the device's own network:
 
 ```bash
-# example/.env
-EXPO_PUBLIC_SW_TOKEN_URL=https://<host>.<tailnet>.ts.net/token
-```
-
-Verify from the Mac before blaming the app — a token minted over HTTPS proves
-the whole chain except the device's own network:
-
-```bash
-curl -X POST https://<host>.<tailnet>.ts.net/token \
+curl -X POST http://<host>.<tailnet>.ts.net:3000/token \
   -H 'content-type: application/json' -d '{}'
 ```
+
+HTTPS through `tailscale serve --bg 3000` needs no exception, and it is what
+this section used to recommend. On the iPad the example was developed on, every
+handshake failed with `errSSLRecordOverflow` while the same URL gave curl on
+the Mac a clean 200, which is why `app.config.js` adds the exception instead
+(its comment has the history). If you try it, `tailscale serve status` shows
+the proxy, and `tailscale serve --https=443 off` removes it.

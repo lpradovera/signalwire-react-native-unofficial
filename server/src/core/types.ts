@@ -34,8 +34,6 @@ export interface CallNotification {
   readonly correlationId: string;
   readonly from?: string;
   readonly fromName?: string;
-  /** Whether the native UI should offer video. Defaults to false. */
-  readonly hasVideo?: boolean;
   /**
    * Extra key/value data delivered in the push payload untouched.
    *
@@ -75,13 +73,23 @@ export interface PushPayload {
 }
 
 /**
- * Thrown by a sender when the provider reports the token is dead. The service
- * prunes on this rather than on a string match, so provider-specific error
- * shapes stay inside the sender.
+ * Thrown by a sender when the provider says the token will never work again.
+ * The service prunes on this rather than on a string match, so
+ * provider-specific error shapes stay inside the sender.
+ *
+ * `reason` is the provider's own word for it. "Never works again" covers more
+ * than an uninstalled app — a token for the wrong APNs environment or another
+ * Firebase project is just as dead to this server — and the fix differs, so
+ * the reason travels with the prune instead of being flattened into "expired".
  */
 export class TokenExpiredError extends Error {
-  constructor(public readonly token: string) {
-    super(`Push token is no longer registered: ${token.slice(0, 12)}…`);
+  constructor(
+    public readonly token: string,
+    public readonly reason?: string
+  ) {
+    super(
+      `Push token rejected${reason ? ` (${reason})` : ''}: ${token.slice(0, 12)}…`
+    );
     this.name = 'TokenExpiredError';
   }
 }

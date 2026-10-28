@@ -59,14 +59,26 @@ export class NotificationService {
     );
 
     const expired = results.filter((result) => result.status === 'token-expired');
-    // Pruned after the fan-out so a dead token never blocks a live one.
-    await Promise.all(expired.map((result) => this.store.remove(result.token)));
+    // Pruned after the fan-out so a dead token never blocks a live one. A
+    // failed prune is logged, not thrown: the live devices are already
+    // ringing, and a rejection here would turn the caller's park into a 500.
+    const prunes = await Promise.allSettled(
+      expired.map((result) => this.store.remove(result.token))
+    );
+    prunes.forEach((prune, index) => {
+      if (prune.status === 'rejected') {
+        this.log('Failed to prune token', {
+          token: `${expired[index]?.token.slice(0, 12) ?? ''}…`,
+          error: prune.reason instanceof Error ? prune.reason.message : String(prune.reason)
+        });
+      }
+    });
 
     const outcome: NotifyResult = {
       correlationId: notification.correlationId,
       attempted: results.length,
       delivered: results.filter((result) => result.status === 'delivered').length,
-      pruned: expired.length,
+      pruned: prunes.filter((prune) => prune.status === 'fulfilled').length,
       results
     };
 
@@ -78,12 +90,17 @@ export class NotificationService {
       .filter((result) => result.status === 'failed')
       .map((result) => `${result.platform}: ${result.error ?? 'unknown'}`);
 
+    const prunedReasons = expired
+      .filter((result) => result.error)
+      .map((result) => `${result.platform}: ${result.error ?? ''}`);
+
     this.log('Notified', {
       correlationId: outcome.correlationId,
       attempted: outcome.attempted,
       delivered: outcome.delivered,
       pruned: outcome.pruned,
-      ...(failures.length > 0 ? { failures } : {})
+      ...(failures.length > 0 ? { failures } : {}),
+      ...(prunedReasons.length > 0 ? { prunedReasons } : {})
     });
 
     return outcome;
@@ -106,21 +123,27 @@ export class NotificationService {
 
     try {
       await sender.send(device, {
+        // Opaque extras first (a bridge token rides here), so the core fields
+        // below always win: an extra cannot replace the call id, the caller or
+        // the CallKit uuid.
+        ...(notification.data ?? {}),
         call_id: notification.correlationId,
         from: notification.from ?? 'Unknown',
         from_name: notification.fromName ?? 'Unknown caller',
         // iOS only: generated here so the AppDelegate hook and the JS side
         // agree on one identifier for the CallKit entry.
-        ...(device.platform === 'ios' ? { uuid: this.uuid() } : {}),
-        // Opaque extras last: a bridge token rides here, and nothing above
-        // should be silently overwritten by it.
-        ...(notification.data ?? {})
+        ...(device.platform === 'ios' ? { uuid: this.uuid() } : {})
       });
 
       return { token: device.token, platform: device.platform, status: 'delivered' };
     } catch (error) {
       if (error instanceof TokenExpiredError) {
-        return { token: device.token, platform: device.platform, status: 'token-expired' };
+        return {
+          token: device.token,
+          platform: device.platform,
+          status: 'token-expired',
+          ...(error.reason ? { error: error.reason } : {})
+        };
       }
       return {
         token: device.token,

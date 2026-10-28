@@ -6,7 +6,7 @@ interface ComponentEntry {
   tag: string;
   className: string;
   name: string;
-  events: Record<string, string>;
+  events: Record<string, unknown>;
 }
 
 const COMPONENTS = JSON.parse(
@@ -24,7 +24,8 @@ export default defineConfig({
       COMPONENTS.map((c) => [`components/${c.name}`, `src/components/${c.name}.ts`])
     )
   },
-  format: ['esm', 'cjs'],
+  // ES modules only: see scripts/sync-package.mjs.
+  format: ['esm'],
   dts: true,
   clean: true,
   splitting: false,

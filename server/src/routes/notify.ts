@@ -21,7 +21,7 @@ export function createNotifyRoutes(service: NotificationService): Router {
   const router = Router();
 
   router.post('/', async (req, res) => {
-    const { externalUserId, correlationId, from, fromName } = req.body as NotifyBody;
+    const { externalUserId, correlationId, from, fromName } = (req.body ?? {}) as NotifyBody;
 
     if (typeof externalUserId !== 'string' || externalUserId.length === 0) {
       res.status(400).json({ error: 'externalUserId is required' });

@@ -6,7 +6,13 @@ import { SignalWireContext } from './SignalWireProvider';
 import { useIncomingCalls } from './useIncomingCalls';
 
 const incomingCalls$ = new BehaviorSubject<unknown[]>([]);
-const client = { session: { incomingCalls$, incomingCalls: [] } };
+// The hook follows the session through isConnected$; here it is connected
+// from the start. The real SDK's late session is covered in
+// SignalWireProvider.realsdk.test.tsx.
+const client = {
+  isConnected$: new BehaviorSubject(true),
+  session: { incomingCalls$, incomingCalls: [] }
+};
 
 let result: ReturnType<typeof useIncomingCalls> | undefined;
 
@@ -99,7 +105,7 @@ describe('useIncomingCalls', () => {
       await result?.answer(call as never);
     });
 
-    expect(observer.onIncomingAnswer).toHaveBeenCalledWith(call);
+    expect(observer.onIncomingAnswer).toHaveBeenCalledWith(call, 'hold');
     expect(call.answer).not.toHaveBeenCalled();
   });
 
@@ -119,5 +125,38 @@ describe('useIncomingCalls', () => {
     });
 
     expect(call.answer).toHaveBeenCalledWith({ audio: true, video: false });
+  });
+
+  it("leaves out a call the observer refused (busy), keeping the others", () => {
+    const refused = { id: 'refused' };
+    const ringing = { id: 'ringing' };
+    const observer = { isIncomingRefused: jest.fn((call: unknown) => call === refused) };
+    render(
+      <SignalWireContext.Provider
+        value={{ client: client as never, error: null, observer }}
+      >
+        <Probe />
+      </SignalWireContext.Provider>
+    );
+
+    act(() => incomingCalls$.next([ringing, refused]));
+
+    expect(result?.calls).toEqual([ringing]);
+  });
+
+  it('keeps the SDK list as it is when the observer refused nothing', () => {
+    const calls = [{ id: 'a' }];
+    const observer = { isIncomingRefused: jest.fn(() => false) };
+    render(
+      <SignalWireContext.Provider
+        value={{ client: client as never, error: null, observer }}
+      >
+        <Probe />
+      </SignalWireContext.Provider>
+    );
+
+    act(() => incomingCalls$.next(calls));
+
+    expect(result?.calls).toBe(calls);
   });
 });

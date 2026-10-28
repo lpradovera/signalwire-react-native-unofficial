@@ -39,7 +39,16 @@ module.exports = tseslint.config(
         {
           patterns: [
             {
-              group: ['react-native', 'react-native/*', 'react-native-*', '@react-native-*'],
+              // '@react-native/*' is React Native's own scope (normalize-colors,
+              // virtualized-lists, js-polyfills ...): '@react-native-*' needs a
+              // '-' straight after the name, so it never matched it.
+              group: [
+                'react-native',
+                'react-native/*',
+                'react-native-*',
+                '@react-native-*',
+                '@react-native/*'
+              ],
               message:
                 '@signalwire/react must stay platform-agnostic. Put platform code in @signalwire/react-native and inject it through SignalWirePlatform or CallObserver.'
             }

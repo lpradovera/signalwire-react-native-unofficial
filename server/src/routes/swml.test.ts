@@ -10,6 +10,18 @@ import { createSwmlRoutes } from './swml.js';
 import type { Server } from 'node:http';
 import type { Device, PushPayload, PushSender } from '../core/types.js';
 
+/**
+ * A SWML reply, loosely typed: the tests walk verbs by position and assert on
+ * their shape, which is exactly what a precise type would get in the way of.
+ */
+interface Swml {
+  version: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sections: { main: any[] };
+}
+
+const swmlOf = async (response: Response): Promise<Swml> => (await response.json()) as Swml;
+
 const sent: Array<{ device: Device; payload: PushPayload }> = [];
 
 const sender: PushSender = {
@@ -42,7 +54,7 @@ const post = (path: string, body: unknown): Promise<Response> =>
 
 before(async () => {
   await new Promise<void>((resolve) => {
-    server = app.listen(0, resolve);
+    server = app.listen(0, '127.0.0.1', () => resolve());
   });
   const address = server.address();
   base = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
@@ -62,7 +74,7 @@ describe('POST /swml/park', () => {
     const response = await post('/swml/park', {
       params: { call: { call_id: 'a-leg-sid', to: '/private/rn-example' } }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     const verbs = swml.sections.main.map((v: Record<string, unknown>) => Object.keys(v)[0]);
     assert.deepEqual(verbs, ['answer', 'play', 'hangup']);
@@ -107,10 +119,9 @@ describe('POST /swml/park', () => {
     // With a phone number pointed at this resource, this is what shows on the
     // lock screen. Reading it from the request root instead showed "Unknown".
     sent.length = 0;
-    await post('/swml/park', {
+    await post('/swml/park?subscriber=rn-example', {
       params: {
-        call: { call_id: 'a-leg-sid', to: '/public/rn-example-park', from: '+15551234567' },
-        vars: { subscriber: 'rn-example' }
+        call: { call_id: 'a-leg-sid', to: '/public/rn-example-park', from: '+15551234567' }
       }
     });
 
@@ -130,7 +141,7 @@ describe('POST /swml/park', () => {
       })
     });
     const routedServer = await new Promise<Server>((resolve) => {
-      const srv = routed.listen(0, () => resolve(srv));
+      const srv = routed.listen(0, '127.0.0.1', () => resolve(srv));
     });
     const addr = routedServer.address();
     const routedBase = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
@@ -152,11 +163,12 @@ describe('POST /swml/park', () => {
     // Callers dial the park resource; its name says nothing about who to ring.
     // Resolving from it pushed to "rn-example-park" — a user that does not
     // exist — and reported delivered: 0 with no error anywhere.
+    // The handler URL names the subscriber (`?subscriber=`, set on the
+    // SignalWire resource); the dialled address does not.
     sent.length = 0;
-    await post('/swml/park', {
+    await post('/swml/park?subscriber=rn-example', {
       params: {
-        call: { call_id: 'a-leg-sid', to: '/public/rn-example-park' },
-        vars: { subscriber: 'rn-example' }
+        call: { call_id: 'a-leg-sid', to: '/public/rn-example-park' }
       }
     });
 
@@ -165,7 +177,7 @@ describe('POST /swml/park', () => {
 
   it('hangs up politely when the request lacks a call SID', async () => {
     const response = await post('/swml/park', { params: { call: { to: '/private/rn-example' } } });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
   });
 });
@@ -176,7 +188,7 @@ describe('POST /swml/bridge', () => {
     const response = await post('/swml/bridge', {
       params: { vars: { bridgeToken: token }, call: { to: '/private/rn-example' } }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(swml.sections.main[0], { connect: { to: 'call:parked-sid' } });
   });
@@ -190,7 +202,7 @@ describe('POST /swml/bridge', () => {
     const replay = await post('/swml/bridge', {
       params: { vars: { bridgeToken: token }, call: { to: '/private/rn-example' } }
     });
-    const swml = await replay.json();
+    const swml = await swmlOf(replay);
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
   });
 
@@ -206,7 +218,7 @@ describe('POST /swml/bridge', () => {
         call: { to: '/public/rn-example-bridge', from: '/private/someone-else' }
       }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
   });
 
@@ -222,10 +234,28 @@ describe('POST /swml/bridge', () => {
         call: { from: 'sip:rn-android@proj.call.signalwire.com;context=private' }
       }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(swml.sections.main[0].connect.to, 'call:parked-sid-sip');
   });
+
+  for (const [reference, from] of [
+    ['ada@example.com', 'sip:ada%40example.com@proj.call.signalwire.com;context=private'],
+    ['Ada Lovelace', 'sip:Ada%20Lovelace@proj.call.signalwire.com;context=private'],
+    ['ada@example.com', '/private/ada%40example.com']
+  ] as const) {
+    it(`unescapes the caller's reference before checking it: ${from} (server-37)`, async () => {
+      // SIP escapes what a user part cannot hold. Compared raw, the rightful
+      // device was refused as wrong-subscriber.
+      const { token } = tokens.mint(`parked-${from}`, reference);
+      const response = await post('/swml/bridge', {
+        params: { vars: { userVariables: { bridgeToken: token } }, call: { from } }
+      });
+      const swml = await swmlOf(response);
+
+      assert.deepEqual(swml.sections.main[0].connect?.to, `call:parked-${from}`);
+    });
+  }
 
   it('refuses a SIP caller who is not the token holder', async () => {
     const { token } = tokens.mint('parked-sid-sip2', 'rn-android');
@@ -235,7 +265,7 @@ describe('POST /swml/bridge', () => {
         call: { from: 'sip:someone-else@proj.call.signalwire.com;context=private' }
       }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
   });
@@ -249,7 +279,7 @@ describe('POST /swml/bridge', () => {
     const response = await post('/swml/bridge', {
       params: { vars: { userVariables: { bridgeToken: token } }, call: {} }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(swml.sections.main[0].connect.to, 'call:parked-sid-anon');
   });
@@ -261,7 +291,7 @@ describe('POST /swml/bridge', () => {
     const body = { params: { vars: { userVariables: { bridgeToken: token } }, call: {} } };
     await post('/swml/bridge', body);
     const replay = await post('/swml/bridge', body);
-    const swml = await replay.json();
+    const swml = await swmlOf(replay);
 
     assert.deepEqual(Object.keys(swml.sections.main[0]), ['hangup']);
   });
@@ -281,7 +311,7 @@ describe('POST /swml/bridge — the shape SignalWire actually sends', () => {
         vars: { userVariables: { bridgeToken: token } }
       }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(swml.sections.main[0], { connect: { to: 'call:parked-sid' } });
   });
@@ -291,7 +321,7 @@ describe('POST /swml/bridge — the shape SignalWire actually sends', () => {
     const response = await post('/swml/bridge', {
       params: { call: { to: '/private/rn-example' }, vars: { bridgeToken: token } }
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
 
     assert.deepEqual(swml.sections.main[0], { connect: { to: 'call:parked-sid-2' } });
   });
@@ -315,12 +345,14 @@ describe('POST /swml/bridge/status', () => {
       })
     });
     const srv = await new Promise<Server>((resolve) => {
-      const s2 = withEnder.listen(0, () => resolve(s2));
+      const s2 = withEnder.listen(0, '127.0.0.1', () => resolve(s2));
     });
     const addr = srv.address();
     const base2 = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
 
+    // The status_url is handed out by a bridge, so the token is redeemed.
     const { token } = tokens.mint('caller-leg-sid', 'rn-example');
+    tokens.redeem(token, 'rn-example');
     await fetch(`${base2}/swml/bridge/status?token=${token}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -345,7 +377,7 @@ describe('POST /swml/bridge/status', () => {
       })
     });
     const srv = await new Promise<Server>((resolve) => {
-      const s2 = withEnder.listen(0, () => resolve(s2));
+      const s2 = withEnder.listen(0, '127.0.0.1', () => resolve(s2));
     });
     const addr = srv.address();
     const base2 = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
@@ -370,7 +402,7 @@ describe('POST /swml/bridge/status', () => {
       swmlRoutes: createSwmlRoutes({ tokens, service, publicUrl: 'https://example.test' })
     });
     const srv = await new Promise<Server>((resolve) => {
-      const s2 = withUrl.listen(0, () => resolve(s2));
+      const s2 = withUrl.listen(0, '127.0.0.1', () => resolve(s2));
     });
     const addr = srv.address();
     const base2 = `http://127.0.0.1:${typeof addr === 'object' && addr ? addr.port : 0}`;
@@ -382,7 +414,7 @@ describe('POST /swml/bridge/status', () => {
         params: { call: { from: '/private/rn-example' }, vars: { userVariables: { bridgeToken: token } } }
       })
     });
-    const swml = await response.json();
+    const swml = await swmlOf(response);
     srv.close();
 
     assert.match(swml.sections.main[0].connect.status_url, /\/swml\/bridge\/status\?token=/);
@@ -400,5 +432,33 @@ describe('GET /swml/ringback', () => {
     assert.equal(buffer.subarray(8, 12).toString(), 'WAVE');
     // 6 seconds of 8kHz mono 16-bit, plus the 44-byte header.
     assert.equal(buffer.length, 44 + 6 * 8000 * 2);
+  });
+});
+
+describe('SWML route logs', () => {
+  it('timestamps every line, so scripts/trace.sh can place it on the timeline', async () => {
+    // The failure lines — a hang-up for a missing SID or token, a rejected
+    // token — are the ones a device test needs most, and they were the ones
+    // logged without `at`.
+    const lines: string[] = [];
+    const { log, warn } = console;
+    console.log = (line: unknown) => lines.push(String(line));
+    console.warn = (line: unknown) => lines.push(String(line));
+    try {
+      await post('/swml/park', { params: { call: { to: '/private/rn-example' } } });
+      await post('/swml/bridge', { params: { call: {} } });
+      await post('/swml/bridge', { params: { vars: { bridgeToken: 'never-minted' }, call: {} } });
+      await post('/swml/bridge/status', { params: { connect_state: 'disconnected' } });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      console.log = log;
+      console.warn = warn;
+    }
+
+    assert.ok(lines.length >= 4, `expected the failure lines, got ${lines.length}`);
+    for (const line of lines) {
+      const parsed = JSON.parse(line) as { at?: string; message?: string };
+      assert.match(parsed.at ?? '', /^\d{4}-\d\d-\d\dT/, `no timestamp on "${parsed.message}"`);
+    }
   });
 });

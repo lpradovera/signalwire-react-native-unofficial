@@ -1,4 +1,4 @@
-import { useCall } from '@signalwire/react';
+import { logger, useCall } from '@signalwire/react';
 import React, { useCallback } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -32,7 +32,11 @@ export function Dialpad({ call, onDigit, style, testID }: DialpadProps): React.J
     (digit: string) => {
       onDigit?.(digit);
       if (call) {
-        void sendDigits(digit);
+        // The SDK rejects when verto.info fails (a call still ringing, a
+        // network blip). The digit is lost either way; say so in the log.
+        sendDigits(digit).catch((error: unknown) => {
+          logger.warn(`Sending DTMF ${digit} failed:`, error);
+        });
       }
     },
     [call, onDigit, sendDigits]

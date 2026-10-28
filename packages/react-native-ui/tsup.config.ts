@@ -8,5 +8,8 @@ export default defineConfig({
   splitting: false,
   sourcemap: true,
   target: 'es2020',
-  external: ['react', 'react-native', '@signalwire/js', '@signalwire/react', '@signalwire/react-native']
+  external: [
+    'react', 'react-native', '@signalwire/js', '@signalwire/react', '@signalwire/react-native',
+    'react-native-safe-area-context'
+  ]
 });

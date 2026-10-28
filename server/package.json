@@ -4,11 +4,14 @@
   "private": true,
   "description": "Support server: device token registry and VoIP/FCM push sender for @signalwire/react-native",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.9.0"
+  },
   "main": "./dist/index.js",
   "scripts": {
     "dev": "node --import tsx --watch --env-file-if-exists=.env src/index.ts",
     "start": "node --env-file-if-exists=.env dist/index.js",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "test": "node --import tsx --test $(find src -name '*.test.ts')",
     "type-check": "tsc --noEmit"
   },

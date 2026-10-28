@@ -4,6 +4,8 @@ import { Text } from 'react-native';
 
 jest.mock('../platform/createReactNativePlatform');
 jest.mock('../callkit/observer');
+const mockBridge = { keepsCallsOnUnmount: true };
+jest.mock('../callkit/CallKeepBridge', () => ({ getCallKit: () => mockBridge }));
 
 // The core provider is exercised by its own package. Here we only care that
 // the RN wrapper hands it the right platform and observer.
@@ -24,7 +26,11 @@ const createPlatform = createReactNativePlatform as jest.MockedFunction<
 const createObserver = createCallKitObserver as jest.MockedFunction<typeof createCallKitObserver>;
 
 const credentialProvider = { authenticate: jest.fn(async () => ({ token: 't' })) };
-const platform = { options: { skipDeviceMonitoring: true }, dispose: jest.fn() };
+const platform = {
+  options: { skipDeviceMonitoring: true },
+  dispose: jest.fn(),
+  watchForeground: jest.fn(() => jest.fn())
+};
 const observer = { bindClient: jest.fn(), onOutgoingCall: jest.fn() };
 
 beforeEach(() => {
@@ -42,14 +48,20 @@ async function renderProvider(props: Record<string, unknown> = {}): Promise<void
 }
 
 describe('React Native SignalWireProvider', () => {
+  /** The platform factory the wrapper hands the core provider. */
+  const factory = (): (() => unknown) => core.mock.calls[0]?.[0].platform;
+
   it('supplies the platform so callers never have to', async () => {
     await renderProvider();
+    // The core builds one per client, so the wrapper hands it a factory.
+    expect(createPlatform).not.toHaveBeenCalled();
+    expect(factory()()).toBe(platform);
     expect(createPlatform).toHaveBeenCalledTimes(1);
-    expect(core.mock.calls[0]?.[0]).toMatchObject({ platform });
   });
 
   it('forwards platform options through', async () => {
     await renderProvider({ platform: { netInfo: false } });
+    factory()();
     expect(createPlatform).toHaveBeenCalledWith({ netInfo: false });
   });
 
@@ -65,13 +77,46 @@ describe('React Native SignalWireProvider', () => {
     expect(core.mock.calls[0]?.[0]).toMatchObject({ observer });
   });
 
+  it('hands CallKit options to the observer', async () => {
+    const displayName = (): string => 'Support';
+    await renderProvider({ callKit: { displayName } });
+    expect(createObserver.mock.calls[0]?.[0]?.().displayName?.('/private/agent')).toBe('Support');
+  });
+
+  it('names calls with the latest displayName prop, without rebuilding the observer', async () => {
+    const tree = (displayName: (destination: string) => string): React.JSX.Element => (
+      <SignalWireProvider credentialProvider={credentialProvider as never} callKit={{ displayName }}>
+        <Text>child</Text>
+      </SignalWireProvider>
+    );
+    const view = await render(tree(() => 'Support'));
+    await view.rerender(tree((destination) => `Agent ${destination}`));
+
+    expect(createObserver).toHaveBeenCalledTimes(1);
+    expect(createObserver.mock.calls[0]?.[0]?.().displayName?.('7')).toBe('Agent 7');
+  });
+
+  it('falls back to the destination once displayName is dropped', async () => {
+    const view = await render(
+      <SignalWireProvider credentialProvider={credentialProvider as never} callKit={{ displayName: () => 'Support' }}>
+        <Text>child</Text>
+      </SignalWireProvider>
+    );
+    await view.rerender(
+      <SignalWireProvider credentialProvider={credentialProvider as never} callKit>
+        <Text>child</Text>
+      </SignalWireProvider>
+    );
+    expect(createObserver.mock.calls[0]?.[0]?.().displayName).toBeUndefined();
+  });
+
   it('passes the credential provider and options through untouched', async () => {
     const options = { skipConnection: true };
     await renderProvider({ options });
     expect(core.mock.calls[0]?.[0]).toMatchObject({ credentialProvider, options });
   });
 
-  it('builds the platform once across re-renders', async () => {
+  it('keeps the platform factory across re-renders', async () => {
     const view = await render(
       <SignalWireProvider credentialProvider={credentialProvider as never}>
         <Text>child</Text>
@@ -82,7 +127,41 @@ describe('React Native SignalWireProvider', () => {
         <Text>child</Text>
       </SignalWireProvider>
     );
-    // A fresh platform identity would tear down and rebuild the client.
-    expect(createPlatform).toHaveBeenCalledTimes(1);
+    // A fresh factory identity would tear down and rebuild the client.
+    expect(core.mock.calls[1]?.[0].platform).toBe(core.mock.calls[0]?.[0].platform);
+  });
+
+  it('passes fetchToken through in place of a credentialProvider', async () => {
+    const fetchToken = jest.fn(async () => ({ token: 't' }));
+    await render(
+      <SignalWireProvider fetchToken={fetchToken}>
+        <Text>child</Text>
+      </SignalWireProvider>
+    );
+    const props = core.mock.calls[0]?.[0];
+    expect(props.fetchToken).toBe(fetchToken);
+    expect(props.credentialProvider).toBeUndefined();
+  });
+
+  describe('keeping the call when the app unmounts (Back on Android)', () => {
+    const keep = (): unknown => core.mock.calls[core.mock.calls.length - 1]?.[0].keepCallsOnUnmount;
+
+    it('keeps the client and its calls with native call UI, by default', async () => {
+      mockBridge.keepsCallsOnUnmount = true;
+      await renderProvider({ callKit: true });
+      expect(keep()).toBe(true);
+    });
+
+    it("ends the calls when setup() was given endCallsOnHostDestroy: true", async () => {
+      mockBridge.keepsCallsOnUnmount = false;
+      await renderProvider({ callKit: true });
+      expect(keep()).toBe(false);
+      mockBridge.keepsCallsOnUnmount = true;
+    });
+
+    it('does not keep them without native call UI: nothing would show the call', async () => {
+      await renderProvider();
+      expect(keep()).toBe(false);
+    });
   });
 });

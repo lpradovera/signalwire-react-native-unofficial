@@ -25,3 +25,5 @@ export { DeviceSelector } from './components/DeviceSelector';
 export type { DeviceSelectorProps } from './components/DeviceSelector';
 export { IncomingCallSheet } from './components/IncomingCallSheet';
 export type { IncomingCallSheetProps } from './components/IncomingCallSheet';
+export { CallOverlayHost } from './components/CallOverlayHost';
+export type { CallOverlayHostProps } from './components/CallOverlayHost';

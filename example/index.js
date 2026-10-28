@@ -5,10 +5,12 @@
 import '@signalwire/react-native/polyfills';
 
 import { setDebugOptions, setLogger, setLogLevel } from '@signalwire/js';
-import { getCallKit, registerAndroidCallPush } from '@signalwire/react-native/callkit';
+import { getCallKit, registerAndroidCallPush, requestSiriAuthorization } from '@signalwire/react-native/callkit';
 import { registerRootComponent } from 'expo';
 
 import App from './App';
+import { declineUrl, registerBridgeDecline } from './src/bridgeDecline';
+import { DEVICES_URL, TOKEN_URL } from './src/endpoints';
 
 // Wire log, off by default. React Native's console collapses nested objects to
 // `[Object]`, which hides the verto params and the SDP — exactly what you need
@@ -56,14 +58,50 @@ if (process.env.EXPO_PUBLIC_SW_WIRE_LOG === '1') {
   });
 }
 
+// Info, not the SDK's default warn: token renewals and call recovery are
+// logged at info, and a tester of a release build needs to see them.
+if (process.env.EXPO_PUBLIC_SW_WIRE_LOG !== '1') {
+  setLogLevel('info');
+}
+
 // Set up native call UI before React mounts, so a VoIP push arriving on a cold
-// start finds a bridge ready to report it to CallKit.
-void getCallKit().setup({ appName: 'SignalWire RN Example', supportsVideo: true });
+// start finds a bridge ready to report it to CallKit. The example dials
+// audio-only unless EXPO_PUBLIC_SW_DIAL_VIDEO=1, so it offers native video
+// only then: an audio-only app has no business with the camera.
+//
+// Call waiting is the library's default ('full': Hold & Accept, End & Accept,
+// swap). EXPO_PUBLIC_SW_CALL_WAITING=endAndAccept or =single tries the other
+// modes; EXPO_PUBLIC_SW_END_CALLS_ON_BACK=1 makes Back end the call (the
+// default keeps it running, with its notification to come back to).
+//
+// EXPO_PUBLIC_SW_CALLKIT=0 builds the app without the native call UI: plain
+// WebRTC calls, outside Telecom and CallKit (App.tsx passes callKit={false}).
+const CALL_WAITING_MODES = ['full', 'endAndAccept', 'single'];
+const callWaiting = process.env.EXPO_PUBLIC_SW_CALL_WAITING?.trim();
+if (process.env.EXPO_PUBLIC_SW_CALLKIT !== '0') {
+  void getCallKit().setup({
+    appName: 'SignalWire RN Example',
+    supportsVideo: process.env.EXPO_PUBLIC_SW_DIAL_VIDEO === '1',
+    ...(CALL_WAITING_MODES.includes(callWaiting) ? { callWaiting } : {}),
+    endCallsOnHostDestroy: process.env.EXPO_PUBLIC_SW_END_CALLS_ON_BACK === '1'
+  });
+  // Siri's "call <name> with SignalWire RN Example" (app.json's enableSiri):
+  // iOS asks once. 'unavailable' on Android and in a build without Siri.
+  void requestSiriAuthorization().then((siri) => console.log(`Siri: ${siri}`));
+}
 
 // Android call pushes, registered here rather than in a component: the
 // background handler runs in a headless task when the app is killed, which is
 // the normal state for an incoming call, and React never mounts in that case.
 // No-op on iOS, where PushKit delivers natively before JavaScript exists.
 registerAndroidCallPush();
+
+// A decline of a parked-caller push goes to the server from here, outside
+// React, for the same reason: Decline on the call notification of a killed
+// app runs in that headless context and does not open the app.
+registerBridgeDecline({
+  registry: getCallKit().registry,
+  url: declineUrl(DEVICES_URL, TOKEN_URL)
+});
 
 registerRootComponent(App);

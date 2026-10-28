@@ -5,6 +5,10 @@
 // DOM at module scope — so this is a browser-only, client-side module.
 'use client';
 
+import '@signalwire/web-components/sw-ui-control-bar';
+import '@signalwire/web-components/sw-ui-dropup';
+import '@signalwire/web-components/sw-ui-icon';
+import '@signalwire/web-components/sw-ui-split-button';
 import { SwCallControls } from '@signalwire/web-components/sw-call-controls';
 
 import { createSwComponent } from '../createSwComponent';
@@ -20,6 +24,9 @@ export const CallControls = createSwComponent({
   elementClass: SwCallControls,
   events: {
     onCallHangup: 'sw-call-hangup'
+  },
+  eventOrigins: {
+    onCallHangup: 'sw-call-controls'
   }
 });
 

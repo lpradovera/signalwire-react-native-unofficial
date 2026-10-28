@@ -1,7 +1,8 @@
 /**
  * Native call UI: CallKit on iOS, ConnectionService on Android.
  *
- * Requires the optional peer `react-native-callkeep`.
+ * Requires callkeep: the optional peer `@signalwire/react-native-callkeep`
+ * (the SignalWire fork), or stock `react-native-callkeep`.
  *
  * ```ts
  * // index.js — before React mounts, so a cold-start VoIP push finds it ready
@@ -16,7 +17,11 @@
  * ```
  */
 export { CallKeepBridge, getCallKit, resetCallKitForTesting } from './callkit/CallKeepBridge';
-export type { CallKitSetupOptions } from './callkit/CallKeepBridge';
+export type { CallKitObserverOptions } from './callkit/observer';
+export type { CallKitSetupOptions, CallWaitingMode, StartCallRequest } from './callkit/CallKeepBridge';
+export { CallInProgressError } from './errors';
+export { donateCompletedCall, forgetSiriCalls, getSiriAuthorization, requestSiriAuthorization } from './callkit/siri';
+export type { CompletedCall, SiriAuthorization } from './callkit/siri';
 export { CallRegistry } from './callkit/CallRegistry';
 export type {
   CallEntry,

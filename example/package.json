@@ -8,6 +8,7 @@
     "ios": "expo run:ios",
     "android": "expo run:android",
     "bundle-check": "expo export --platform ios --platform android --output-dir ./.expo-export-check",
+    "test": "node --import tsx --test $(find src plugins -name '*.test.*')",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
@@ -16,11 +17,13 @@
     "@react-native-community/netinfo": "11.4.1",
     "@react-native-firebase/app": "^22.4.0",
     "@react-native-firebase/messaging": "^22.4.0",
-    "@signalwire/js": "^4.0.0-rc.2",
-    "@signalwire/react": "*",
-    "@signalwire/react-native": "*",
-    "@signalwire/react-native-ui": "*",
+    "@signalwire/js": "^4.0.0-rc.5",
+    "@signalwire/react": "^2.0.0-alpha.0",
+    "@signalwire/react-native": "^2.0.0-alpha.0",
+    "@signalwire/react-native-callkeep": "github:signalwire/react-native-callkeep#0b7afd6c1b0d36535a331b579bcfd1c112b76ebb",
+    "@signalwire/react-native-ui": "^2.0.0-alpha.0",
     "expo": "~54.0.0",
+    "expo-application": "~7.0.8",
     "expo-asset": "~12.0.13",
     "expo-constants": "~18.0.13",
     "expo-dev-client": "~6.0.21",
@@ -29,16 +32,27 @@
     "expo-keep-awake": "~15.0.8",
     "react": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-callkeep": "^4.3.16",
     "react-native-get-random-values": "~1.11.0",
     "react-native-incall-manager": "^4.2.0",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-url-polyfill": "^2.0.0",
-    "react-native-webrtc": "^124.0.5",
+    "react-native-webrtc": "^155.0.0",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
     "@types/react": "~19.1.10",
+    "tsx": "^4.19.2",
     "typescript": "^5.9.3"
+  },
+  "//expo": "iOS autolinking skips Firebase. iOS push here is PushKit, not FCM, and app.config.js applies the Firebase plugin only when GOOGLE_SERVICES_JSON is set -- but autolinking still added the @react-native-firebase pods, and `pod install` failed: \"The Swift pod `FirebaseCoreInternal` depends upon `GoogleUtilities`, which does not define modules\". Android still links both. So the Firebase plugin must not reach iOS either: given an ios.googleServicesFile it adds `import FirebaseCore` to AppDelegate.swift, which then has no pod to compile against (docs/push-setup.md 2b).",
+  "expo": {
+    "autolinking": {
+      "ios": {
+        "exclude": [
+          "@react-native-firebase/app",
+          "@react-native-firebase/messaging"
+        ]
+      }
+    }
   }
 }
